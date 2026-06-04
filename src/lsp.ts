@@ -110,18 +110,33 @@ function fileUriForPath(path: string) {
   return `${root}/${path.split("/").map(encodeURIComponent).join("/")}`;
 }
 
-function sanitizeHtml(html: string) {
+export function sanitizeHtml(html: string) {
   const template = document.createElement("template");
   template.innerHTML = html;
   template.content
-    .querySelectorAll("script, iframe, object, embed, link, style")
+    .querySelectorAll("script, iframe, object, embed, link, style, base, meta, form, input, button, img, audio, video, source")
     .forEach((node) => node.remove());
   template.content.querySelectorAll("*").forEach((node) => {
     for (const attribute of Array.from(node.attributes)) {
-      if (/^on/i.test(attribute.name) || attribute.name === "srcdoc") {
+      if (shouldRemoveHtmlAttribute(attribute.name, attribute.value)) {
         node.removeAttribute(attribute.name);
       }
     }
   });
   return template.innerHTML;
+}
+
+function shouldRemoveHtmlAttribute(name: string, value: string) {
+  const lowerName = name.toLowerCase();
+  if (/^on/i.test(lowerName)) return true;
+  if (lowerName === "srcdoc" || lowerName === "style") return true;
+  if (["href", "xlink:href", "src", "srcset", "formaction"].includes(lowerName)) {
+    return isUnsafeUrl(value);
+  }
+  return false;
+}
+
+function isUnsafeUrl(value: string) {
+  const normalized = value.trim().replace(/[\u0000-\u001f\u007f\s]+/g, "").toLowerCase();
+  return /^(javascript|data|vbscript|file):/.test(normalized);
 }
