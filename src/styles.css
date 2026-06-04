@@ -317,14 +317,6 @@ button {
   color: var(--muted);
 }
 
-.lsp-panel {
-  flex: 0 0 auto;
-  max-height: 260px;
-  overflow: auto;
-  border-top: 1px solid var(--border);
-  padding: 10px;
-}
-
 .endpoint {
   overflow: hidden;
   color: var(--muted);
@@ -646,10 +638,19 @@ button {
 .empty-state {
   display: grid;
   height: 100%;
+  min-height: 0;
   place-items: center;
   align-content: center;
   gap: 10px;
   color: var(--muted);
+}
+
+.editor-empty-state {
+  grid-row: 1 / -1;
+}
+
+.editor-loading-state {
+  grid-row: 2;
 }
 
 .statusbar {
@@ -780,6 +781,30 @@ button {
   border-radius: 8px;
   background: var(--panel);
   box-shadow: var(--shadow);
+}
+
+.integration-dialog {
+  width: min(680px, 100%);
+  max-height: min(760px, calc(100dvh - 40px));
+  overflow: hidden;
+}
+
+.integration-dialog__grid {
+  display: grid;
+  gap: 12px;
+  min-height: 0;
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.integration-section {
+  display: grid;
+  min-width: 0;
+  gap: 6px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
 }
 
 .confirm-dialog h2 {

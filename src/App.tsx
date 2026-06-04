@@ -124,6 +124,7 @@ export default function App() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [pendingClosePath, setPendingClosePath] = useState<string>();
   const [pendingAppClose, setPendingAppClose] = useState(false);
+  const [integrationsOpen, setIntegrationsOpen] = useState(false);
   const [error, setError] = useState<string>();
   const [status, setStatus] = useState("Ready");
   const [selection, setSelection] = useState<EditorSelection>();
@@ -708,6 +709,9 @@ export default function App() {
       listen<string>("app://error", (event) => {
         setError(event.payload);
       }),
+      listen("menu://show-integrations", () => {
+        setIntegrationsOpen(true);
+      }),
     ])
       .then((callbacks) => {
         if (disposed) {
@@ -986,6 +990,9 @@ export default function App() {
       } else if (event.key === "Escape" && pendingAppClose) {
         event.preventDefault();
         setPendingAppClose(false);
+      } else if (event.key === "Escape" && integrationsOpen) {
+        event.preventDefault();
+        setIntegrationsOpen(false);
       } else if (event.key === "Escape" && pendingClosePath) {
         event.preventDefault();
         setPendingClosePath(undefined);
@@ -1006,6 +1013,7 @@ export default function App() {
     cancelReloadActiveFile,
     newFileDialogOpen,
     newFolderDialogOpen,
+    integrationsOpen,
     openRenameDialog,
     openNewFolderDialog,
     openNewFileDialog,
@@ -1161,76 +1169,6 @@ export default function App() {
           )}
         </div>
 
-        <div className="lsp-panel">
-          {httpEndpoint ? (
-            <>
-              <div className="eyebrow">Browser Endpoint</div>
-              <div className="endpoint" title={httpEndpoint}>{httpEndpoint}</div>
-            </>
-          ) : null}
-          {claudeBridge ? (
-            <>
-              <div className="eyebrow">Claude Bridge</div>
-              <div className="endpoint" title={claudeBridge.lockFile}>
-                {claudeBridge.endpoint}
-              </div>
-            </>
-          ) : null}
-          {codexMcp ? (
-            <>
-              <div className="eyebrow">Codex MCP</div>
-              <div className="integration-row">
-                <div className="endpoint" title="Use this endpoint with the bearer token from the native app session">
-                  {codexMcp.endpoint}
-                </div>
-                <button
-                  className="tiny-icon-button"
-                  title="Copy Codex MCP endpoint"
-                  onClick={() => copyText("Codex MCP endpoint", codexMcp.endpoint)}
-                >
-                  <Copy size={13} />
-                </button>
-              </div>
-              <div className="integration-row">
-                <div className="endpoint" title={codexMcp.bearerToken}>
-                  token: {codexMcp.bearerToken}
-                </div>
-                <button
-                  className="tiny-icon-button"
-                  title="Copy Codex MCP token"
-                  onClick={() => copyText("Codex MCP token", codexMcp.bearerToken)}
-                >
-                  <Copy size={13} />
-                </button>
-              </div>
-              <div className="snippet-row">
-                <pre>{codexMcpConfig}</pre>
-                <button
-                  className="tiny-icon-button"
-                  title="Copy Codex MCP config"
-                  onClick={() => copyText("Codex MCP config", codexMcpConfig)}
-                >
-                  <Copy size={13} />
-                </button>
-              </div>
-            </>
-          ) : null}
-          <div className="eyebrow">Language Servers</div>
-          {lspServers.map((server) => (
-            <div className="lsp-row" key={server.language} title={server.detail}>
-              <span
-                className={
-                  server.running
-                    ? "lsp-dot lsp-dot--running"
-                    : server.available
-                      ? "lsp-dot lsp-dot--ready"
-                      : "lsp-dot"
-                }
-              />
-              <span>{server.displayName}</span>
-            </div>
-          ))}
-        </div>
       </aside>
 
       <section className="workbench">
@@ -1341,7 +1279,7 @@ export default function App() {
             </div>
           ) : null}
           {activeFile ? (
-            <Suspense fallback={<div className="empty-state">Loading editor</div>}>
+            <Suspense fallback={<div className="empty-state editor-loading-state">Loading editor</div>}>
               <EditorPane
                 contents={activeFile.contents}
                 path={activeFile.path}
@@ -1354,7 +1292,7 @@ export default function App() {
               />
             </Suspense>
           ) : (
-            <div className="empty-state">
+            <div className="empty-state editor-empty-state">
               <FileCog size={30} />
               <strong>No file selected</strong>
             </div>
@@ -1426,6 +1364,114 @@ export default function App() {
               ) : null}
             </div>
           </div>
+        </div>
+      ) : null}
+
+      {integrationsOpen ? (
+        <div className="dialog-backdrop" role="presentation">
+          <section
+            className="confirm-dialog integration-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="integrations-title"
+          >
+            <div>
+              <div className="eyebrow">Local Tools</div>
+              <h2 id="integrations-title">Integrations</h2>
+            </div>
+
+            <div className="integration-dialog__grid">
+              <section className="integration-section" aria-label="Browser endpoint">
+                <div className="eyebrow">Browser Endpoint</div>
+                <div className="endpoint" title={httpEndpoint ?? "Endpoint unavailable"}>
+                  {httpEndpoint ?? "Not available"}
+                </div>
+              </section>
+
+              <section className="integration-section" aria-label="Claude bridge">
+                <div className="eyebrow">Claude Bridge</div>
+                <div className="endpoint" title={claudeBridge?.lockFile ?? "Bridge unavailable"}>
+                  {claudeBridge?.endpoint ?? "Not available"}
+                </div>
+              </section>
+
+              <section className="integration-section" aria-label="Codex MCP">
+                <div className="eyebrow">Codex MCP</div>
+                {codexMcp ? (
+                  <>
+                    <div className="integration-row">
+                      <div className="endpoint" title="Use this endpoint with the bearer token from the native app session">
+                        {codexMcp.endpoint}
+                      </div>
+                      <button
+                        className="tiny-icon-button"
+                        title="Copy Codex MCP endpoint"
+                        onClick={() => copyText("Codex MCP endpoint", codexMcp.endpoint)}
+                      >
+                        <Copy size={13} />
+                      </button>
+                    </div>
+                    <div className="integration-row">
+                      <div className="endpoint" title={codexMcp.bearerToken}>
+                        token: {codexMcp.bearerToken}
+                      </div>
+                      <button
+                        className="tiny-icon-button"
+                        title="Copy Codex MCP token"
+                        onClick={() => copyText("Codex MCP token", codexMcp.bearerToken)}
+                      >
+                        <Copy size={13} />
+                      </button>
+                    </div>
+                    <div className="snippet-row">
+                      <pre>{codexMcpConfig}</pre>
+                      <button
+                        className="tiny-icon-button"
+                        title="Copy Codex MCP config"
+                        onClick={() => copyText("Codex MCP config", codexMcpConfig)}
+                      >
+                        <Copy size={13} />
+                      </button>
+                    </div>
+                  </>
+                ) : (
+                  <div className="endpoint">Not available</div>
+                )}
+              </section>
+
+              <section className="integration-section" aria-label="Language servers">
+                <div className="eyebrow">Language Servers</div>
+                {lspServers.length > 0 ? (
+                  lspServers.map((server) => (
+                    <div className="lsp-row" key={server.language} title={server.detail}>
+                      <span
+                        className={
+                          server.running
+                            ? "lsp-dot lsp-dot--running"
+                            : server.available
+                              ? "lsp-dot lsp-dot--ready"
+                              : "lsp-dot"
+                        }
+                      />
+                      <span>{server.displayName}</span>
+                    </div>
+                  ))
+                ) : (
+                  <div className="endpoint">No language servers registered</div>
+                )}
+              </section>
+            </div>
+
+            <div className="confirm-dialog__actions">
+              <button
+                className="command-button command-button--primary"
+                type="button"
+                onClick={() => setIntegrationsOpen(false)}
+              >
+                Close
+              </button>
+            </div>
+          </section>
         </div>
       ) : null}
 

@@ -196,8 +196,18 @@ describe("App shell interactions", () => {
 
     expect(imageRow).toHaveClass("tree-row--active");
     expect(tauriMocks.readFile).not.toHaveBeenCalled();
-    expect(screen.getByText("No file selected")).toBeInTheDocument();
+    expect(screen.getByText("No file selected").closest(".editor-empty-state")).toBeInTheDocument();
     expect(screen.getByText("Open a file from the tree")).toBeInTheDocument();
+  });
+
+  it("keeps integration details out of the default sidebar layout", async () => {
+    render(<App />);
+
+    expect(await treeButton("README.md")).toBeInTheDocument();
+    expect(screen.queryByText("Browser Endpoint")).not.toBeInTheDocument();
+    expect(screen.queryByText("Claude Bridge")).not.toBeInTheDocument();
+    expect(screen.queryByText("Codex MCP")).not.toBeInTheDocument();
+    expect(screen.queryByText("Language Servers")).not.toBeInTheDocument();
   });
 
   it("keeps preview tabs temporary until the file is edited", async () => {

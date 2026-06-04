@@ -499,6 +499,11 @@ pub fn run() {
                         },
                     );
                 }
+                return;
+            }
+
+            if id == "show_integrations" {
+                let _ = app.emit("menu://show-integrations", ());
             }
         })
         .plugin(tauri_plugin_dialog::init())
@@ -613,6 +618,13 @@ fn rebuild_app_menu(app: &tauri::AppHandle, state: &AppState) -> Result<(), Comm
         .quit()
         .build()
         .map_err(|error| CommandError::Recent(error.to_string()))?;
+    let show_integrations = MenuItemBuilder::with_id("show_integrations", "Integrations...")
+        .build(app)
+        .map_err(|error| CommandError::Recent(error.to_string()))?;
+    let view_menu = SubmenuBuilder::new(app, "View")
+        .item(&show_integrations)
+        .build()
+        .map_err(|error| CommandError::Recent(error.to_string()))?;
     let edit_menu = SubmenuBuilder::new(app, "Edit")
         .undo()
         .redo()
@@ -625,6 +637,7 @@ fn rebuild_app_menu(app: &tauri::AppHandle, state: &AppState) -> Result<(), Comm
     let menu = MenuBuilder::new(app)
         .item(&file_menu)
         .item(&edit_menu)
+        .item(&view_menu)
         .build()
         .map_err(|error| CommandError::Recent(error.to_string()))?;
     app.set_menu(menu)
