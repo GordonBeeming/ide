@@ -37,6 +37,8 @@ The app is intentionally split into a small always-loaded shell and lazy-loaded 
 - `src/EditorPane.tsx`: CodeMirror editor. Loaded only after a file is opened.
 - `src/language.ts`: lazy language loaders for Rust, TypeScript/JavaScript/React, HTML, CSS, and C#.
 - `src-tauri/src/workspace.rs`: Rust-native workspace scanning and guarded file IO.
+- `src-tauri/src/http_server.rs`: loopback HTTP API and static asset server for browser/terminal use.
+- `src-tauri/src/claude_bridge.rs`: authenticated Claude Code IDE WebSocket bridge.
 - `src-tauri/src/lib.rs`: Tauri command registration and in-memory editor context state.
 
 Security rules live in [security.md](security.md). Treat them as part of the development process, not a release checklist.
@@ -87,8 +89,19 @@ The editor should use the official `@codemirror/lsp-client` transport interface.
 
 ## Agent Context Direction
 
-The app already tracks active file, open files, and selected text through Tauri commands. Planned agent bridge work:
+The app tracks active file, open files, and selected text through shared backend state. Current bridge surfaces:
 
-- Claude-compatible localhost IDE bridge using `~/.claude/ide/*.lock`.
+- Claude-compatible localhost IDE bridge using `~/.claude/ide/*.lock`, WebSocket MCP, and a per-run auth token.
 - Local HTTP context endpoint for terminal/browser integrations.
-- Codex support where public docs expose a compatible custom IDE protocol. Current public docs confirm `/ide` consumes open files and selection context, but do not document a third-party lockfile protocol.
+
+The Claude bridge currently exposes read-only tools:
+
+- `getCurrentSelection`
+- `getLatestSelection`
+- `getOpenEditors`
+- `getWorkspaceFolders`
+- `getDiagnostics` returning an empty list until diagnostics are persisted by the editor
+
+Write-capable tools such as `openDiff`, `saveDocument`, or code execution should not be added until the editor has a visible review/confirmation surface for those actions.
+
+Codex support should be added where OpenAI documents a compatible third-party custom IDE protocol. Current public docs confirm Codex `/ide` consumes open files and selection context, but do not document a Claude-style third-party lockfile protocol.

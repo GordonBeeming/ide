@@ -12,9 +12,11 @@ import {
 import { iconForFile } from "./fileTypes";
 import {
   AgentContext,
+  ClaudeBridgeStatus,
   EditorSelection,
   FileEntry,
   LspServerStatus,
+  getClaudeBridgeStatus,
   getHttpEndpoint,
   getLspServers,
   getWorkspaceRoot,
@@ -52,6 +54,7 @@ export default function App() {
   const [selection, setSelection] = useState<EditorSelection>();
   const [lspServers, setLspServers] = useState<LspServerStatus[]>([]);
   const [httpEndpoint, setHttpEndpoint] = useState<string>();
+  const [claudeBridge, setClaudeBridge] = useState<ClaudeBridgeStatus>();
 
   const activeFile = openFiles.find((file) => file.path === activePath);
   const tree = useMemo(() => buildTree(files), [files]);
@@ -68,8 +71,9 @@ export default function App() {
     try {
       setLspServers(await getLspServers());
       setHttpEndpoint(await getHttpEndpoint());
+      setClaudeBridge(await getClaudeBridgeStatus());
     } catch (reason) {
-      setError(`Unable to load language server status: ${String(reason)}`);
+      setError(`Unable to load local integration status: ${String(reason)}`);
     }
   }, []);
 
@@ -212,6 +216,14 @@ export default function App() {
             <>
               <div className="eyebrow">Browser Endpoint</div>
               <div className="endpoint" title={httpEndpoint}>{httpEndpoint}</div>
+            </>
+          ) : null}
+          {claudeBridge ? (
+            <>
+              <div className="eyebrow">Claude Bridge</div>
+              <div className="endpoint" title={claudeBridge.lockFile}>
+                {claudeBridge.endpoint}
+              </div>
             </>
           ) : null}
           <div className="eyebrow">Language Servers</div>

@@ -17,13 +17,15 @@ Implemented:
 - Lazy editor loading and lazy language loading for better startup performance.
 - System light/dark mode via `prefers-color-scheme` with a high-contrast bias.
 - Active file, open file, and selection context stored in backend state.
+- LSP process manager for Rust, TypeScript/React, and C#.
+- Local HTTP context endpoint for terminal/browser integrations.
+- Claude Code `/ide` discovery bridge with authenticated localhost WebSocket MCP and read-only editor-context tools.
 
 Planned:
 
-- LSP process manager for Rust, TypeScript/React, and C#.
 - Go-to definition and richer diagnostics through CodeMirror LSP integration.
-- Claude Code `/ide` compatible local bridge.
-- Local HTTP context endpoint for terminal/browser integrations.
+- Diff review and write-capable Claude bridge tools with explicit editor UI review.
+- Codex IDE integration if OpenAI documents a third-party custom IDE protocol.
 - PR-ready local polish and testing workflow.
 
 ## Run Locally
@@ -46,6 +48,8 @@ Known optional language-server tools:
 - `rust-analyzer` for Rust
 - `typescript-language-server` for TypeScript and React
 - OmniSharp or another standalone C# LSP for C#
+
+Claude Code can discover the running editor through `/ide` after the native app starts. The app writes a user-only lock file under `~/.claude/ide/` and exposes only read-only context tools in this first bridge.
 
 ## Verification
 

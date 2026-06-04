@@ -41,6 +41,11 @@ export interface LspStartResult {
   running: boolean;
 }
 
+export interface ClaudeBridgeStatus {
+  endpoint: string;
+  lockFile: string;
+}
+
 export function isNativeTauri() {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 }
@@ -83,6 +88,11 @@ export function getLspServers() {
 export function getHttpEndpoint() {
   if (!isNativeTauri()) return Promise.resolve(window.location.origin);
   return invoke<string | undefined>("get_http_endpoint");
+}
+
+export function getClaudeBridgeStatus() {
+  if (!isNativeTauri()) return Promise.resolve(undefined);
+  return invoke<ClaudeBridgeStatus | undefined>("get_claude_bridge_status");
 }
 
 export function startLsp(language: string) {

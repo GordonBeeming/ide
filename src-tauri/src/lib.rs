@@ -1,3 +1,4 @@
+mod claude_bridge;
 mod http_server;
 mod lsp;
 mod workspace;
@@ -17,6 +18,8 @@ struct AppState {
     lsp_manager: lsp::LspManager,
     http_endpoint: Arc<RwLock<Option<String>>>,
     http_error: Arc<RwLock<Option<String>>>,
+    claude_bridge: Arc<RwLock<Option<claude_bridge::ClaudeBridgeInfo>>>,
+    claude_bridge_error: Arc<RwLock<Option<String>>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -46,6 +49,8 @@ enum CommandError {
     Lsp(#[from] lsp::LspError),
     #[error("local HTTP server failed: {0}")]
     HttpServer(String),
+    #[error("Claude IDE bridge failed: {0}")]
+    ClaudeBridge(String),
 }
 
 impl serde::Serialize for CommandError {
@@ -111,6 +116,16 @@ async fn get_http_endpoint(state: State<'_, AppState>) -> Result<Option<String>,
 }
 
 #[tauri::command]
+async fn get_claude_bridge_status(
+    state: State<'_, AppState>,
+) -> Result<Option<claude_bridge::ClaudeBridgeInfo>, CommandError> {
+    if let Some(error) = state.claude_bridge_error.read().await.clone() {
+        return Err(CommandError::ClaudeBridge(error));
+    }
+    Ok(state.claude_bridge.read().await.clone())
+}
+
+#[tauri::command]
 async fn start_lsp(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
@@ -137,18 +152,22 @@ async fn send_lsp_message(
 }
 
 pub fn run() {
-    let workspace_root = resolve_workspace_root()
-        .expect("failed to determine current workspace directory");
+    let workspace_root =
+        resolve_workspace_root().expect("failed to determine current workspace directory");
     let agent_context = Arc::new(RwLock::new(AgentContext::default()));
     let lsp_manager = lsp::LspManager::new();
     let http_endpoint = Arc::new(RwLock::new(None));
     let http_error = Arc::new(RwLock::new(None));
+    let claude_bridge = Arc::new(RwLock::new(None));
+    let claude_bridge_error = Arc::new(RwLock::new(None));
     let app_state = AppState {
         workspace_root,
         agent_context,
         lsp_manager,
         http_endpoint,
         http_error,
+        claude_bridge,
+        claude_bridge_error,
     };
     let http_state = app_state.clone();
 
@@ -160,6 +179,8 @@ pub fn run() {
             let lsp_manager = http_state.lsp_manager.clone();
             let http_endpoint = http_state.http_endpoint.clone();
             let http_error = http_state.http_error.clone();
+            let claude_bridge = http_state.claude_bridge.clone();
+            let claude_bridge_error = http_state.claude_bridge_error.clone();
             let frontend_dist = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../dist");
             tauri::async_runtime::spawn(async move {
                 match http_server::start_http_server(
@@ -179,6 +200,24 @@ pub fn run() {
                     }
                 }
             });
+            let workspace_root = http_state.workspace_root.clone();
+            let agent_context = http_state.agent_context.clone();
+            tauri::async_runtime::spawn(async move {
+                match claude_bridge::start_claude_bridge(
+                    workspace_root,
+                    agent_context,
+                    claude_bridge_error.clone(),
+                )
+                .await
+                {
+                    Ok(info) => {
+                        *claude_bridge.write().await = Some(info);
+                    }
+                    Err(error) => {
+                        *claude_bridge_error.write().await = Some(error.to_string());
+                    }
+                }
+            });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -190,6 +229,7 @@ pub fn run() {
             get_agent_context,
             get_lsp_servers,
             get_http_endpoint,
+            get_claude_bridge_status,
             start_lsp,
             send_lsp_message
         ])
