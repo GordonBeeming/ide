@@ -21,6 +21,7 @@ struct AppState {
     lsp_manager: lsp::LspManager,
     http_endpoint: Arc<RwLock<Option<String>>>,
     http_error: Arc<RwLock<Option<String>>>,
+    codex_mcp: Arc<RwLock<Option<CodexMcpInfo>>>,
     claude_bridge: Arc<RwLock<Option<claude_bridge::ClaudeBridgeInfo>>>,
     claude_bridge_error: Arc<RwLock<Option<String>>>,
 }
@@ -42,6 +43,13 @@ struct EditorSelection {
     start_column: u32,
     end_line: u32,
     end_column: u32,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CodexMcpInfo {
+    endpoint: String,
+    bearer_token: String,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -168,6 +176,16 @@ async fn get_http_endpoint(state: State<'_, AppState>) -> Result<Option<String>,
 }
 
 #[tauri::command]
+async fn get_codex_mcp_status(
+    state: State<'_, AppState>,
+) -> Result<Option<CodexMcpInfo>, CommandError> {
+    if let Some(error) = state.http_error.read().await.clone() {
+        return Err(CommandError::HttpServer(error));
+    }
+    Ok(state.codex_mcp.read().await.clone())
+}
+
+#[tauri::command]
 async fn get_claude_bridge_status(
     state: State<'_, AppState>,
 ) -> Result<Option<claude_bridge::ClaudeBridgeInfo>, CommandError> {
@@ -211,6 +229,7 @@ pub fn run() {
     let lsp_manager = lsp::LspManager::new();
     let http_endpoint = Arc::new(RwLock::new(None));
     let http_error = Arc::new(RwLock::new(None));
+    let codex_mcp = Arc::new(RwLock::new(None));
     let claude_bridge = Arc::new(RwLock::new(None));
     let claude_bridge_error = Arc::new(RwLock::new(None));
     let app_state = AppState {
@@ -219,6 +238,7 @@ pub fn run() {
         lsp_manager,
         http_endpoint,
         http_error,
+        codex_mcp,
         claude_bridge,
         claude_bridge_error,
     };
@@ -232,20 +252,27 @@ pub fn run() {
             let lsp_manager = http_state.lsp_manager.clone();
             let http_endpoint = http_state.http_endpoint.clone();
             let http_error = http_state.http_error.clone();
+            let codex_mcp = http_state.codex_mcp.clone();
             let claude_bridge = http_state.claude_bridge.clone();
             let claude_bridge_error = http_state.claude_bridge_error.clone();
             let frontend_dist = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../dist");
+            let mcp_token = uuid::Uuid::new_v4().to_string();
             tauri::async_runtime::spawn(async move {
                 match http_server::start_http_server(
                     workspace_root,
                     agent_context,
                     lsp_manager,
                     frontend_dist,
+                    mcp_token,
                     http_error.clone(),
                 )
                 .await
                 {
                     Ok(info) => {
+                        *codex_mcp.write().await = Some(CodexMcpInfo {
+                            endpoint: info.codex_mcp_endpoint,
+                            bearer_token: info.codex_mcp_token,
+                        });
                         *http_endpoint.write().await = Some(info.endpoint);
                     }
                     Err(error) => {
@@ -286,6 +313,7 @@ pub fn run() {
             get_agent_context,
             get_lsp_servers,
             get_http_endpoint,
+            get_codex_mcp_status,
             get_claude_bridge_status,
             start_lsp,
             send_lsp_message

@@ -24,13 +24,14 @@ Implemented:
 - LSP process manager for Rust, TypeScript/React, and C#.
 - Local HTTP context endpoint for terminal/browser integrations.
 - Claude Code `/ide` discovery bridge with authenticated localhost WebSocket MCP and read-only editor-context tools.
+- Codex-compatible read-only MCP endpoint with a per-run bearer token.
 
 Planned:
 
 - Go-to definition and richer diagnostics through CodeMirror LSP integration.
 - Better keyboard-first navigation for search results and tabs.
 - Diff review and write-capable Claude bridge tools with explicit editor UI review.
-- Codex IDE integration if OpenAI documents a third-party custom IDE protocol.
+- Deeper Codex IDE integration if OpenAI documents a third-party custom IDE protocol beyond MCP.
 - PR-ready local polish and testing workflow.
 
 ## Run Locally
@@ -55,6 +56,16 @@ Known optional language-server tools:
 - OmniSharp or another standalone C# LSP for C#
 
 Claude Code can discover the running editor through `/ide` after the native app starts. The app writes a user-only lock file under `~/.claude/ide/` and exposes only read-only context tools in this first bridge.
+
+Codex can consume editor context through the MCP endpoint shown in the native sidebar. Add it to Codex with the shown bearer token:
+
+```toml
+[mcp_servers.ide]
+url = "http://127.0.0.1:17877/mcp"
+bearer_token_env_var = "IDE_CODEX_MCP_TOKEN"
+```
+
+The public Codex docs describe `/ide` for Codex-owned IDE surfaces, but do not currently document a Claude-style third-party lockfile protocol.
 
 ## Verification
 

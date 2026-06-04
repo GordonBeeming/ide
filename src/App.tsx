@@ -17,11 +17,13 @@ import { destroyNativeWindow, onNativeWindowCloseRequested } from "./appWindow";
 import {
   AgentContext,
   ClaudeBridgeStatus,
+  CodexMcpStatus,
   EditorSelection,
   FileEntry,
   LspServerStatus,
   SearchMatch,
   getClaudeBridgeStatus,
+  getCodexMcpStatus,
   getHttpEndpoint,
   getLspServers,
   getWorkspaceRoot,
@@ -75,6 +77,7 @@ export default function App() {
   const [selection, setSelection] = useState<EditorSelection>();
   const [lspServers, setLspServers] = useState<LspServerStatus[]>([]);
   const [httpEndpoint, setHttpEndpoint] = useState<string>();
+  const [codexMcp, setCodexMcp] = useState<CodexMcpStatus>();
   const [claudeBridge, setClaudeBridge] = useState<ClaudeBridgeStatus>();
 
   const activeFile = openFiles.find((file) => file.path === activePath);
@@ -103,6 +106,7 @@ export default function App() {
     try {
       setLspServers(await getLspServers());
       setHttpEndpoint(await getHttpEndpoint());
+      setCodexMcp(await getCodexMcpStatus());
       setClaudeBridge(await getClaudeBridgeStatus());
     } catch (reason) {
       setError(`Unable to load local integration status: ${String(reason)}`);
@@ -491,6 +495,17 @@ export default function App() {
               <div className="eyebrow">Claude Bridge</div>
               <div className="endpoint" title={claudeBridge.lockFile}>
                 {claudeBridge.endpoint}
+              </div>
+            </>
+          ) : null}
+          {codexMcp ? (
+            <>
+              <div className="eyebrow">Codex MCP</div>
+              <div className="endpoint" title="Use this endpoint with the bearer token from the native app session">
+                {codexMcp.endpoint}
+              </div>
+              <div className="endpoint" title={codexMcp.bearerToken}>
+                token: {codexMcp.bearerToken}
               </div>
             </>
           ) : null}

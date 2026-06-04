@@ -40,7 +40,7 @@ The app is intentionally split into a small always-loaded shell and lazy-loaded 
 - `src/editorNavigation.ts`: tested line clamping for search-result reveal behavior.
 - `src/language.ts`: lazy language loaders for Rust, TypeScript/JavaScript/React, HTML, CSS, and C#.
 - `src-tauri/src/workspace.rs`: Rust-native workspace scanning and guarded file IO.
-- `src-tauri/src/http_server.rs`: loopback HTTP API and static asset server for browser/terminal use.
+- `src-tauri/src/http_server.rs`: loopback HTTP API, static asset server, and authenticated read-only Codex MCP endpoint.
 - `src-tauri/src/claude_bridge.rs`: authenticated Claude Code IDE WebSocket bridge.
 - `src-tauri/src/lib.rs`: Tauri command registration and in-memory editor context state.
 
@@ -110,6 +110,7 @@ The editor should use the official `@codemirror/lsp-client` transport interface.
 The app tracks active file, open files, and selected text through shared backend state. Current bridge surfaces:
 
 - Claude-compatible localhost IDE bridge using `~/.claude/ide/*.lock`, WebSocket MCP, and a per-run auth token.
+- Codex-compatible localhost MCP endpoint over HTTP with a per-run bearer token.
 - Local HTTP context endpoint for terminal/browser integrations.
 
 The Claude bridge currently exposes read-only tools:
@@ -120,6 +121,14 @@ The Claude bridge currently exposes read-only tools:
 - `getWorkspaceFolders`
 - `getDiagnostics` returning an empty list until diagnostics are persisted by the editor
 
+The Codex MCP endpoint exposes equivalent read-only tools with snake_case names:
+
+- `get_current_selection`
+- `get_latest_selection`
+- `get_open_editors`
+- `get_workspace_folders`
+- `get_editor_context`
+
 Write-capable tools such as `openDiff`, `saveDocument`, or code execution should not be added until the editor has a visible review/confirmation surface for those actions.
 
-Codex support should be added where OpenAI documents a compatible third-party custom IDE protocol. Current public docs confirm Codex `/ide` consumes open files and selection context, but do not document a Claude-style third-party lockfile protocol.
+Current public Codex docs confirm Codex `/ide` consumes open files and selection context in Codex-owned IDE surfaces, and that third-party tools can integrate with Codex through MCP. They do not document a Claude-style third-party IDE lockfile protocol.

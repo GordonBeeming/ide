@@ -46,6 +46,11 @@ export interface ClaudeBridgeStatus {
   lockFile: string;
 }
 
+export interface CodexMcpStatus {
+  endpoint: string;
+  bearerToken: string;
+}
+
 export interface SearchMatch {
   path: string;
   lineNumber: number;
@@ -115,6 +120,10 @@ export function getHttpEndpoint() {
 export function getClaudeBridgeStatus() {
   if (!isNativeTauri()) return Promise.resolve(undefined);
   return invoke<ClaudeBridgeStatus | undefined>("get_claude_bridge_status");
+}
+
+export function getCodexMcpStatus() {
+  return callApi<CodexMcpStatus | undefined>("get_codex_mcp_status", "/api/codex-mcp");
 }
 
 export function startLsp(language: string) {

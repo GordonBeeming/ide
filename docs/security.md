@@ -16,6 +16,7 @@ Security is a core product constraint for this IDE. Changes should be reviewed w
 - Local HTTP and Claude bridge servers bind only to `127.0.0.1`.
 - Claude IDE bridge discovery uses a user-only `~/.claude/ide/` directory, a `0600` lock file, and a per-run UUID auth token.
 - Claude bridge tools are read-only in the first implementation.
+- Codex MCP requests require a per-run bearer token and expose only read-only editor context tools. The token is available from the loopback status API because the terminal-browser UI needs to show it.
 - Errors should be surfaced to the UI. Do not add empty catches or console-only error handling.
 
 ## Rules For Future Changes
