@@ -13,6 +13,11 @@ interface LspMessageEvent {
   message: string;
 }
 
+interface LspLogEvent {
+  language: string;
+  message: string;
+}
+
 interface ClientRecord {
   client: LSPClient;
   sessionId: string;
@@ -22,6 +27,7 @@ interface ClientRecord {
 const clients = new Map<string, ClientRecord>();
 let rootUri = "";
 let errorHandler: ((message: string) => void) | undefined;
+let lspLogListenerStarted = false;
 
 export function setLspRootUri(uri: string) {
   rootUri = uri;
@@ -29,6 +35,15 @@ export function setLspRootUri(uri: string) {
 
 export function setLspErrorHandler(handler: (message: string) => void) {
   errorHandler = handler;
+  if (!isNativeTauri() || lspLogListenerStarted) return;
+
+  lspLogListenerStarted = true;
+  listen<LspLogEvent>("lsp://log", (event) => {
+    errorHandler?.(`LSP ${event.payload.language}: ${event.payload.message}`);
+  }).catch((error) => {
+    errorHandler?.(`Unable to register LSP log listener: ${String(error)}`);
+    lspLogListenerStarted = false;
+  });
 }
 
 export async function lspExtensionsForPath(path: string): Promise<Extension[]> {

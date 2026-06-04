@@ -75,7 +75,10 @@ pub async fn start_http_server(
         .route("/api/workspace-root", get(workspace_root))
         .route("/api/files", get(files))
         .route("/api/search", get(search))
-        .route("/api/file", get(read_file).put(write_file).options(cors_preflight))
+        .route(
+            "/api/file",
+            get(read_file).put(write_file).options(cors_preflight),
+        )
         .route(
             "/api/agent-context",
             get(get_agent_context)
@@ -114,7 +117,10 @@ async fn bind_loopback() -> Result<TcpListener, std::io::Error> {
 }
 
 async fn cors_preflight(headers: HeaderMap) -> Response {
-    apply_loopback_cors(headers.get(header::ORIGIN), StatusCode::NO_CONTENT.into_response())
+    apply_loopback_cors(
+        headers.get(header::ORIGIN),
+        StatusCode::NO_CONTENT.into_response(),
+    )
 }
 
 async fn loopback_cors(request: Request<axum::body::Body>, next: Next) -> Response {
@@ -594,7 +600,9 @@ mod tests {
             allowed_loopback_origin(&HeaderValue::from_static("http://localhost:1420")),
             Some(HeaderValue::from_static("http://localhost:1420"))
         );
-        assert!(allowed_loopback_origin(&HeaderValue::from_static("https://example.com")).is_none());
+        assert!(
+            allowed_loopback_origin(&HeaderValue::from_static("https://example.com")).is_none()
+        );
     }
 
     #[test]

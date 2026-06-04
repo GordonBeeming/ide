@@ -102,7 +102,13 @@ impl LspManager {
                 stderr,
             );
         }
-        spawn_exit_watcher(app, language.to_string(), session_id.clone(), child);
+        spawn_exit_watcher(
+            app,
+            language.to_string(),
+            session_id.clone(),
+            child,
+            self.sessions.clone(),
+        );
 
         Ok(LspStartResult {
             language: language.to_string(),
@@ -297,6 +303,13 @@ mod tests {
 
         assert!(is_executable(&file));
     }
+
+    #[test]
+    fn stale_session_removal_only_matches_current_session_id() {
+        assert!(should_remove_session(Some("current"), "current"));
+        assert!(!should_remove_session(Some("current"), "old"));
+        assert!(!should_remove_session(None, "current"));
+    }
 }
 
 fn spawn_stdout_reader(
@@ -362,18 +375,35 @@ fn spawn_stderr_reader(
                         );
                     }
                 }
-                Err(_) => break,
+                Err(error) => {
+                    let _ = app.emit(
+                        "lsp://log",
+                        LspLogEvent {
+                            language: language.clone(),
+                            session_id: session_id.clone(),
+                            message: format!("language server stderr read failed: {error}"),
+                        },
+                    );
+                    break;
+                }
             }
         }
     });
 }
 
-fn spawn_exit_watcher(app: AppHandle, language: String, session_id: String, mut child: Child) {
+fn spawn_exit_watcher(
+    app: AppHandle,
+    language: String,
+    session_id: String,
+    mut child: Child,
+    sessions: Arc<RwLock<HashMap<String, LspSession>>>,
+) {
     tauri::async_runtime::spawn(async move {
         let message = match child.wait().await {
             Ok(status) => format!("language server exited with {status}"),
             Err(error) => format!("language server exit watch failed: {error}"),
         };
+        remove_session_if_matches(&sessions, &language, &session_id).await;
         let _ = app.emit(
             "lsp://log",
             LspLogEvent {
@@ -415,4 +445,24 @@ where
     let mut body = vec![0; length];
     reader.read_exact(&mut body).await?;
     Ok(Some(String::from_utf8_lossy(&body).to_string()))
+}
+
+async fn remove_session_if_matches(
+    sessions: &Arc<RwLock<HashMap<String, LspSession>>>,
+    language: &str,
+    session_id: &str,
+) {
+    let mut sessions = sessions.write().await;
+    if should_remove_session(
+        sessions
+            .get(language)
+            .map(|session| session.session_id.as_str()),
+        session_id,
+    ) {
+        sessions.remove(language);
+    }
+}
+
+fn should_remove_session(existing_session_id: Option<&str>, session_id: &str) -> bool {
+    existing_session_id.is_some_and(|existing| existing == session_id)
 }
