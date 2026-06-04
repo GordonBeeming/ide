@@ -1,11 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
-import { basicSetup, EditorView } from "codemirror";
-import { EditorState } from "@codemirror/state";
-import { oneDark } from "@codemirror/theme-one-dark";
-import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
-import { searchKeymap } from "@codemirror/search";
-import { keymap, lineNumbers } from "@codemirror/view";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import {
   ChevronRight,
   Circle,
@@ -16,7 +9,6 @@ import {
   Search,
 } from "lucide-react";
 import { iconForFile } from "./fileTypes";
-import { languageForPath } from "./language";
 import {
   AgentContext,
   EditorSelection,
@@ -27,6 +19,8 @@ import {
   updateAgentContext,
   writeFile,
 } from "./tauri";
+
+const EditorPane = lazy(() => import("./EditorPane"));
 
 interface OpenFile {
   path: string;
@@ -49,8 +43,6 @@ export default function App() {
   const [error, setError] = useState<string>();
   const [status, setStatus] = useState("Ready");
   const [selection, setSelection] = useState<EditorSelection>();
-  const editorHost = useRef<HTMLDivElement | null>(null);
-  const editorRef = useRef<EditorView | null>(null);
 
   const activeFile = openFiles.find((file) => file.path === activePath);
   const tree = useMemo(() => buildTree(files), [files]);
@@ -136,60 +128,6 @@ export default function App() {
   }, [activeFile, refreshFiles]);
 
   useEffect(() => {
-    if (!editorHost.current) return;
-    editorRef.current?.destroy();
-
-    if (!activeFile) {
-      editorRef.current = null;
-      return;
-    }
-
-    const view = new EditorView({
-      parent: editorHost.current,
-      state: EditorState.create({
-        doc: activeFile.contents,
-        extensions: [
-          basicSetup,
-          lineNumbers(),
-          history(),
-          keymap.of([...defaultKeymap, ...historyKeymap, ...searchKeymap]),
-          ...languageForPath(activeFile.path),
-          EditorView.lineWrapping,
-          EditorView.updateListener.of((update) => {
-            if (update.docChanged) {
-              updateContents(activeFile.path, update.state.doc.toString());
-            }
-
-            if (update.selectionSet || update.docChanged) {
-              const range = update.state.selection.main;
-              const from = update.state.doc.lineAt(range.from);
-              const to = update.state.doc.lineAt(range.to);
-              const text = update.state.sliceDoc(range.from, range.to);
-              setSelection(
-                text.length
-                  ? {
-                      filePath: activeFile.path,
-                      text,
-                      startLine: from.number,
-                      startColumn: range.from - from.from + 1,
-                      endLine: to.number,
-                      endColumn: range.to - to.from + 1,
-                    }
-                  : undefined,
-              );
-            }
-          }),
-          highContrastTheme,
-          oneDark,
-        ],
-      }),
-    });
-
-    editorRef.current = view;
-    return () => view.destroy();
-  }, [activeFile?.path]);
-
-  useEffect(() => {
     const handler = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "s") {
         event.preventDefault();
@@ -265,7 +203,14 @@ export default function App() {
 
         <div className="editor-region">
           {activeFile ? (
-            <div className="editor-host" ref={editorHost} />
+            <Suspense fallback={<div className="empty-state">Loading editor</div>}>
+              <EditorPane
+                contents={activeFile.contents}
+                path={activeFile.path}
+                onChange={updateContents}
+                onSelection={setSelection}
+              />
+            </Suspense>
           ) : (
             <div className="empty-state">
               <FileCog size={30} />
@@ -376,18 +321,3 @@ function filterTree(nodes: TreeNode[], filter: string): TreeNode[] {
 function lastSegment(path: string) {
   return path.split(/[\\/]/).filter(Boolean).at(-1) ?? "";
 }
-
-const highContrastTheme = EditorView.theme({
-  "&": {
-    height: "100%",
-    fontSize: "13px",
-  },
-  ".cm-scroller": {
-    fontFamily:
-      "'SF Mono', 'Cascadia Code', 'JetBrains Mono', ui-monospace, monospace",
-    lineHeight: "1.55",
-  },
-  ".cm-gutters": {
-    borderRight: "1px solid var(--border)",
-  },
-});
