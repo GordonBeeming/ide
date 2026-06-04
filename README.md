@@ -13,6 +13,7 @@ Implemented:
 - File tree with file and folder icons.
 - Native folder picker for switching workspaces.
 - File-name filtering and bounded text search across the current workspace.
+- Keyboard quick-open palette for opening files by path.
 - Guarded Rust-native workspace scanning and file read/write commands.
 - CodeMirror 6 editor.
 - Syntax highlighting for Rust, TypeScript, JavaScript, React/TSX/JSX, HTML, CSS, and C#.

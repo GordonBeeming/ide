@@ -35,6 +35,8 @@ The app is intentionally split into a small always-loaded shell and lazy-loaded 
 
 - `src/App.tsx`: workspace shell, tree view, tabs, file open/save orchestration.
 - `src/EditorPane.tsx`: CodeMirror editor. Loaded only after a file is opened.
+- `src/quickOpen.ts`: tested quick-open file matching and ranking.
+- `src/editorNavigation.ts`: tested line clamping for search-result reveal behavior.
 - `src/language.ts`: lazy language loaders for Rust, TypeScript/JavaScript/React, HTML, CSS, and C#.
 - `src-tauri/src/workspace.rs`: Rust-native workspace scanning and guarded file IO.
 - `src-tauri/src/http_server.rs`: loopback HTTP API and static asset server for browser/terminal use.

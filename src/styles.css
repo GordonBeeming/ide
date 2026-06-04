@@ -417,3 +417,82 @@ button {
   color: var(--text);
   font-size: 13px;
 }
+
+.quick-open {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: start center;
+  padding-top: min(18vh, 120px);
+  background: oklch(8% 0.01 230 / 36%);
+}
+
+.quick-open__panel {
+  width: min(680px, calc(100vw - 32px));
+  max-height: min(520px, calc(100vh - 80px));
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+}
+
+.quick-open__input {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border);
+  color: var(--muted);
+}
+
+.quick-open__input input {
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text);
+  font-size: 15px;
+}
+
+.quick-open__results {
+  max-height: 440px;
+  overflow: auto;
+  padding: 6px;
+}
+
+.quick-open__result {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr);
+  width: 100%;
+  min-height: 34px;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  text-align: left;
+}
+
+.quick-open__result:hover,
+.quick-open__result:focus-visible {
+  background: var(--accent-weak);
+  color: var(--text);
+  outline: 0;
+}
+
+.quick-open__result span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.quick-open__empty {
+  padding: 12px 10px;
+  color: var(--muted);
+  font-size: 13px;
+}

@@ -11,6 +11,7 @@ import {
   X,
 } from "lucide-react";
 import { iconForFile } from "./fileTypes";
+import { quickOpenMatches } from "./quickOpen";
 import {
   AgentContext,
   ClaudeBridgeStatus,
@@ -62,6 +63,8 @@ export default function App() {
   const [contentQuery, setContentQuery] = useState("");
   const [searchResults, setSearchResults] = useState<SearchMatch[]>([]);
   const [searching, setSearching] = useState(false);
+  const [quickOpenVisible, setQuickOpenVisible] = useState(false);
+  const [quickOpenQuery, setQuickOpenQuery] = useState("");
   const [error, setError] = useState<string>();
   const [status, setStatus] = useState("Ready");
   const [selection, setSelection] = useState<EditorSelection>();
@@ -79,6 +82,10 @@ export default function App() {
   const filteredTree = useMemo(
     () => filterTree(tree, filter.trim().toLowerCase()),
     [filter, tree],
+  );
+  const quickOpenResults = useMemo(
+    () => quickOpenMatches(files, quickOpenQuery, 12),
+    [files, quickOpenQuery],
   );
 
   const refreshFiles = useCallback(async () => {
@@ -203,6 +210,19 @@ export default function App() {
     [files, openPath],
   );
 
+  const closeQuickOpen = useCallback(() => {
+    setQuickOpenVisible(false);
+    setQuickOpenQuery("");
+  }, []);
+
+  const openQuickPath = useCallback(
+    async (path: string, pinned = false) => {
+      await openPathByName(path, pinned);
+      closeQuickOpen();
+    },
+    [closeQuickOpen, openPathByName],
+  );
+
   const updateContents = useCallback((path: string, contents: string) => {
     setOpenFiles((current) => updateTabContents(current, path, contents));
   }, []);
@@ -270,11 +290,17 @@ export default function App() {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "s") {
         event.preventDefault();
         saveActive();
+      } else if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "p") {
+        event.preventDefault();
+        setQuickOpenVisible(true);
+      } else if (event.key === "Escape" && quickOpenVisible) {
+        event.preventDefault();
+        closeQuickOpen();
       }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [saveActive]);
+  }, [closeQuickOpen, quickOpenVisible, saveActive]);
 
   return (
     <main className="app-shell">
@@ -467,6 +493,50 @@ export default function App() {
           <span>{cursorPosition}</span>
         </footer>
       </section>
+
+      {quickOpenVisible ? (
+        <div className="quick-open" role="dialog" aria-label="Quick open">
+          <div className="quick-open__panel">
+            <label className="quick-open__input">
+              <Search size={16} />
+              <input
+                autoFocus
+                value={quickOpenQuery}
+                onChange={(event) => setQuickOpenQuery(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" && quickOpenResults[0]) {
+                    event.preventDefault();
+                    openQuickPath(quickOpenResults[0].path, false);
+                  } else if (event.key === "Escape") {
+                    event.preventDefault();
+                    closeQuickOpen();
+                  }
+                }}
+                placeholder="Open file"
+              />
+            </label>
+            <div className="quick-open__results">
+              {quickOpenResults.map((file) => {
+                const Icon = iconForFile(file.name, false);
+                return (
+                  <button
+                    className="quick-open__result"
+                    key={file.path}
+                    onClick={() => openQuickPath(file.path, false)}
+                    onDoubleClick={() => openQuickPath(file.path, true)}
+                  >
+                    <Icon size={15} />
+                    <span>{file.path}</span>
+                  </button>
+                );
+              })}
+              {quickOpenResults.length === 0 ? (
+                <div className="quick-open__empty">No matching files</div>
+              ) : null}
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {error ? <div className="toast">{error}</div> : null}
     </main>
