@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { quickOpenMatches } from "./quickOpen";
+import {
+  clampQuickOpenSelection,
+  moveQuickOpenSelection,
+  quickOpenMatches,
+} from "./quickOpen";
 import type { FileEntry } from "./tauri";
 
 const file = (path: string, isDir = false): FileEntry => ({
@@ -37,5 +41,17 @@ describe("quick open", () => {
     );
 
     expect(matches.map((match) => match.path)).toEqual(["a.ts", "b.ts"]);
+  });
+
+  it("wraps keyboard selection through available results", () => {
+    expect(moveQuickOpenSelection(0, 1, 3)).toBe(1);
+    expect(moveQuickOpenSelection(2, 1, 3)).toBe(0);
+    expect(moveQuickOpenSelection(0, -1, 3)).toBe(2);
+  });
+
+  it("clamps keyboard selection when results shrink", () => {
+    expect(clampQuickOpenSelection(8, 3)).toBe(2);
+    expect(clampQuickOpenSelection(-1, 3)).toBe(0);
+    expect(clampQuickOpenSelection(4, 0)).toBe(0);
   });
 });

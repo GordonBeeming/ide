@@ -533,7 +533,8 @@ button {
 }
 
 .quick-open__result:hover,
-.quick-open__result:focus-visible {
+.quick-open__result:focus-visible,
+.quick-open__result--active {
   background: var(--accent-weak);
   color: var(--text);
   outline: 0;

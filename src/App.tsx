@@ -14,7 +14,11 @@ import {
 } from "lucide-react";
 import { iconForFile } from "./fileTypes";
 import { codexMcpConfigSnippet } from "./integrations";
-import { quickOpenMatches } from "./quickOpen";
+import {
+  clampQuickOpenSelection,
+  moveQuickOpenSelection,
+  quickOpenMatches,
+} from "./quickOpen";
 import { destroyNativeWindow, onNativeWindowCloseRequested } from "./appWindow";
 import {
   AgentContext,
@@ -72,6 +76,7 @@ export default function App() {
   const [searching, setSearching] = useState(false);
   const [quickOpenVisible, setQuickOpenVisible] = useState(false);
   const [quickOpenQuery, setQuickOpenQuery] = useState("");
+  const [quickOpenIndex, setQuickOpenIndex] = useState(0);
   const [pendingClosePath, setPendingClosePath] = useState<string>();
   const [pendingAppClose, setPendingAppClose] = useState(false);
   const [error, setError] = useState<string>();
@@ -230,7 +235,14 @@ export default function App() {
   const closeQuickOpen = useCallback(() => {
     setQuickOpenVisible(false);
     setQuickOpenQuery("");
+    setQuickOpenIndex(0);
   }, []);
+
+  useEffect(() => {
+    setQuickOpenIndex((current) =>
+      clampQuickOpenSelection(current, quickOpenResults.length),
+    );
+  }, [quickOpenResults.length]);
 
   const openQuickPath = useCallback(
     async (path: string, pinned = false) => {
@@ -669,11 +681,24 @@ export default function App() {
               <input
                 autoFocus
                 value={quickOpenQuery}
-                onChange={(event) => setQuickOpenQuery(event.target.value)}
+                onChange={(event) => {
+                  setQuickOpenQuery(event.target.value);
+                  setQuickOpenIndex(0);
+                }}
                 onKeyDown={(event) => {
-                  if (event.key === "Enter" && quickOpenResults[0]) {
+                  if (event.key === "ArrowDown") {
                     event.preventDefault();
-                    openQuickPath(quickOpenResults[0].path, false);
+                    setQuickOpenIndex((current) =>
+                      moveQuickOpenSelection(current, 1, quickOpenResults.length),
+                    );
+                  } else if (event.key === "ArrowUp") {
+                    event.preventDefault();
+                    setQuickOpenIndex((current) =>
+                      moveQuickOpenSelection(current, -1, quickOpenResults.length),
+                    );
+                  } else if (event.key === "Enter" && quickOpenResults[quickOpenIndex]) {
+                    event.preventDefault();
+                    openQuickPath(quickOpenResults[quickOpenIndex].path, false);
                   } else if (event.key === "Escape") {
                     event.preventDefault();
                     closeQuickOpen();
@@ -683,14 +708,18 @@ export default function App() {
               />
             </label>
             <div className="quick-open__results">
-              {quickOpenResults.map((file) => {
+              {quickOpenResults.map((file, index) => {
                 const Icon = iconForFile(file.name, false);
                 return (
                   <button
-                    className="quick-open__result"
+                    className={[
+                      "quick-open__result",
+                      index === quickOpenIndex ? "quick-open__result--active" : "",
+                    ].join(" ")}
                     key={file.path}
                     onClick={() => openQuickPath(file.path, false)}
                     onDoubleClick={() => openQuickPath(file.path, true)}
+                    onMouseEnter={() => setQuickOpenIndex(index)}
                   >
                     <Icon size={15} />
                     <span>{file.path}</span>

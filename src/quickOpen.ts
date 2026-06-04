@@ -20,6 +20,20 @@ export function quickOpenMatches(
     .map((item) => item.file);
 }
 
+export function moveQuickOpenSelection(
+  currentIndex: number,
+  direction: 1 | -1,
+  resultCount: number,
+) {
+  if (resultCount <= 0) return 0;
+  return (currentIndex + direction + resultCount) % resultCount;
+}
+
+export function clampQuickOpenSelection(currentIndex: number, resultCount: number) {
+  if (resultCount <= 0) return 0;
+  return Math.min(Math.max(currentIndex, 0), resultCount - 1);
+}
+
 function scorePath(path: string, query: string) {
   const directIndex = path.indexOf(query);
   if (directIndex >= 0) return directIndex;
