@@ -39,6 +39,7 @@ body,
 #root {
   height: 100%;
   margin: 0;
+  overflow: hidden;
 }
 
 button,
@@ -53,7 +54,8 @@ button {
 .app-shell {
   display: grid;
   grid-template-columns: 288px minmax(0, 1fr);
-  height: 100%;
+  height: 100dvh;
+  max-height: 100dvh;
   overflow: hidden;
   background: var(--bg);
 }
@@ -65,6 +67,9 @@ button {
 .sidebar {
   display: flex;
   min-width: 0;
+  min-height: 0;
+  max-height: 100dvh;
+  overflow: hidden;
   flex-direction: column;
   border-right: 1px solid var(--border);
   background: var(--panel);
@@ -157,6 +162,7 @@ button {
 
 .file-tree {
   flex: 1;
+  min-height: 0;
   overflow: auto;
   padding: 3px 0 12px;
 }
@@ -312,6 +318,9 @@ button {
 }
 
 .lsp-panel {
+  flex: 0 0 auto;
+  max-height: 260px;
+  overflow: auto;
   border-top: 1px solid var(--border);
   padding: 10px;
 }
@@ -433,6 +442,8 @@ button {
 .workbench {
   display: grid;
   min-width: 0;
+  min-height: 0;
+  overflow: hidden;
   grid-template-rows: 45px minmax(0, 1fr) 27px;
 }
 

@@ -20,6 +20,8 @@ const extensionMap: Record<string, () => Promise<Extension>> = {
       jsx: true,
       typescript: false,
     }),
+  ".md": async () => (await import("@codemirror/lang-markdown")).markdown(),
+  ".markdown": async () => (await import("@codemirror/lang-markdown")).markdown(),
   ".rs": async () => (await import("@codemirror/lang-rust")).rust(),
   ".ts": async () =>
     (await import("@codemirror/lang-javascript")).javascript({

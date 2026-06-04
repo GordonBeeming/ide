@@ -10,6 +10,23 @@ Run the desktop app from the repository root:
 
 The script checks for `npm` and `cargo`, installs Node dependencies when `node_modules` is missing, then starts Tauri dev mode.
 
+Pass a file or folder path to open that target as the launch workspace:
+
+```bash
+./run.sh /path/to/workspace
+./run.sh /path/to/workspace/src/App.tsx
+```
+
+Folder targets become the workspace root. File targets open their parent folder as the workspace and then open the file as a persistent tab.
+
+Install the macOS Finder Quick Action:
+
+```bash
+./scripts/install-macos-finder-quick-action.sh
+```
+
+The service appears under Finder's Quick Actions menu as `Open in Ide`. It starts `run.sh` with the selected file or folder and writes its launcher log to `~/Library/Logs/Ide/finder-open.log`.
+
 ## Manual Commands
 
 Run the full local verification suite:
@@ -47,7 +64,7 @@ The app is intentionally split into a small always-loaded shell and lazy-loaded 
 - `src/currentFileSearch.ts`: tested current-file search over loaded and unsaved editor contents.
 - `src/App.test.tsx`: rendered shell coverage for non-text file selection, preview-tab lifecycle, current-file search, new-file/folder creation, file rename/delete, reload-from-disk behavior, stale-save handling, Save All success/failure behavior, active-file-safe agent selection context, and content search result/error behavior.
 - `src/tauri.test.ts`: hosted browser transport coverage for bearer-token file/folder creation, file rename/delete/writes, stale-save tokens, and loopback API base selection.
-- `src/language.ts`: lazy language loaders for Rust, TypeScript/JavaScript/React, HTML, CSS, and C#.
+- `src/language.ts`: lazy language loaders for Rust, TypeScript/JavaScript/React, HTML, CSS, Markdown, and C#.
 - `src-tauri/src/workspace.rs`: Rust-native workspace scanning, guarded file/folder creation, guarded file rename/delete, and guarded file IO.
 - `src-tauri/src/http_server.rs`: loopback HTTP API, static asset server, authenticated write routes, and authenticated read-only Codex MCP endpoint.
 - `src-tauri/src/claude_bridge.rs`: authenticated Claude Code IDE WebSocket bridge.
@@ -115,6 +132,18 @@ The native folder picker is owned by the Rust backend through `tauri-plugin-dial
 - rewrites the Claude bridge lock file workspace metadata
 
 The frontend refuses to switch folders while any open tab is dirty.
+
+## Native Menu and Recents
+
+The app stores recent folders and recent files in the OS app-data directory through Tauri's `app_data_dir`, currently as `recents.json`. This keeps configuration and history out of browser local storage and avoids leaking editor workflow state into the visible UI.
+
+The File menu owns:
+
+- `Open Folder...`
+- `Recent Folders`
+- `Recent Files`
+
+Menu selections are delivered to the frontend through Tauri events. The frontend applies the same dirty-file guard used by the sidebar folder picker before switching workspace roots.
 
 ## Editor Workflow
 

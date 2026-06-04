@@ -164,4 +164,14 @@ describe("hosted Tauri API transport", () => {
     expect(fetchMock.mock.calls[0][0]).toBe("/api/codex-mcp");
     expect(fetchMock.mock.calls[1][0]).toBe("/api/agent-context");
   });
+
+  it("does not persist recent files from hosted browser mode", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const { recordRecentFile } = await import("./tauri");
+
+    await recordRecentFile("README.md");
+
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
 });

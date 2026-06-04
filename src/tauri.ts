@@ -80,6 +80,23 @@ export function getWorkspaceRoot() {
   return callApi<string>("get_workspace_root", "/api/workspace-root");
 }
 
+export function getInitialFile() {
+  if (!isNativeTauri()) return Promise.resolve(undefined);
+  return invoke<string | undefined>("get_initial_file");
+}
+
+export function setWorkspaceRootPath(path: string) {
+  if (!isNativeTauri()) {
+    return Promise.reject(new Error("Workspace switching is only available in the native Tauri app"));
+  }
+  return invoke<string>("set_workspace_root", { path });
+}
+
+export function recordRecentFile(path: string) {
+  if (!isNativeTauri()) return Promise.resolve();
+  return invoke<void>("record_recent_file", { path });
+}
+
 export function listFiles() {
   return callApi<FileEntry[]>("list_files", "/api/files");
 }

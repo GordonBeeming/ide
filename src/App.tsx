@@ -1,4 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { listen } from "@tauri-apps/api/event";
 import {
   ChevronRight,
   Circle,
@@ -49,13 +50,17 @@ import {
   getClaudeBridgeStatus,
   getCodexMcpStatus,
   getHttpEndpoint,
+  getInitialFile,
   getLspServers,
   getWorkspaceRoot,
+  isNativeTauri,
   listFiles,
   pickWorkspaceFolder,
   readFile,
+  recordRecentFile,
   renameFile,
   searchFiles,
+  setWorkspaceRootPath,
   updateAgentContext,
   writeFile,
 } from "./tauri";
@@ -93,6 +98,7 @@ export default function App() {
   const [workspaceRoot, setWorkspaceRoot] = useState("");
   const [workspaceLoading, setWorkspaceLoading] = useState(true);
   const [workspaceLoadFailed, setWorkspaceLoadFailed] = useState(false);
+  const [initialFile, setInitialFile] = useState<string>();
   const [files, setFiles] = useState<FileEntry[]>([]);
   const [activePath, setActivePath] = useState<string>();
   const [selectedPath, setSelectedPath] = useState<string>();
@@ -129,6 +135,7 @@ export default function App() {
   const [codexMcp, setCodexMcp] = useState<CodexMcpStatus>();
   const [claudeBridge, setClaudeBridge] = useState<ClaudeBridgeStatus>();
   const currentFindInputRef = useRef<HTMLInputElement | null>(null);
+  const initialFileOpenedRef = useRef(false);
 
   const activeFile = openFiles.find((file) => file.path === activePath);
   const pendingCloseFile = openFiles.find((file) => file.path === pendingClosePath);
@@ -201,6 +208,14 @@ export default function App() {
     } finally {
       setWorkspaceLoading(false);
     }
+  }, []);
+
+  useEffect(() => {
+    getInitialFile()
+      .then(setInitialFile)
+      .catch((reason) => {
+        setError(`Unable to read launch file: ${String(reason)}`);
+      });
   }, []);
 
   const refreshLspStatus = useCallback(async () => {
@@ -306,6 +321,9 @@ export default function App() {
           setOpenFiles((current) => pinTab(current, entry.path));
         }
         setActivePath(existing.path);
+        recordRecentFile(existing.path).catch((reason) => {
+          setError(`Unable to update recent files: ${String(reason)}`);
+        });
         setStatus("Ready");
         return;
       }
@@ -322,6 +340,9 @@ export default function App() {
           }),
         );
         setActivePath(entry.path);
+        recordRecentFile(entry.path).catch((reason) => {
+          setError(`Unable to update recent files: ${String(reason)}`);
+        });
         setStatus("Ready");
       } catch (reason) {
         setError(String(reason));
@@ -342,6 +363,19 @@ export default function App() {
     },
     [files, openPath],
   );
+
+  useEffect(() => {
+    if (initialFileOpenedRef.current || !initialFile || workspaceLoading) return;
+    const entry = files.find((candidate) => candidate.path === initialFile);
+    if (!entry) {
+      initialFileOpenedRef.current = true;
+      setError(`Launch file is not in the current workspace: ${initialFile}`);
+      return;
+    }
+
+    initialFileOpenedRef.current = true;
+    openPath(entry, true);
+  }, [files, initialFile, openPath, workspaceLoading]);
 
   const closeQuickOpen = useCallback(() => {
     setQuickOpenVisible(false);
@@ -593,6 +627,107 @@ export default function App() {
     await closeApplication();
   }, [closeApplication, saveAll]);
 
+  const clearWorkspaceUi = useCallback(() => {
+    setOpenFiles([]);
+    setActivePath(undefined);
+    setSelectedPath(undefined);
+    setRevealTarget(undefined);
+    setSelection(undefined);
+    setDiagnosticsByPath({});
+    setFilter("");
+    setContentQuery("");
+    setCurrentFileQuery("");
+    setSearchResults([]);
+  }, []);
+
+  const openWorkspacePath = useCallback(
+    async (path: string) => {
+      if (openFiles.some((file) => file.dirty)) {
+        setError("Save or close modified files before switching workspace.");
+        return;
+      }
+
+      setError(undefined);
+      setStatus("Opening folder");
+      try {
+        const selected = await setWorkspaceRootPath(path);
+        clearWorkspaceUi();
+        await refreshFiles();
+        setStatus(`Opened ${lastSegment(selected) || selected}`);
+      } catch (reason) {
+        setError(String(reason));
+        setStatus("Open folder failed");
+      }
+    },
+    [clearWorkspaceUi, openFiles, refreshFiles],
+  );
+
+  const openFileFromWorkspace = useCallback(
+    async (workspaceRootPath: string, path: string) => {
+      if (workspaceRootPath !== workspaceRoot && openFiles.some((file) => file.dirty)) {
+        setError("Save or close modified files before switching workspace.");
+        return;
+      }
+
+      setError(undefined);
+      setStatus(`Opening ${path}`);
+      try {
+        let entries = files;
+        if (workspaceRootPath !== workspaceRoot) {
+          await setWorkspaceRootPath(workspaceRootPath);
+          clearWorkspaceUi();
+          entries = await refreshFiles();
+        }
+
+        const entry = entries.find((candidate) => candidate.path === path);
+        if (!entry || entry.isDir) {
+          throw new Error(`Recent file is not in the current workspace: ${path}`);
+        }
+
+        await openPath(entry, true);
+      } catch (reason) {
+        setError(String(reason));
+        setStatus("Open recent file failed");
+      }
+    },
+    [clearWorkspaceUi, files, openFiles, openPath, refreshFiles, workspaceRoot],
+  );
+
+  useEffect(() => {
+    if (!isNativeTauri()) return;
+
+    let disposed = false;
+    let unlistenCallbacks: Array<() => void> = [];
+    Promise.all([
+      listen<{ path: string }>("menu://open-workspace", (event) => {
+        void openWorkspacePath(event.payload.path);
+      }),
+      listen<{ workspaceRoot: string; path: string }>("menu://open-file", (event) => {
+        void openFileFromWorkspace(event.payload.workspaceRoot, event.payload.path);
+      }),
+      listen<string>("app://error", (event) => {
+        setError(event.payload);
+      }),
+    ])
+      .then((callbacks) => {
+        if (disposed) {
+          callbacks.forEach((unlisten) => unlisten());
+          return;
+        }
+        unlistenCallbacks = callbacks;
+      })
+      .catch((reason) => {
+        if (!disposed) {
+          setError(`Unable to register native app menu handlers: ${String(reason)}`);
+        }
+      });
+
+    return () => {
+      disposed = true;
+      unlistenCallbacks.forEach((unlisten) => unlisten());
+    };
+  }, [openFileFromWorkspace, openWorkspacePath]);
+
   const openWorkspace = useCallback(async () => {
     if (openFiles.some((file) => file.dirty)) {
       setError("Save or close modified files before switching workspace.");
@@ -608,23 +743,14 @@ export default function App() {
         return;
       }
 
-      setOpenFiles([]);
-      setActivePath(undefined);
-      setSelectedPath(undefined);
-      setRevealTarget(undefined);
-      setSelection(undefined);
-      setDiagnosticsByPath({});
-      setFilter("");
-      setContentQuery("");
-      setCurrentFileQuery("");
-      setSearchResults([]);
+      clearWorkspaceUi();
       await refreshFiles();
       setStatus(`Opened ${lastSegment(selected) || selected}`);
     } catch (reason) {
       setError(String(reason));
       setStatus("Open folder failed");
     }
-  }, [openFiles, refreshFiles]);
+  }, [clearWorkspaceUi, openFiles, refreshFiles]);
 
   const createNewFile = useCallback(async () => {
     const path = newFilePath.trim();

@@ -12,6 +12,8 @@ Implemented:
 - React frontend.
 - File tree with file and folder icons.
 - Native folder picker for switching workspaces.
+- Native File menu with Open Folder, Recent Folders, and Recent Files.
+- File/folder launch targets through the local runner and macOS Finder Quick Action.
 - Explicit workspace loading, empty, and load-failure retry states.
 - Collapsible sidebar for focused editing.
 - File-name filtering and bounded text search across the current workspace.
@@ -29,6 +31,7 @@ Implemented:
 - Guarded Rust-native workspace scanning, file/folder creation, rename, deletion, and file read/write commands.
 - CodeMirror 6 editor.
 - Syntax highlighting for Rust, TypeScript, JavaScript, React/TSX/JSX, HTML, CSS, and C#.
+- Markdown syntax highlighting.
 - Lazy editor loading and lazy language loading for better startup performance.
 - System light/dark mode via `prefers-color-scheme` with a high-contrast bias, including the editor surface.
 - Active file, open file, and selection context stored in backend state.
@@ -52,6 +55,21 @@ Planned:
 ```
 
 The script installs Node dependencies when needed and starts Tauri dev mode.
+
+Open a specific folder or file:
+
+```bash
+./run.sh /path/to/workspace
+./run.sh /path/to/workspace/src/App.tsx
+```
+
+On macOS, install the Finder Quick Action for direct file/folder opening:
+
+```bash
+./scripts/install-macos-finder-quick-action.sh
+```
+
+After installation, use Finder's right-click menu: Quick Actions > Open in Ide. Recent folders and files are stored in the OS app-data location and exposed through the native File menu, not as in-app sidebar content.
 
 ## Requirements
 

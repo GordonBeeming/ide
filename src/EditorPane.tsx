@@ -65,7 +65,13 @@ export default function EditorPane({
     viewRef.current?.destroy();
     let cancelled = false;
 
-    Promise.all([languageForPath(path), lspExtensionsForPath(path)]).then(([languageExtensions, lspExtensions]) => {
+    languageForPath(path).then(async (languageExtensions) => {
+      if (cancelled || !host.current) return;
+
+      const lspExtensions = await lspExtensionsForPath(path).catch((error) => {
+        onError(`Language server unavailable for ${path}: ${String(error)}`);
+        return [];
+      });
       if (cancelled || !host.current) return;
 
       const view = new EditorView({
@@ -128,7 +134,7 @@ export default function EditorPane({
       revealLineInView(view, revealLine);
     }).catch((error) => {
       if (!cancelled) {
-        onError(`Unable to initialize editor services for ${path}: ${String(error)}`);
+        onError(`Unable to initialize editor for ${path}: ${String(error)}`);
       }
     });
 
