@@ -41,34 +41,104 @@ export interface LspStartResult {
   running: boolean;
 }
 
+export function isNativeTauri() {
+  return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+}
+
 export function getWorkspaceRoot() {
-  return invoke<string>("get_workspace_root");
+  return callApi<string>("get_workspace_root", "/api/workspace-root");
 }
 
 export function listFiles() {
-  return invoke<FileEntry[]>("list_files");
+  return callApi<FileEntry[]>("list_files", "/api/files");
 }
 
 export function readFile(path: string) {
-  return invoke<string>("read_file", { path });
+  return callApi<string>("read_file", `/api/file?path=${encodeURIComponent(path)}`, {
+    method: "GET",
+    invokeArgs: { path },
+  });
 }
 
 export function writeFile(path: string, contents: string) {
-  return invoke<void>("write_file", { path, contents });
+  return callApi<void>("write_file", "/api/file", {
+    method: "PUT",
+    body: { path, contents },
+    invokeArgs: { path, contents },
+  });
 }
 
 export function updateAgentContext(context: AgentContext) {
-  return invoke<void>("update_agent_context", { context });
+  return callApi<void>("update_agent_context", "/api/agent-context", {
+    method: "PUT",
+    body: context,
+    invokeArgs: { context },
+  });
 }
 
 export function getLspServers() {
-  return invoke<LspServerStatus[]>("get_lsp_servers");
+  return callApi<LspServerStatus[]>("get_lsp_servers", "/api/lsp");
+}
+
+export function getHttpEndpoint() {
+  if (!isNativeTauri()) return Promise.resolve(window.location.origin);
+  return invoke<string | undefined>("get_http_endpoint");
 }
 
 export function startLsp(language: string) {
+  if (!isNativeTauri()) {
+    return Promise.reject(new Error("LSP bridge is only available in the native Tauri app"));
+  }
   return invoke<LspStartResult>("start_lsp", { language });
 }
 
 export function sendLspMessage(language: string, message: string) {
+  if (!isNativeTauri()) {
+    return Promise.reject(new Error("LSP bridge is only available in the native Tauri app"));
+  }
   return invoke<void>("send_lsp_message", { language, message });
+}
+
+interface ApiOptions {
+  method?: "GET" | "PUT";
+  body?: unknown;
+  invokeArgs?: Record<string, unknown>;
+}
+
+async function callApi<T>(
+  command: string,
+  path: string,
+  options: ApiOptions = {},
+): Promise<T> {
+  if (isNativeTauri()) {
+    return invoke<T>(command, options.invokeArgs);
+  }
+
+  const response = await fetch(`${httpBase()}${path}`, {
+    method: options.method ?? "GET",
+    headers: options.body ? { "Content-Type": "application/json" } : undefined,
+    body: options.body ? JSON.stringify(options.body) : undefined,
+  });
+
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+
+  if (response.status === 204) {
+    return undefined as T;
+  }
+
+  const contentType = response.headers.get("content-type") ?? "";
+  if (contentType.includes("application/json")) {
+    return response.json() as Promise<T>;
+  }
+
+  return response.text() as Promise<T>;
+}
+
+function httpBase() {
+  if (window.location.port === "1420") {
+    return "http://127.0.0.1:17877";
+  }
+  return "";
 }

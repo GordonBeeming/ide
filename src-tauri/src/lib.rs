@@ -1,3 +1,4 @@
+mod http_server;
 mod lsp;
 mod workspace;
 
@@ -14,6 +15,8 @@ struct AppState {
     workspace_root: PathBuf,
     agent_context: Arc<RwLock<AgentContext>>,
     lsp_manager: lsp::LspManager,
+    http_endpoint: Arc<RwLock<Option<String>>>,
+    http_error: Arc<RwLock<Option<String>>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -41,6 +44,8 @@ enum CommandError {
     Workspace(#[from] WorkspaceError),
     #[error("{0}")]
     Lsp(#[from] lsp::LspError),
+    #[error("local HTTP server failed: {0}")]
+    HttpServer(String),
 }
 
 impl serde::Serialize for CommandError {
@@ -98,6 +103,14 @@ async fn get_lsp_servers(
 }
 
 #[tauri::command]
+async fn get_http_endpoint(state: State<'_, AppState>) -> Result<Option<String>, CommandError> {
+    if let Some(error) = state.http_error.read().await.clone() {
+        return Err(CommandError::HttpServer(error));
+    }
+    Ok(state.http_endpoint.read().await.clone())
+}
+
+#[tauri::command]
 async fn start_lsp(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
@@ -124,15 +137,50 @@ async fn send_lsp_message(
 }
 
 pub fn run() {
-    let workspace_root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let workspace_root = resolve_workspace_root()
+        .expect("failed to determine current workspace directory");
+    let agent_context = Arc::new(RwLock::new(AgentContext::default()));
+    let lsp_manager = lsp::LspManager::new();
+    let http_endpoint = Arc::new(RwLock::new(None));
+    let http_error = Arc::new(RwLock::new(None));
     let app_state = AppState {
         workspace_root,
-        agent_context: Arc::new(RwLock::new(AgentContext::default())),
-        lsp_manager: lsp::LspManager::new(),
+        agent_context,
+        lsp_manager,
+        http_endpoint,
+        http_error,
     };
+    let http_state = app_state.clone();
 
     tauri::Builder::default()
         .manage(app_state)
+        .setup(move |_app| {
+            let workspace_root = http_state.workspace_root.clone();
+            let agent_context = http_state.agent_context.clone();
+            let lsp_manager = http_state.lsp_manager.clone();
+            let http_endpoint = http_state.http_endpoint.clone();
+            let http_error = http_state.http_error.clone();
+            let frontend_dist = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../dist");
+            tauri::async_runtime::spawn(async move {
+                match http_server::start_http_server(
+                    workspace_root,
+                    agent_context,
+                    lsp_manager,
+                    frontend_dist,
+                    http_error.clone(),
+                )
+                .await
+                {
+                    Ok(info) => {
+                        *http_endpoint.write().await = Some(info.endpoint);
+                    }
+                    Err(error) => {
+                        *http_error.write().await = Some(error.to_string());
+                    }
+                }
+            });
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             get_workspace_root,
             list_files,
@@ -141,9 +189,58 @@ pub fn run() {
             update_agent_context,
             get_agent_context,
             get_lsp_servers,
+            get_http_endpoint,
             start_lsp,
             send_lsp_message
         ])
         .run(tauri::generate_context!())
         .expect("error while running application");
+}
+
+fn resolve_workspace_root() -> Result<PathBuf, std::io::Error> {
+    let current_dir = std::env::current_dir()?;
+    Ok(project_root_for_process_dir(&current_dir))
+}
+
+fn project_root_for_process_dir(process_dir: &std::path::Path) -> PathBuf {
+    if process_dir
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name == "src-tauri")
+    {
+        if let Some(parent) = process_dir.parent() {
+            if parent.join("package.json").is_file() && parent.join("src-tauri").is_dir() {
+                return parent.to_path_buf();
+            }
+        }
+    }
+
+    process_dir.to_path_buf()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[test]
+    fn project_root_for_process_dir_climbs_from_tauri_source_dir() {
+        let dir = tempdir().unwrap();
+        let tauri_dir = dir.path().join("src-tauri");
+        std::fs::create_dir(&tauri_dir).unwrap();
+        std::fs::write(dir.path().join("package.json"), "{}").unwrap();
+
+        let root = project_root_for_process_dir(&tauri_dir);
+
+        assert_eq!(root, dir.path());
+    }
+
+    #[test]
+    fn project_root_for_process_dir_keeps_regular_workspace_dir() {
+        let dir = tempdir().unwrap();
+
+        let root = project_root_for_process_dir(dir.path());
+
+        assert_eq!(root, dir.path());
+    }
 }

@@ -132,6 +132,16 @@ button {
   padding: 10px;
 }
 
+.endpoint {
+  margin: 0 0 10px;
+  overflow: hidden;
+  color: var(--muted);
+  font-family: ui-monospace, "SF Mono", monospace;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .lsp-row {
   display: grid;
   grid-template-columns: 10px minmax(0, 1fr);

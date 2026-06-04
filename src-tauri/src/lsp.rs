@@ -88,9 +88,19 @@ impl LspManager {
             .await
             .insert(language.to_string(), session);
 
-        spawn_stdout_reader(app.clone(), language.to_string(), session_id.clone(), stdout);
+        spawn_stdout_reader(
+            app.clone(),
+            language.to_string(),
+            session_id.clone(),
+            stdout,
+        );
         if let Some(stderr) = stderr {
-            spawn_stderr_reader(app.clone(), language.to_string(), session_id.clone(), stderr);
+            spawn_stderr_reader(
+                app.clone(),
+                language.to_string(),
+                session_id.clone(),
+                stderr,
+            );
         }
         spawn_exit_watcher(app, language.to_string(), session_id.clone(), child);
 
@@ -110,7 +120,12 @@ impl LspManager {
             .cloned()
             .ok_or_else(|| LspError::NotRunning(language.to_string()))?;
         let payload = format!("Content-Length: {}\r\n\r\n{}", message.len(), message);
-        session.stdin.lock().await.write_all(payload.as_bytes()).await?;
+        session
+            .stdin
+            .lock()
+            .await
+            .write_all(payload.as_bytes())
+            .await?;
         Ok(())
     }
 }

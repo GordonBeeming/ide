@@ -5,7 +5,7 @@ import {
   type Transport,
 } from "@codemirror/lsp-client";
 import type { Extension } from "@codemirror/state";
-import { sendLspMessage, startLsp } from "./tauri";
+import { isNativeTauri, sendLspMessage, startLsp } from "./tauri";
 
 interface LspMessageEvent {
   language: string;
@@ -34,6 +34,7 @@ export function setLspErrorHandler(handler: (message: string) => void) {
 export async function lspExtensionsForPath(path: string): Promise<Extension[]> {
   const language = languageForLsp(path);
   if (!language) return [];
+  if (!isNativeTauri()) return [];
 
   const record = await getClient(language);
   await record.ready;

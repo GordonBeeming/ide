@@ -204,7 +204,10 @@ mod tests {
         fs::write(dir.path().join("src/main.rs"), "fn main() {}").unwrap();
 
         let entries = scan_workspace(dir.path(), 100).unwrap();
-        let paths = entries.iter().map(|entry| entry.path.as_str()).collect::<Vec<_>>();
+        let paths = entries
+            .iter()
+            .map(|entry| entry.path.as_str())
+            .collect::<Vec<_>>();
 
         assert!(paths.contains(&"src"));
         assert!(paths.contains(&"src/main.rs"));

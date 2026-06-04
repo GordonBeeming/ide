@@ -15,6 +15,7 @@ import {
   EditorSelection,
   FileEntry,
   LspServerStatus,
+  getHttpEndpoint,
   getLspServers,
   getWorkspaceRoot,
   listFiles,
@@ -50,6 +51,7 @@ export default function App() {
   const [status, setStatus] = useState("Ready");
   const [selection, setSelection] = useState<EditorSelection>();
   const [lspServers, setLspServers] = useState<LspServerStatus[]>([]);
+  const [httpEndpoint, setHttpEndpoint] = useState<string>();
 
   const activeFile = openFiles.find((file) => file.path === activePath);
   const tree = useMemo(() => buildTree(files), [files]);
@@ -65,6 +67,7 @@ export default function App() {
     setFiles(entries);
     try {
       setLspServers(await getLspServers());
+      setHttpEndpoint(await getHttpEndpoint());
     } catch (reason) {
       setError(`Unable to load language server status: ${String(reason)}`);
     }
@@ -205,6 +208,12 @@ export default function App() {
         </nav>
 
         <div className="lsp-panel">
+          {httpEndpoint ? (
+            <>
+              <div className="eyebrow">Browser Endpoint</div>
+              <div className="endpoint" title={httpEndpoint}>{httpEndpoint}</div>
+            </>
+          ) : null}
           <div className="eyebrow">Language Servers</div>
           {lspServers.map((server) => (
             <div className="lsp-row" key={server.language} title={server.detail}>
