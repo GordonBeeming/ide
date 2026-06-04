@@ -67,3 +67,4 @@ Claude Code can discover the running editor through `/ide` after the native app 
 
 More detail is in [docs/development.md](docs/development.md).
 Security guardrails are tracked in [docs/security.md](docs/security.md).
+Source-backed technology notes are in [docs/research.md](docs/research.md).

@@ -42,6 +42,7 @@ The app is intentionally split into a small always-loaded shell and lazy-loaded 
 - `src-tauri/src/lib.rs`: Tauri command registration and in-memory editor context state.
 
 Security rules live in [security.md](security.md). Treat them as part of the development process, not a release checklist.
+Research notes and protocol references live in [research.md](research.md).
 
 ## Performance Notes
 
