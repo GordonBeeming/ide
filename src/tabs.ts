@@ -38,3 +38,10 @@ export function nextActivePathAfterClose(
   if (activePath !== closedPath) return activePath;
   return tabs.filter((tab) => tab.path !== closedPath).at(-1)?.path;
 }
+
+export function tabCloseRequiresConfirmation(
+  tabs: EditorTab[],
+  path: string,
+): boolean {
+  return Boolean(tabs.find((tab) => tab.path === path)?.dirty);
+}

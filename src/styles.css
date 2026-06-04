@@ -496,3 +496,80 @@ button {
   color: var(--muted);
   font-size: 13px;
 }
+
+.dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: oklch(8% 0.01 230 / 46%);
+}
+
+.confirm-dialog {
+  display: grid;
+  width: min(460px, 100%);
+  gap: 18px;
+  padding: 18px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+}
+
+.confirm-dialog h2 {
+  margin: 0;
+  font-size: 18px;
+  line-height: 1.25;
+}
+
+.confirm-dialog p {
+  margin: 8px 0 0;
+  overflow-wrap: anywhere;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.confirm-dialog__actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.command-button {
+  display: inline-grid;
+  grid-auto-flow: column;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 32px;
+  padding: 6px 11px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel-strong);
+  cursor: pointer;
+}
+
+.command-button:hover,
+.command-button:focus-visible {
+  border-color: var(--accent);
+  outline: 0;
+}
+
+.command-button--quiet {
+  background: transparent;
+  color: var(--muted);
+}
+
+.command-button--danger {
+  border-color: color-mix(in oklch, var(--accent) 72%, var(--border));
+  color: var(--text);
+}
+
+.command-button--primary {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--bg);
+}

@@ -3,6 +3,7 @@ import {
   addPreviewTab,
   nextActivePathAfterClose,
   pinTab,
+  tabCloseRequiresConfirmation,
   updateTabContents,
   type EditorTab,
 } from "./tabs";
@@ -64,5 +65,17 @@ describe("tab state", () => {
     );
 
     expect(result).toBe("b.ts");
+  });
+
+  it("requires confirmation only for dirty tabs", () => {
+    expect(tabCloseRequiresConfirmation([tab("a.ts", true, true)], "a.ts")).toBe(
+      true,
+    );
+    expect(tabCloseRequiresConfirmation([tab("a.ts", true, false)], "a.ts")).toBe(
+      false,
+    );
+    expect(tabCloseRequiresConfirmation([tab("a.ts", true, true)], "b.ts")).toBe(
+      false,
+    );
   });
 });

@@ -8,6 +8,7 @@ import {
   RefreshCw,
   Save,
   Search,
+  Trash2,
   X,
 } from "lucide-react";
 import { iconForFile } from "./fileTypes";
@@ -35,6 +36,7 @@ import {
   addPreviewTab,
   nextActivePathAfterClose,
   pinTab,
+  tabCloseRequiresConfirmation,
   updateTabContents,
   type EditorTab,
 } from "./tabs";
@@ -65,6 +67,7 @@ export default function App() {
   const [searching, setSearching] = useState(false);
   const [quickOpenVisible, setQuickOpenVisible] = useState(false);
   const [quickOpenQuery, setQuickOpenQuery] = useState("");
+  const [pendingClosePath, setPendingClosePath] = useState<string>();
   const [error, setError] = useState<string>();
   const [status, setStatus] = useState("Ready");
   const [selection, setSelection] = useState<EditorSelection>();
@@ -73,6 +76,7 @@ export default function App() {
   const [claudeBridge, setClaudeBridge] = useState<ClaudeBridgeStatus>();
 
   const activeFile = openFiles.find((file) => file.path === activePath);
+  const pendingCloseFile = openFiles.find((file) => file.path === pendingClosePath);
   const cursorPosition = selection
     ? `${selection.startLine}:${selection.startColumn}`
     : revealTarget && revealTarget.path === activePath
@@ -233,26 +237,55 @@ export default function App() {
       setActivePath((active) => nextActivePathAfterClose(current, active, path));
       return remaining;
     });
+    setPendingClosePath((current) => (current === path ? undefined : current));
   }, []);
 
-  const saveActive = useCallback(async () => {
-    if (!activeFile) return;
+  const requestCloseFile = useCallback(
+    (path: string) => {
+      if (tabCloseRequiresConfirmation(openFiles, path)) {
+        setPendingClosePath(path);
+        return;
+      }
+
+      closeFile(path);
+    },
+    [closeFile, openFiles],
+  );
+
+  const saveFile = useCallback(async (fileToSave: EditorTab) => {
     setError(undefined);
-    setStatus(`Saving ${activeFile.path}`);
+    setStatus(`Saving ${fileToSave.path}`);
     try {
-      await writeFile(activeFile.path, activeFile.contents);
+      await writeFile(fileToSave.path, fileToSave.contents);
       setOpenFiles((current) =>
         current.map((file) =>
-          file.path === activeFile.path ? { ...file, dirty: false } : file,
+          file.path === fileToSave.path ? { ...file, dirty: false } : file,
         ),
       );
       await refreshFiles();
       setStatus("Saved");
+      return true;
     } catch (reason) {
       setError(String(reason));
       setStatus("Save failed");
+      return false;
     }
-  }, [activeFile, refreshFiles]);
+  }, [refreshFiles]);
+
+  const saveActive = useCallback(async () => {
+    if (!activeFile) return;
+    await saveFile(activeFile);
+  }, [activeFile, saveFile]);
+
+  const saveAndClosePendingFile = useCallback(async () => {
+    if (!pendingCloseFile) {
+      setPendingClosePath(undefined);
+      return;
+    }
+
+    const saved = await saveFile(pendingCloseFile);
+    if (saved) closeFile(pendingCloseFile.path);
+  }, [closeFile, pendingCloseFile, saveFile]);
 
   const openWorkspace = useCallback(async () => {
     if (openFiles.some((file) => file.dirty)) {
@@ -293,6 +326,9 @@ export default function App() {
       } else if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "p") {
         event.preventDefault();
         setQuickOpenVisible(true);
+      } else if (event.key === "Escape" && pendingClosePath) {
+        event.preventDefault();
+        setPendingClosePath(undefined);
       } else if (event.key === "Escape" && quickOpenVisible) {
         event.preventDefault();
         closeQuickOpen();
@@ -300,7 +336,7 @@ export default function App() {
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [closeQuickOpen, quickOpenVisible, saveActive]);
+  }, [closeQuickOpen, pendingClosePath, quickOpenVisible, saveActive]);
 
   return (
     <main className="app-shell">
@@ -439,13 +475,13 @@ export default function App() {
                     title="Close"
                     onClick={(event) => {
                       event.stopPropagation();
-                      closeFile(file.path);
+                      requestCloseFile(file.path);
                     }}
                     onKeyDown={(event) => {
                       if (event.key === "Enter" || event.key === " ") {
                         event.preventDefault();
                         event.stopPropagation();
-                        closeFile(file.path);
+                        requestCloseFile(file.path);
                       }
                     }}
                   >
@@ -535,6 +571,47 @@ export default function App() {
               ) : null}
             </div>
           </div>
+        </div>
+      ) : null}
+
+      {pendingCloseFile ? (
+        <div className="dialog-backdrop" role="presentation">
+          <section
+            className="confirm-dialog"
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="dirty-close-title"
+          >
+            <div>
+              <div className="eyebrow">Unsaved changes</div>
+              <h2 id="dirty-close-title">Close modified file?</h2>
+              <p>
+                {pendingCloseFile.path} has edits that have not been saved.
+              </p>
+            </div>
+            <div className="confirm-dialog__actions">
+              <button
+                className="command-button command-button--quiet"
+                onClick={() => setPendingClosePath(undefined)}
+              >
+                Cancel
+              </button>
+              <button
+                className="command-button command-button--danger"
+                onClick={() => closeFile(pendingCloseFile.path)}
+              >
+                <Trash2 size={15} />
+                Discard
+              </button>
+              <button
+                className="command-button command-button--primary"
+                onClick={saveAndClosePendingFile}
+              >
+                <Save size={15} />
+                Save
+              </button>
+            </div>
+          </section>
         </div>
       ) : null}
 
