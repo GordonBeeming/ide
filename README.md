@@ -50,8 +50,7 @@ Known optional language-server tools:
 ## Verification
 
 ```bash
-npm run build
-cd src-tauri && cargo check
+./run-tests.sh
 ```
 
 ## Design Constraints

@@ -12,10 +12,20 @@ The script checks for `npm` and `cargo`, installs Node dependencies when `node_m
 
 ## Manual Commands
 
+Run the full local verification suite:
+
+```bash
+./run-tests.sh
+```
+
+Or run individual checks:
+
 ```bash
 npm install
 npm run build
+npm test
 cd src-tauri && cargo check
+cd src-tauri && cargo test
 npm run tauri:dev
 ```
 
@@ -46,6 +56,22 @@ npm run build
 ```
 
 The initial shell chunk should stay small enough to load quickly before editor/language chunks are requested.
+
+## Tests
+
+Frontend tests use Vitest:
+
+```bash
+npm test
+```
+
+Backend tests use Cargo:
+
+```bash
+cd src-tauri && cargo test
+```
+
+Prefer pure helper tests for UI state rules, and Rust unit tests for filesystem, path safety, process detection, and protocol framing. Add heavier rendered UI tests only where the behavior cannot be validated through smaller units.
 
 ## LSP Direction
 

@@ -127,6 +127,42 @@ button {
   padding: 3px 0 12px;
 }
 
+.lsp-panel {
+  border-top: 1px solid var(--border);
+  padding: 10px;
+}
+
+.lsp-row {
+  display: grid;
+  grid-template-columns: 10px minmax(0, 1fr);
+  align-items: center;
+  gap: 7px;
+  min-height: 24px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.lsp-row span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lsp-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--border);
+}
+
+.lsp-dot--ready {
+  background: oklch(71% 0.16 145);
+}
+
+.lsp-dot--running {
+  background: var(--accent);
+}
+
 .tree-row {
   display: grid;
   grid-template-columns: 14px 18px minmax(0, 1fr);
@@ -202,7 +238,7 @@ button {
 
 .tab {
   display: grid;
-  grid-template-columns: 16px minmax(0, 1fr) 10px;
+  grid-template-columns: 16px minmax(0, 1fr) 10px 16px;
   min-width: 118px;
   max-width: 270px;
   align-items: center;
@@ -221,6 +257,10 @@ button {
   white-space: nowrap;
 }
 
+.tab--temp span:nth-child(2) {
+  font-style: italic;
+}
+
 .tab--active {
   border-color: var(--border);
   background: var(--panel-strong);
@@ -230,6 +270,20 @@ button {
 .dirty-dot {
   fill: var(--accent);
   stroke: var(--accent);
+}
+
+.tab__close {
+  display: inline-grid;
+  width: 16px;
+  height: 16px;
+  place-items: center;
+  border-radius: 4px;
+  color: var(--muted);
+}
+
+.tab__close:hover {
+  background: var(--accent-weak);
+  color: var(--text);
 }
 
 .topbar__actions {

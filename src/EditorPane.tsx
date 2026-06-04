@@ -17,6 +17,7 @@ import {
 } from "@codemirror/view";
 import { oneDark } from "@codemirror/theme-one-dark";
 import { languageForPath } from "./language";
+import { lspExtensionsForPath } from "./lsp";
 import type { EditorSelection } from "./tauri";
 
 interface EditorPaneProps {
@@ -40,7 +41,7 @@ export default function EditorPane({
     viewRef.current?.destroy();
     let cancelled = false;
 
-    languageForPath(path).then((languageExtensions) => {
+    Promise.all([languageForPath(path), lspExtensionsForPath(path)]).then(([languageExtensions, lspExtensions]) => {
       if (cancelled || !host.current) return;
 
       const view = new EditorView({
@@ -64,6 +65,7 @@ export default function EditorPane({
             syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
             keymap.of([...defaultKeymap, indentWithTab, ...historyKeymap, ...searchKeymap]),
             ...languageExtensions,
+            ...lspExtensions,
             EditorView.lineWrapping,
             EditorView.updateListener.of((update) => {
               if (update.docChanged) {

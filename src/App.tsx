@@ -7,26 +7,31 @@ import {
   PanelLeftClose,
   Save,
   Search,
+  X,
 } from "lucide-react";
 import { iconForFile } from "./fileTypes";
 import {
   AgentContext,
   EditorSelection,
   FileEntry,
+  LspServerStatus,
+  getLspServers,
   getWorkspaceRoot,
   listFiles,
   readFile,
   updateAgentContext,
   writeFile,
 } from "./tauri";
+import { setLspRootUri } from "./lsp";
+import {
+  addPreviewTab,
+  nextActivePathAfterClose,
+  pinTab,
+  updateTabContents,
+  type EditorTab,
+} from "./tabs";
 
 const EditorPane = lazy(() => import("./EditorPane"));
-
-interface OpenFile {
-  path: string;
-  contents: string;
-  dirty: boolean;
-}
 
 interface TreeNode extends FileEntry {
   children: TreeNode[];
@@ -38,11 +43,13 @@ export default function App() {
   const [workspaceRoot, setWorkspaceRoot] = useState("");
   const [files, setFiles] = useState<FileEntry[]>([]);
   const [activePath, setActivePath] = useState<string>();
-  const [openFiles, setOpenFiles] = useState<OpenFile[]>([]);
+  const [selectedPath, setSelectedPath] = useState<string>();
+  const [openFiles, setOpenFiles] = useState<EditorTab[]>([]);
   const [filter, setFilter] = useState("");
   const [error, setError] = useState<string>();
   const [status, setStatus] = useState("Ready");
   const [selection, setSelection] = useState<EditorSelection>();
+  const [lspServers, setLspServers] = useState<LspServerStatus[]>([]);
 
   const activeFile = openFiles.find((file) => file.path === activePath);
   const tree = useMemo(() => buildTree(files), [files]);
@@ -54,7 +61,9 @@ export default function App() {
   const refreshFiles = useCallback(async () => {
     const [root, entries] = await Promise.all([getWorkspaceRoot(), listFiles()]);
     setWorkspaceRoot(root);
+    setLspRootUri(pathToFileUri(root));
     setFiles(entries);
+    getLspServers().then(setLspServers).catch(() => undefined);
   }, []);
 
   useEffect(() => {
@@ -71,7 +80,9 @@ export default function App() {
   }, [activePath, openFiles, selection]);
 
   const openPath = useCallback(
-    async (entry: FileEntry) => {
+    async (entry: FileEntry, pinned = false) => {
+      setSelectedPath(entry.path);
+
       if (entry.isDir || skipOpenPattern.test(entry.name)) return;
 
       setError(undefined);
@@ -79,6 +90,9 @@ export default function App() {
 
       const existing = openFiles.find((file) => file.path === entry.path);
       if (existing) {
+        if (pinned && !existing.pinned) {
+          setOpenFiles((current) => pinTab(current, entry.path));
+        }
         setActivePath(existing.path);
         setStatus("Ready");
         return;
@@ -86,10 +100,14 @@ export default function App() {
 
       try {
         const contents = await readFile(entry.path);
-        setOpenFiles((current) => [
-          ...current,
-          { path: entry.path, contents, dirty: false },
-        ]);
+        setOpenFiles((current) =>
+          addPreviewTab(current, {
+            path: entry.path,
+            contents,
+            dirty: false,
+            pinned,
+          }),
+        );
         setActivePath(entry.path);
         setStatus("Ready");
       } catch (reason) {
@@ -101,11 +119,15 @@ export default function App() {
   );
 
   const updateContents = useCallback((path: string, contents: string) => {
-    setOpenFiles((current) =>
-      current.map((file) =>
-        file.path === path ? { ...file, contents, dirty: true } : file,
-      ),
-    );
+    setOpenFiles((current) => updateTabContents(current, path, contents));
+  }, []);
+
+  const closeFile = useCallback((path: string) => {
+    setOpenFiles((current) => {
+      const remaining = current.filter((file) => file.path !== path);
+      setActivePath((active) => nextActivePathAfterClose(current, active, path));
+      return remaining;
+    });
   }, []);
 
   const saveActive = useCallback(async () => {
@@ -165,11 +187,30 @@ export default function App() {
             <TreeItem
               key={node.path}
               node={node}
-              activePath={activePath}
+              selectedPath={selectedPath}
               onOpen={openPath}
+              onSelect={setSelectedPath}
             />
           ))}
         </nav>
+
+        <div className="lsp-panel">
+          <div className="eyebrow">Language Servers</div>
+          {lspServers.map((server) => (
+            <div className="lsp-row" key={server.language} title={server.detail}>
+              <span
+                className={
+                  server.running
+                    ? "lsp-dot lsp-dot--running"
+                    : server.available
+                      ? "lsp-dot lsp-dot--ready"
+                      : "lsp-dot"
+                }
+              />
+              <span>{server.displayName}</span>
+            </div>
+          ))}
+        </div>
       </aside>
 
       <section className="workbench">
@@ -180,13 +221,41 @@ export default function App() {
             ) : (
               openFiles.map((file) => (
                 <button
-                  className={`tab ${file.path === activePath ? "tab--active" : ""}`}
+                  className={[
+                    "tab",
+                    file.path === activePath ? "tab--active" : "",
+                    file.pinned ? "" : "tab--temp",
+                  ].join(" ")}
                   key={file.path}
                   onClick={() => setActivePath(file.path)}
+                  onDoubleClick={() =>
+                    setOpenFiles((current) =>
+                      pinTab(current, file.path),
+                    )
+                  }
                 >
                   <FileCog size={15} />
                   <span>{file.path}</span>
                   {file.dirty ? <Circle className="dirty-dot" size={8} /> : null}
+                  <span
+                    className="tab__close"
+                    role="button"
+                    tabIndex={0}
+                    title="Close"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      closeFile(file.path);
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        closeFile(file.path);
+                      }
+                    }}
+                  >
+                    <X size={13} />
+                  </span>
                 </button>
               ))
             )}
@@ -233,16 +302,18 @@ export default function App() {
 
 function TreeItem({
   node,
-  activePath,
+  selectedPath,
   onOpen,
+  onSelect,
 }: {
   node: TreeNode;
-  activePath?: string;
-  onOpen: (entry: FileEntry) => void;
+  selectedPath?: string;
+  onOpen: (entry: FileEntry, pinned?: boolean) => void;
+  onSelect: (path: string) => void;
 }) {
   const [expanded, setExpanded] = useState(node.depth < 1);
   const Icon = iconForFile(node.name, node.isDir);
-  const isActive = activePath === node.path;
+  const isActive = selectedPath === node.path;
 
   return (
     <div>
@@ -250,10 +321,16 @@ function TreeItem({
         className={`tree-row ${isActive ? "tree-row--active" : ""}`}
         style={{ paddingLeft: 8 + node.depth * 14 }}
         onClick={() => {
+          onSelect(node.path);
           if (node.isDir) {
             setExpanded((value) => !value);
           } else {
-            onOpen(node);
+            onOpen(node, false);
+          }
+        }}
+        onDoubleClick={() => {
+          if (!node.isDir) {
+            onOpen(node, true);
           }
         }}
       >
@@ -273,8 +350,9 @@ function TreeItem({
             <TreeItem
               key={child.path}
               node={child}
-              activePath={activePath}
+              selectedPath={selectedPath}
               onOpen={onOpen}
+              onSelect={onSelect}
             />
           ))
         : null}
@@ -320,4 +398,10 @@ function filterTree(nodes: TreeNode[], filter: string): TreeNode[] {
 
 function lastSegment(path: string) {
   return path.split(/[\\/]/).filter(Boolean).at(-1) ?? "";
+}
+
+function pathToFileUri(path: string) {
+  const normalized = path.replace(/\\/g, "/");
+  const prefix = normalized.startsWith("/") ? "file://" : "file:///";
+  return `${prefix}${normalized.split("/").map(encodeURIComponent).join("/")}`;
 }

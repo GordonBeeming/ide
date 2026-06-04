@@ -161,3 +161,69 @@ fn normalize_path(path: &Path) -> String {
         .collect::<Vec<_>>()
         .join("/")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[test]
+    fn read_workspace_file_rejects_parent_traversal() {
+        let dir = tempdir().unwrap();
+        let result = read_workspace_file(dir.path(), "../secret.txt");
+
+        assert!(matches!(result, Err(WorkspaceError::InvalidPath)));
+    }
+
+    #[test]
+    fn read_workspace_file_rejects_absolute_paths() {
+        let dir = tempdir().unwrap();
+        let result = read_workspace_file(dir.path(), "/etc/hosts");
+
+        assert!(matches!(result, Err(WorkspaceError::OutsideWorkspace)));
+    }
+
+    #[test]
+    fn read_and_write_workspace_file_stays_inside_root() {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join("note.txt"), "before").unwrap();
+
+        let before = read_workspace_file(dir.path(), "note.txt").unwrap();
+        write_workspace_file(dir.path(), "note.txt", "after").unwrap();
+        let after = read_workspace_file(dir.path(), "note.txt").unwrap();
+
+        assert_eq!(before, "before");
+        assert_eq!(after, "after");
+    }
+
+    #[test]
+    fn scan_workspace_skips_generated_and_git_directories() {
+        let dir = tempdir().unwrap();
+        fs::create_dir_all(dir.path().join(".git")).unwrap();
+        fs::create_dir_all(dir.path().join("node_modules/pkg")).unwrap();
+        fs::create_dir_all(dir.path().join("src")).unwrap();
+        fs::write(dir.path().join(".git/config"), "").unwrap();
+        fs::write(dir.path().join("node_modules/pkg/index.js"), "").unwrap();
+        fs::write(dir.path().join("src/main.rs"), "fn main() {}").unwrap();
+
+        let entries = scan_workspace(dir.path(), 100).unwrap();
+        let paths = entries.iter().map(|entry| entry.path.as_str()).collect::<Vec<_>>();
+
+        assert!(paths.contains(&"src"));
+        assert!(paths.contains(&"src/main.rs"));
+        assert!(!paths.iter().any(|path| path.starts_with(".git")));
+        assert!(!paths.iter().any(|path| path.starts_with("node_modules")));
+    }
+
+    #[test]
+    fn scan_workspace_respects_entry_limit() {
+        let dir = tempdir().unwrap();
+        for index in 0..10 {
+            fs::write(dir.path().join(format!("{index}.txt")), "").unwrap();
+        }
+
+        let entries = scan_workspace(dir.path(), 3).unwrap();
+
+        assert_eq!(entries.len(), 3);
+    }
+}

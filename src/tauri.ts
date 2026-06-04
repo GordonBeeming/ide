@@ -25,6 +25,22 @@ export interface AgentContext {
   selection?: EditorSelection;
 }
 
+export interface LspServerStatus {
+  language: string;
+  displayName: string;
+  command: string;
+  args: string[];
+  available: boolean;
+  running: boolean;
+  detail: string;
+}
+
+export interface LspStartResult {
+  language: string;
+  sessionId: string;
+  running: boolean;
+}
+
 export function getWorkspaceRoot() {
   return invoke<string>("get_workspace_root");
 }
@@ -43,4 +59,16 @@ export function writeFile(path: string, contents: string) {
 
 export function updateAgentContext(context: AgentContext) {
   return invoke<void>("update_agent_context", { context });
+}
+
+export function getLspServers() {
+  return invoke<LspServerStatus[]>("get_lsp_servers");
+}
+
+export function startLsp(language: string) {
+  return invoke<LspStartResult>("start_lsp", { language });
+}
+
+export function sendLspMessage(language: string, message: string) {
+  return invoke<void>("send_lsp_message", { language, message });
 }

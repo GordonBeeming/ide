@@ -1,3 +1,4 @@
+mod lsp;
 mod workspace;
 
 use std::path::PathBuf;
@@ -12,6 +13,7 @@ use workspace::{read_workspace_file, scan_workspace, write_workspace_file, Works
 struct AppState {
     workspace_root: PathBuf,
     agent_context: Arc<RwLock<AgentContext>>,
+    lsp_manager: lsp::LspManager,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -37,6 +39,8 @@ struct EditorSelection {
 enum CommandError {
     #[error("{0}")]
     Workspace(#[from] WorkspaceError),
+    #[error("{0}")]
+    Lsp(#[from] lsp::LspError),
 }
 
 impl serde::Serialize for CommandError {
@@ -86,11 +90,45 @@ async fn get_agent_context(state: State<'_, AppState>) -> Result<AgentContext, C
     Ok(state.agent_context.read().await.clone())
 }
 
+#[tauri::command]
+async fn get_lsp_servers(
+    state: State<'_, AppState>,
+) -> Result<Vec<lsp::LspServerStatus>, CommandError> {
+    Ok(state.lsp_manager.statuses().await)
+}
+
+#[tauri::command]
+async fn start_lsp(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    language: String,
+) -> Result<lsp::LspStartResult, CommandError> {
+    state
+        .lsp_manager
+        .start(app, &language, &state.workspace_root)
+        .await
+        .map_err(CommandError::from)
+}
+
+#[tauri::command]
+async fn send_lsp_message(
+    state: State<'_, AppState>,
+    language: String,
+    message: String,
+) -> Result<(), CommandError> {
+    state
+        .lsp_manager
+        .send(&language, &message)
+        .await
+        .map_err(CommandError::from)
+}
+
 pub fn run() {
     let workspace_root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let app_state = AppState {
         workspace_root,
         agent_context: Arc::new(RwLock::new(AgentContext::default())),
+        lsp_manager: lsp::LspManager::new(),
     };
 
     tauri::Builder::default()
@@ -101,7 +139,10 @@ pub fn run() {
             read_file,
             write_file,
             update_agent_context,
-            get_agent_context
+            get_agent_context,
+            get_lsp_servers,
+            start_lsp,
+            send_lsp_message
         ])
         .run(tauri::generate_context!())
         .expect("error while running application");
