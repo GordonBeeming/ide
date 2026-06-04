@@ -14,6 +14,7 @@ Implemented:
 - Native folder picker for switching workspaces.
 - File-name filtering and bounded text search across the current workspace.
 - Keyboard quick-open palette for opening files by path.
+- Dirty-file prompts before closing tabs or the native app window.
 - Guarded Rust-native workspace scanning and file read/write commands.
 - CodeMirror 6 editor.
 - Syntax highlighting for Rust, TypeScript, JavaScript, React/TSX/JSX, HTML, CSS, and C#.

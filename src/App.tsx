@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { iconForFile } from "./fileTypes";
 import { quickOpenMatches } from "./quickOpen";
+import { destroyNativeWindow, onNativeWindowCloseRequested } from "./appWindow";
 import {
   AgentContext,
   ClaudeBridgeStatus,
@@ -68,6 +69,7 @@ export default function App() {
   const [quickOpenVisible, setQuickOpenVisible] = useState(false);
   const [quickOpenQuery, setQuickOpenQuery] = useState("");
   const [pendingClosePath, setPendingClosePath] = useState<string>();
+  const [pendingAppClose, setPendingAppClose] = useState(false);
   const [error, setError] = useState<string>();
   const [status, setStatus] = useState("Ready");
   const [selection, setSelection] = useState<EditorSelection>();
@@ -77,6 +79,7 @@ export default function App() {
 
   const activeFile = openFiles.find((file) => file.path === activePath);
   const pendingCloseFile = openFiles.find((file) => file.path === pendingClosePath);
+  const dirtyFiles = openFiles.filter((file) => file.dirty);
   const cursorPosition = selection
     ? `${selection.startLine}:${selection.startColumn}`
     : revealTarget && revealTarget.path === activePath
@@ -287,6 +290,27 @@ export default function App() {
     if (saved) closeFile(pendingCloseFile.path);
   }, [closeFile, pendingCloseFile, saveFile]);
 
+  const closeApplication = useCallback(async () => {
+    try {
+      const closed = await destroyNativeWindow();
+      if (!closed) {
+        setPendingAppClose(false);
+        setStatus("Ready");
+      }
+    } catch (reason) {
+      setError(`Unable to close window: ${String(reason)}`);
+      setStatus("Close failed");
+    }
+  }, []);
+
+  const saveAllAndCloseApplication = useCallback(async () => {
+    for (const file of dirtyFiles) {
+      const saved = await saveFile(file);
+      if (!saved) return;
+    }
+    await closeApplication();
+  }, [closeApplication, dirtyFiles, saveFile]);
+
   const openWorkspace = useCallback(async () => {
     if (openFiles.some((file) => file.dirty)) {
       setError("Save or close modified files before switching workspace.");
@@ -319,6 +343,47 @@ export default function App() {
   }, [openFiles, refreshFiles]);
 
   useEffect(() => {
+    const hasDirtyFiles = dirtyFiles.length > 0;
+    const handler = (event: BeforeUnloadEvent) => {
+      if (!hasDirtyFiles) return;
+      event.preventDefault();
+      event.returnValue = "";
+    };
+
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, [dirtyFiles.length]);
+
+  useEffect(() => {
+    const hasDirtyFiles = dirtyFiles.length > 0;
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+
+    onNativeWindowCloseRequested((event) => {
+      if (!hasDirtyFiles) return;
+      event.preventDefault();
+      setPendingAppClose(true);
+    })
+      .then((listener) => {
+        if (disposed) {
+          listener?.();
+        } else {
+          unlisten = listener;
+        }
+      })
+      .catch((reason) => {
+        if (!disposed) {
+          setError(`Unable to register close protection: ${String(reason)}`);
+        }
+      });
+
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, [dirtyFiles.length]);
+
+  useEffect(() => {
     const handler = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "s") {
         event.preventDefault();
@@ -326,6 +391,9 @@ export default function App() {
       } else if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "p") {
         event.preventDefault();
         setQuickOpenVisible(true);
+      } else if (event.key === "Escape" && pendingAppClose) {
+        event.preventDefault();
+        setPendingAppClose(false);
       } else if (event.key === "Escape" && pendingClosePath) {
         event.preventDefault();
         setPendingClosePath(undefined);
@@ -336,7 +404,7 @@ export default function App() {
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [closeQuickOpen, pendingClosePath, quickOpenVisible, saveActive]);
+  }, [closeQuickOpen, pendingAppClose, pendingClosePath, quickOpenVisible, saveActive]);
 
   return (
     <main className="app-shell">
@@ -609,6 +677,49 @@ export default function App() {
               >
                 <Save size={15} />
                 Save
+              </button>
+            </div>
+          </section>
+        </div>
+      ) : null}
+
+      {pendingAppClose ? (
+        <div className="dialog-backdrop" role="presentation">
+          <section
+            className="confirm-dialog"
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="app-close-title"
+          >
+            <div>
+              <div className="eyebrow">Unsaved changes</div>
+              <h2 id="app-close-title">Close IDE?</h2>
+              <p>
+                {dirtyFiles.length === 1
+                  ? `${dirtyFiles[0].path} has edits that have not been saved.`
+                  : `${dirtyFiles.length} files have edits that have not been saved.`}
+              </p>
+            </div>
+            <div className="confirm-dialog__actions">
+              <button
+                className="command-button command-button--quiet"
+                onClick={() => setPendingAppClose(false)}
+              >
+                Cancel
+              </button>
+              <button
+                className="command-button command-button--danger"
+                onClick={closeApplication}
+              >
+                <Trash2 size={15} />
+                Discard
+              </button>
+              <button
+                className="command-button command-button--primary"
+                onClick={saveAllAndCloseApplication}
+              >
+                <Save size={15} />
+                Save All
               </button>
             </div>
           </section>

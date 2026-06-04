@@ -35,6 +35,7 @@ The app is intentionally split into a small always-loaded shell and lazy-loaded 
 
 - `src/App.tsx`: workspace shell, tree view, tabs, file open/save orchestration.
 - `src/EditorPane.tsx`: CodeMirror editor. Loaded only after a file is opened.
+- `src/appWindow.ts`: guarded Tauri window-close integration.
 - `src/quickOpen.ts`: tested quick-open file matching and ranking.
 - `src/editorNavigation.ts`: tested line clamping for search-result reveal behavior.
 - `src/language.ts`: lazy language loaders for Rust, TypeScript/JavaScript/React, HTML, CSS, and C#.
