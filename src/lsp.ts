@@ -27,6 +27,7 @@ interface ClientRecord {
 const clients = new Map<string, ClientRecord>();
 let rootUri = "";
 let errorHandler: ((message: string) => void) | undefined;
+let statusHandler: (() => void) | undefined;
 let lspLogListenerStarted = false;
 
 export function setLspRootUri(uri: string) {
@@ -40,10 +41,15 @@ export function setLspErrorHandler(handler: (message: string) => void) {
   lspLogListenerStarted = true;
   listen<LspLogEvent>("lsp://log", (event) => {
     errorHandler?.(`LSP ${event.payload.language}: ${event.payload.message}`);
+    statusHandler?.();
   }).catch((error) => {
     errorHandler?.(`Unable to register LSP log listener: ${String(error)}`);
     lspLogListenerStarted = false;
   });
+}
+
+export function setLspStatusHandler(handler: () => void) {
+  statusHandler = handler;
 }
 
 export async function lspExtensionsForPath(path: string): Promise<Extension[]> {
@@ -74,6 +80,7 @@ async function getClient(language: string): Promise<ClientRecord> {
     ready: client.initializing.then(() => undefined),
   };
   clients.set(language, record);
+  statusHandler?.();
   return record;
 }
 

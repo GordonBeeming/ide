@@ -40,7 +40,7 @@ import {
   updateAgentContext,
   writeFile,
 } from "./tauri";
-import { setLspErrorHandler, setLspRootUri } from "./lsp";
+import { setLspErrorHandler, setLspRootUri, setLspStatusHandler } from "./lsp";
 import {
   addPreviewTab,
   nextActivePathAfterClose,
@@ -124,6 +124,14 @@ export default function App() {
     }
   }, []);
 
+  const refreshLspStatus = useCallback(async () => {
+    try {
+      setLspServers(await getLspServers());
+    } catch (reason) {
+      setError(`Unable to refresh language server status: ${String(reason)}`);
+    }
+  }, []);
+
   useEffect(() => {
     refreshFiles().catch((reason) => setError(String(reason)));
   }, [refreshFiles]);
@@ -163,7 +171,8 @@ export default function App() {
 
   useEffect(() => {
     setLspErrorHandler(setError);
-  }, []);
+    setLspStatusHandler(refreshLspStatus);
+  }, [refreshLspStatus]);
 
   useEffect(() => {
     const context: AgentContext = {
