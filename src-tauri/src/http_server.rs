@@ -3,7 +3,8 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 
 use axum::extract::{Query, State};
-use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
+use axum::http::{header, HeaderMap, HeaderValue, Request, StatusCode};
+use axum::middleware::{self, Next};
 use axum::response::{Html, IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -74,17 +75,20 @@ pub async fn start_http_server(
         .route("/api/workspace-root", get(workspace_root))
         .route("/api/files", get(files))
         .route("/api/search", get(search))
-        .route("/api/file", get(read_file).put(write_file))
+        .route("/api/file", get(read_file).put(write_file).options(cors_preflight))
         .route(
             "/api/agent-context",
-            get(get_agent_context).put(put_agent_context),
+            get(get_agent_context)
+                .put(put_agent_context)
+                .options(cors_preflight),
         )
         .route("/api/lsp", get(lsp_servers))
         .route("/api/codex-mcp", get(codex_mcp_status))
-        .route("/mcp", post(codex_mcp))
+        .route("/mcp", post(codex_mcp).options(cors_preflight))
         .route("/", get(index))
-        .route("/{*path}", get(static_file))
-        .with_state(state);
+        .route("/{*path}", get(static_file).options(cors_preflight))
+        .with_state(state)
+        .layer(middleware::from_fn(loopback_cors));
 
     let listener = bind_loopback().await?;
     let endpoint = format!("http://{}", listener.local_addr()?);
@@ -107,6 +111,54 @@ async fn bind_loopback() -> Result<TcpListener, std::io::Error> {
         Ok(listener) => Ok(listener),
         Err(_) => TcpListener::bind(SocketAddr::from((Ipv4Addr::LOCALHOST, 0))).await,
     }
+}
+
+async fn cors_preflight(headers: HeaderMap) -> Response {
+    apply_loopback_cors(headers.get(header::ORIGIN), StatusCode::NO_CONTENT.into_response())
+}
+
+async fn loopback_cors(request: Request<axum::body::Body>, next: Next) -> Response {
+    let origin = request.headers().get(header::ORIGIN).cloned();
+    let response = next.run(request).await;
+    apply_loopback_cors(origin.as_ref(), response)
+}
+
+fn apply_loopback_cors(origin: Option<&HeaderValue>, mut response: Response) -> Response {
+    let Some(origin) = origin.and_then(allowed_loopback_origin) else {
+        return response;
+    };
+
+    let headers = response.headers_mut();
+    headers.insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, origin);
+    headers.insert(
+        header::ACCESS_CONTROL_ALLOW_METHODS,
+        HeaderValue::from_static("GET, PUT, POST, OPTIONS"),
+    );
+    headers.insert(
+        header::ACCESS_CONTROL_ALLOW_HEADERS,
+        HeaderValue::from_static("authorization, content-type"),
+    );
+    headers.insert(
+        header::ACCESS_CONTROL_MAX_AGE,
+        HeaderValue::from_static("600"),
+    );
+    response
+}
+
+fn allowed_loopback_origin(origin: &HeaderValue) -> Option<HeaderValue> {
+    let value = origin.to_str().ok()?;
+    if !matches!(value.strip_prefix("http://"), Some(rest) if is_loopback_host_port(rest))
+        && !matches!(value.strip_prefix("https://"), Some(rest) if is_loopback_host_port(rest))
+    {
+        return None;
+    }
+
+    HeaderValue::from_str(value).ok()
+}
+
+fn is_loopback_host_port(value: &str) -> bool {
+    let host = value.split_once(':').map_or(value, |(host, _)| host);
+    matches!(host, "127.0.0.1" | "localhost" | "[::1]")
 }
 
 async fn workspace_root(State(state): State<HttpServerState>) -> Json<String> {
@@ -530,6 +582,42 @@ mod tests {
         assert!(is_authorized_bearer(&headers, "expected"));
         assert!(!is_authorized_bearer(&headers, "other"));
         assert!(!is_authorized_bearer(&HeaderMap::new(), "expected"));
+    }
+
+    #[test]
+    fn loopback_cors_allows_only_local_origins() {
+        assert_eq!(
+            allowed_loopback_origin(&HeaderValue::from_static("http://127.0.0.1:1420")),
+            Some(HeaderValue::from_static("http://127.0.0.1:1420"))
+        );
+        assert_eq!(
+            allowed_loopback_origin(&HeaderValue::from_static("http://localhost:1420")),
+            Some(HeaderValue::from_static("http://localhost:1420"))
+        );
+        assert!(allowed_loopback_origin(&HeaderValue::from_static("https://example.com")).is_none());
+    }
+
+    #[test]
+    fn loopback_cors_sets_preflight_headers_for_allowed_origin() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::ORIGIN,
+            HeaderValue::from_static("http://127.0.0.1:1420"),
+        );
+
+        let response = apply_loopback_cors(
+            headers.get(header::ORIGIN),
+            StatusCode::NO_CONTENT.into_response(),
+        );
+
+        assert_eq!(
+            response.headers().get(header::ACCESS_CONTROL_ALLOW_ORIGIN),
+            Some(&HeaderValue::from_static("http://127.0.0.1:1420"))
+        );
+        assert_eq!(
+            response.headers().get(header::ACCESS_CONTROL_ALLOW_HEADERS),
+            Some(&HeaderValue::from_static("authorization, content-type"))
+        );
     }
 
     #[tokio::test]

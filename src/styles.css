@@ -106,6 +106,26 @@ button {
   border-color: var(--accent);
 }
 
+.tiny-icon-button {
+  display: inline-grid;
+  width: 24px;
+  height: 24px;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.tiny-icon-button:hover,
+.tiny-icon-button:focus-visible {
+  border-color: var(--accent);
+  color: var(--text);
+  outline: 0;
+}
+
 .search-box {
   display: grid;
   grid-template-columns: 18px 1fr;
@@ -199,13 +219,47 @@ button {
 }
 
 .endpoint {
-  margin: 0 0 10px;
   overflow: hidden;
   color: var(--muted);
   font-family: ui-monospace, "SF Mono", monospace;
   font-size: 11px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.integration-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 8px;
+}
+
+.integration-row .endpoint {
+  min-width: 0;
+  flex: 1;
+}
+
+.snippet-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 24px;
+  align-items: start;
+  gap: 6px;
+  margin: 0 0 10px;
+}
+
+.snippet-row pre {
+  max-height: 96px;
+  margin: 0;
+  overflow: auto;
+  padding: 7px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--muted);
+  font-family: ui-monospace, "SF Mono", monospace;
+  font-size: 10px;
+  line-height: 1.45;
+  white-space: pre;
 }
 
 .lsp-row {

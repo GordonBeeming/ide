@@ -2,6 +2,7 @@ import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from "react
 import {
   ChevronRight,
   Circle,
+  Copy,
   FileCog,
   FolderPlus,
   PanelLeftClose,
@@ -12,6 +13,7 @@ import {
   X,
 } from "lucide-react";
 import { iconForFile } from "./fileTypes";
+import { codexMcpConfigSnippet } from "./integrations";
 import { quickOpenMatches } from "./quickOpen";
 import { destroyNativeWindow, onNativeWindowCloseRequested } from "./appWindow";
 import {
@@ -96,6 +98,10 @@ export default function App() {
   const quickOpenResults = useMemo(
     () => quickOpenMatches(files, quickOpenQuery, 12),
     [files, quickOpenQuery],
+  );
+  const codexMcpConfig = useMemo(
+    () => (codexMcp ? codexMcpConfigSnippet(codexMcp) : ""),
+    [codexMcp],
   );
 
   const refreshFiles = useCallback(async () => {
@@ -283,6 +289,20 @@ export default function App() {
     if (!activeFile) return;
     await saveFile(activeFile);
   }, [activeFile, saveFile]);
+
+  const copyText = useCallback(async (label: string, value: string) => {
+    setError(undefined);
+    try {
+      if (!navigator.clipboard?.writeText) {
+        throw new Error("Clipboard API is not available in this environment");
+      }
+      await navigator.clipboard.writeText(value);
+      setStatus(`Copied ${label}`);
+    } catch (reason) {
+      setError(`Unable to copy ${label}: ${String(reason)}`);
+      setStatus("Copy failed");
+    }
+  }, []);
 
   const saveAndClosePendingFile = useCallback(async () => {
     if (!pendingCloseFile) {
@@ -501,11 +521,39 @@ export default function App() {
           {codexMcp ? (
             <>
               <div className="eyebrow">Codex MCP</div>
-              <div className="endpoint" title="Use this endpoint with the bearer token from the native app session">
-                {codexMcp.endpoint}
+              <div className="integration-row">
+                <div className="endpoint" title="Use this endpoint with the bearer token from the native app session">
+                  {codexMcp.endpoint}
+                </div>
+                <button
+                  className="tiny-icon-button"
+                  title="Copy Codex MCP endpoint"
+                  onClick={() => copyText("Codex MCP endpoint", codexMcp.endpoint)}
+                >
+                  <Copy size={13} />
+                </button>
               </div>
-              <div className="endpoint" title={codexMcp.bearerToken}>
-                token: {codexMcp.bearerToken}
+              <div className="integration-row">
+                <div className="endpoint" title={codexMcp.bearerToken}>
+                  token: {codexMcp.bearerToken}
+                </div>
+                <button
+                  className="tiny-icon-button"
+                  title="Copy Codex MCP token"
+                  onClick={() => copyText("Codex MCP token", codexMcp.bearerToken)}
+                >
+                  <Copy size={13} />
+                </button>
+              </div>
+              <div className="snippet-row">
+                <pre>{codexMcpConfig}</pre>
+                <button
+                  className="tiny-icon-button"
+                  title="Copy Codex MCP config"
+                  onClick={() => copyText("Codex MCP config", codexMcpConfig)}
+                >
+                  <Copy size={13} />
+                </button>
               </div>
             </>
           ) : null}

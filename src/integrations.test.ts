@@ -1,0 +1,37 @@
+import { describe, expect, it } from "vitest";
+import { codexMcpConfigSnippet } from "./integrations";
+
+describe("codexMcpConfigSnippet", () => {
+  it("builds a Codex MCP config snippet with the per-run token env var", () => {
+    expect(
+      codexMcpConfigSnippet({
+        endpoint: "http://127.0.0.1:17877/mcp",
+        bearerToken: "session-token",
+      }),
+    ).toBe(
+      [
+        'export IDE_CODEX_MCP_TOKEN="session-token"',
+        "",
+        "# ~/.codex/config.toml",
+        "[mcp_servers.ide]",
+        'url = "http://127.0.0.1:17877/mcp"',
+        'bearer_token_env_var = "IDE_CODEX_MCP_TOKEN"',
+      ].join("\n"),
+    );
+  });
+
+  it("escapes token and URL content for shell and TOML snippets", () => {
+    expect(
+      codexMcpConfigSnippet({
+        endpoint: 'http://127.0.0.1:17877/mcp?name="ide"',
+        bearerToken: 'tok"en\\value',
+      }),
+    ).toContain('export IDE_CODEX_MCP_TOKEN="tok\\"en\\\\value"');
+    expect(
+      codexMcpConfigSnippet({
+        endpoint: 'http://127.0.0.1:17877/mcp?name="ide"',
+        bearerToken: 'tok"en\\value',
+      }),
+    ).toContain('url = "http://127.0.0.1:17877/mcp?name=\\"ide\\""');
+  });
+});
