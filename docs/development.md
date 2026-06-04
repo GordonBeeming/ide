@@ -39,6 +39,8 @@ The app is intentionally split into a small always-loaded shell and lazy-loaded 
 - `src-tauri/src/workspace.rs`: Rust-native workspace scanning and guarded file IO.
 - `src-tauri/src/lib.rs`: Tauri command registration and in-memory editor context state.
 
+Security rules live in [security.md](security.md). Treat them as part of the development process, not a release checklist.
+
 ## Performance Notes
 
 Current constraints:

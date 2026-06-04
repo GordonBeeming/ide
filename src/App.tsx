@@ -22,7 +22,7 @@ import {
   updateAgentContext,
   writeFile,
 } from "./tauri";
-import { setLspRootUri } from "./lsp";
+import { setLspErrorHandler, setLspRootUri } from "./lsp";
 import {
   addPreviewTab,
   nextActivePathAfterClose,
@@ -63,7 +63,11 @@ export default function App() {
     setWorkspaceRoot(root);
     setLspRootUri(pathToFileUri(root));
     setFiles(entries);
-    getLspServers().then(setLspServers).catch(() => undefined);
+    try {
+      setLspServers(await getLspServers());
+    } catch (reason) {
+      setError(`Unable to load language server status: ${String(reason)}`);
+    }
   }, []);
 
   useEffect(() => {
@@ -71,12 +75,18 @@ export default function App() {
   }, [refreshFiles]);
 
   useEffect(() => {
+    setLspErrorHandler(setError);
+  }, []);
+
+  useEffect(() => {
     const context: AgentContext = {
       activeFile: activePath,
       openFiles: openFiles.map((file) => file.path),
       selection,
     };
-    updateAgentContext(context).catch(() => undefined);
+    updateAgentContext(context).catch((reason) => {
+      setError(`Unable to update agent editor context: ${String(reason)}`);
+    });
   }, [activePath, openFiles, selection]);
 
   const openPath = useCallback(
@@ -277,6 +287,7 @@ export default function App() {
                 contents={activeFile.contents}
                 path={activeFile.path}
                 onChange={updateContents}
+                onError={setError}
                 onSelection={setSelection}
               />
             </Suspense>

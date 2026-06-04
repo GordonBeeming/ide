@@ -67,10 +67,7 @@ pub fn scan_workspace(root: &Path, max_entries: usize) -> Result<Vec<FileEntry>,
             continue;
         }
 
-        let metadata = match entry.metadata() {
-            Ok(value) => value,
-            Err(_) => continue,
-        };
+        let metadata = entry.metadata()?;
 
         let relative = path
             .strip_prefix(root)

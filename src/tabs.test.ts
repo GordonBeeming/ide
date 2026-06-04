@@ -55,4 +55,14 @@ describe("tab state", () => {
 
     expect(result).toBe("b.ts");
   });
+
+  it("keeps active path when closing a non-active tab", () => {
+    const result = nextActivePathAfterClose(
+      [tab("a.ts"), tab("b.ts")],
+      "b.ts",
+      "a.ts",
+    );
+
+    expect(result).toBe("b.ts");
+  });
 });

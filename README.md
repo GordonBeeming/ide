@@ -62,3 +62,4 @@ Known optional language-server tools:
 - Do not add GitHub workflows yet.
 
 More detail is in [docs/development.md](docs/development.md).
+Security guardrails are tracked in [docs/security.md](docs/security.md).

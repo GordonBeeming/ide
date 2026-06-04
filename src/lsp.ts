@@ -21,23 +21,23 @@ interface ClientRecord {
 
 const clients = new Map<string, ClientRecord>();
 let rootUri = "";
+let errorHandler: ((message: string) => void) | undefined;
 
 export function setLspRootUri(uri: string) {
   rootUri = uri;
+}
+
+export function setLspErrorHandler(handler: (message: string) => void) {
+  errorHandler = handler;
 }
 
 export async function lspExtensionsForPath(path: string): Promise<Extension[]> {
   const language = languageForLsp(path);
   if (!language) return [];
 
-  try {
-    const record = await getClient(language);
-    await record.ready;
-    return [record.client.plugin(fileUriForPath(path), languageIdForLsp(language))];
-  } catch (error) {
-    console.warn(`LSP unavailable for ${language}`, error);
-    return [];
-  }
+  const record = await getClient(language);
+  await record.ready;
+  return [record.client.plugin(fileUriForPath(path), languageIdForLsp(language))];
 }
 
 async function getClient(language: string): Promise<ClientRecord> {
@@ -77,7 +77,7 @@ async function tauriTransport(language: string, sessionId: string): Promise<Tran
   return {
     send(message: string) {
       sendLspMessage(language, message).catch((error) => {
-        console.warn(`LSP send failed for ${language}`, error);
+        errorHandler?.(`LSP send failed for ${language}: ${String(error)}`);
         unlisten?.();
       });
     },

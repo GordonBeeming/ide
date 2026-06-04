@@ -24,6 +24,7 @@ interface EditorPaneProps {
   path: string;
   contents: string;
   onChange: (path: string, contents: string) => void;
+  onError: (message: string) => void;
   onSelection: (selection: EditorSelection | undefined) => void;
 }
 
@@ -31,6 +32,7 @@ export default function EditorPane({
   path,
   contents,
   onChange,
+  onError,
   onSelection,
 }: EditorPaneProps) {
   const host = useRef<HTMLDivElement | null>(null);
@@ -98,6 +100,10 @@ export default function EditorPane({
       });
 
       viewRef.current = view;
+    }).catch((error) => {
+      if (!cancelled) {
+        onError(`Unable to initialize editor services for ${path}: ${String(error)}`);
+      }
     });
 
     return () => {
