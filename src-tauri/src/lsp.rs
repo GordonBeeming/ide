@@ -128,6 +128,10 @@ impl LspManager {
             .await?;
         Ok(())
     }
+
+    pub async fn stop_all(&self) {
+        self.sessions.write().await.clear();
+    }
 }
 
 #[derive(Clone)]

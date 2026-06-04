@@ -1,3 +1,4 @@
+use std::ffi::OsStr;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::time::UNIX_EPOCH;
@@ -17,6 +18,16 @@ pub struct FileEntry {
     pub modified_ms: Option<u128>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchMatch {
+    pub path: String,
+    pub line_number: usize,
+    pub line_text: String,
+    pub match_start: usize,
+    pub match_end: usize,
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum WorkspaceError {
     #[error("path is outside the workspace")]
@@ -25,6 +36,8 @@ pub enum WorkspaceError {
     InvalidPath,
     #[error("file is too large to open in the editor")]
     FileTooLarge,
+    #[error("search query is too long")]
+    SearchQueryTooLong,
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
     #[error("walk error: {0}")]
@@ -32,29 +45,12 @@ pub enum WorkspaceError {
 }
 
 const MAX_OPEN_BYTES: u64 = 5 * 1024 * 1024;
+const MAX_SEARCH_QUERY_CHARS: usize = 128;
+const MAX_SEARCH_FILE_BYTES: u64 = 1_000_000;
 
 pub fn scan_workspace(root: &Path, max_entries: usize) -> Result<Vec<FileEntry>, WorkspaceError> {
     let mut entries = Vec::new();
-    let walker = WalkBuilder::new(root)
-        .hidden(false)
-        .git_ignore(true)
-        .git_exclude(true)
-        .parents(true)
-        .filter_entry(|entry| {
-            let name = entry.file_name().to_string_lossy();
-            !matches!(
-                name.as_ref(),
-                ".git"
-                    | "node_modules"
-                    | "target"
-                    | "dist"
-                    | "build"
-                    | ".next"
-                    | ".turbo"
-                    | ".tauri"
-            )
-        })
-        .build();
+    let walker = workspace_walker(root).build();
 
     for result in walker {
         if entries.len() >= max_entries {
@@ -104,6 +100,72 @@ pub fn scan_workspace(root: &Path, max_entries: usize) -> Result<Vec<FileEntry>,
     Ok(entries)
 }
 
+pub fn search_workspace(
+    root: &Path,
+    query: &str,
+    max_results: usize,
+) -> Result<Vec<SearchMatch>, WorkspaceError> {
+    let query = query.trim();
+    if query.is_empty() {
+        return Ok(Vec::new());
+    }
+    if query.chars().count() > MAX_SEARCH_QUERY_CHARS {
+        return Err(WorkspaceError::SearchQueryTooLong);
+    }
+
+    let normalized_query = query.to_lowercase();
+    let mut matches = Vec::new();
+    let walker = workspace_walker(root).build();
+
+    for result in walker {
+        if matches.len() >= max_results {
+            break;
+        }
+
+        let entry = result?;
+        let path = entry.path();
+        if path == root {
+            continue;
+        }
+
+        let metadata = entry.metadata()?;
+        if metadata.is_dir() || metadata.len() > MAX_SEARCH_FILE_BYTES || is_known_binary_path(path)
+        {
+            continue;
+        }
+
+        let bytes = fs::read(path)?;
+        if bytes.contains(&0) {
+            continue;
+        }
+
+        let contents = String::from_utf8_lossy(&bytes);
+        for (index, line) in contents.lines().enumerate() {
+            if matches.len() >= max_results {
+                break;
+            }
+
+            let lower_line = line.to_lowercase();
+            let Some(match_start) = lower_line.find(&normalized_query) else {
+                continue;
+            };
+
+            let relative = path
+                .strip_prefix(root)
+                .map_err(|_| WorkspaceError::OutsideWorkspace)?;
+            matches.push(SearchMatch {
+                path: normalize_path(relative),
+                line_number: index + 1,
+                line_text: line.trim_end().to_string(),
+                match_start,
+                match_end: match_start + query.len(),
+            });
+        }
+    }
+
+    Ok(matches)
+}
+
 pub fn read_workspace_file(root: &Path, relative: &str) -> Result<String, WorkspaceError> {
     let path = resolve_workspace_path(root, relative)?;
     let metadata = fs::metadata(&path)?;
@@ -121,6 +183,49 @@ pub fn write_workspace_file(
 ) -> Result<(), WorkspaceError> {
     let path = resolve_workspace_path(root, relative)?;
     fs::write(path, contents).map_err(WorkspaceError::from)
+}
+
+fn workspace_walker(root: &Path) -> WalkBuilder {
+    let mut builder = WalkBuilder::new(root);
+    builder
+        .hidden(false)
+        .git_ignore(true)
+        .git_exclude(true)
+        .parents(true)
+        .filter_entry(|entry| !is_generated_name(entry.file_name()));
+    builder
+}
+
+fn is_generated_name(name: &OsStr) -> bool {
+    matches!(
+        name.to_string_lossy().as_ref(),
+        ".git" | "node_modules" | "target" | "dist" | "build" | ".next" | ".turbo" | ".tauri"
+    )
+}
+
+fn is_known_binary_path(path: &Path) -> bool {
+    matches!(
+        path.extension()
+            .and_then(|extension| extension.to_str())
+            .map(str::to_lowercase)
+            .as_deref(),
+        Some(
+            "png"
+                | "jpg"
+                | "jpeg"
+                | "gif"
+                | "webp"
+                | "ico"
+                | "pdf"
+                | "zip"
+                | "gz"
+                | "dll"
+                | "exe"
+                | "dylib"
+                | "so"
+                | "wasm"
+        )
+    )
 }
 
 fn resolve_workspace_path(root: &Path, relative: &str) -> Result<PathBuf, WorkspaceError> {
@@ -225,5 +330,46 @@ mod tests {
         let entries = scan_workspace(dir.path(), 3).unwrap();
 
         assert_eq!(entries.len(), 3);
+    }
+
+    #[test]
+    fn search_workspace_finds_case_insensitive_line_matches() {
+        let dir = tempdir().unwrap();
+        fs::create_dir_all(dir.path().join("src")).unwrap();
+        fs::write(
+            dir.path().join("src/main.rs"),
+            "fn main() {\n    println!(\"Needle\");\n}\n",
+        )
+        .unwrap();
+
+        let results = search_workspace(dir.path(), "needle", 10).unwrap();
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].path, "src/main.rs");
+        assert_eq!(results[0].line_number, 2);
+    }
+
+    #[test]
+    fn search_workspace_skips_generated_directories_and_binary_files() {
+        let dir = tempdir().unwrap();
+        fs::create_dir_all(dir.path().join("node_modules/pkg")).unwrap();
+        fs::write(dir.path().join("node_modules/pkg/index.js"), "needle").unwrap();
+        fs::write(dir.path().join("image.png"), b"needle\0binary").unwrap();
+        fs::write(dir.path().join("README.md"), "needle").unwrap();
+
+        let results = search_workspace(dir.path(), "needle", 10).unwrap();
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].path, "README.md");
+    }
+
+    #[test]
+    fn search_workspace_rejects_long_queries() {
+        let dir = tempdir().unwrap();
+        let query = "a".repeat(MAX_SEARCH_QUERY_CHARS + 1);
+
+        let result = search_workspace(dir.path(), &query, 10);
+
+        assert!(matches!(result, Err(WorkspaceError::SearchQueryTooLong)));
     }
 }

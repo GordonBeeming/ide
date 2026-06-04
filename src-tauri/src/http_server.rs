@@ -12,12 +12,15 @@ use tokio::net::TcpListener;
 use tokio::sync::RwLock;
 
 use crate::lsp::{LspManager, LspServerStatus};
-use crate::workspace::{read_workspace_file, scan_workspace, write_workspace_file, FileEntry};
+use crate::workspace::{
+    read_workspace_file, scan_workspace, search_workspace, write_workspace_file, FileEntry,
+    SearchMatch,
+};
 use crate::AgentContext;
 
 #[derive(Clone)]
 pub struct HttpServerState {
-    workspace_root: PathBuf,
+    workspace_root: Arc<RwLock<PathBuf>>,
     agent_context: Arc<RwLock<AgentContext>>,
     lsp_manager: LspManager,
     frontend_dist: PathBuf,
@@ -42,7 +45,7 @@ struct WriteFileRequest {
 }
 
 pub async fn start_http_server(
-    root_path: PathBuf,
+    root_path: Arc<RwLock<PathBuf>>,
     agent_context: Arc<RwLock<AgentContext>>,
     lsp_manager: LspManager,
     frontend_dist: PathBuf,
@@ -57,6 +60,7 @@ pub async fn start_http_server(
     let app = Router::new()
         .route("/api/workspace-root", get(workspace_root))
         .route("/api/files", get(files))
+        .route("/api/search", get(search))
         .route("/api/file", get(read_file).put(write_file))
         .route(
             "/api/agent-context",
@@ -87,26 +91,49 @@ async fn bind_loopback() -> Result<TcpListener, std::io::Error> {
 }
 
 async fn workspace_root(State(state): State<HttpServerState>) -> Json<String> {
-    Json(state.workspace_root.to_string_lossy().to_string())
+    Json(
+        state
+            .workspace_root
+            .read()
+            .await
+            .to_string_lossy()
+            .to_string(),
+    )
 }
 
 async fn files(State(state): State<HttpServerState>) -> Result<Json<Vec<FileEntry>>, ApiError> {
-    Ok(Json(scan_workspace(&state.workspace_root, 4_000)?))
+    let workspace_root = state.workspace_root.read().await.clone();
+    Ok(Json(scan_workspace(&workspace_root, 4_000)?))
 }
 
 async fn read_file(
     State(state): State<HttpServerState>,
     Query(query): Query<FileQuery>,
 ) -> Result<String, ApiError> {
-    Ok(read_workspace_file(&state.workspace_root, &query.path)?)
+    let workspace_root = state.workspace_root.read().await.clone();
+    Ok(read_workspace_file(&workspace_root, &query.path)?)
 }
 
 async fn write_file(
     State(state): State<HttpServerState>,
     Json(request): Json<WriteFileRequest>,
 ) -> Result<StatusCode, ApiError> {
-    write_workspace_file(&state.workspace_root, &request.path, &request.contents)?;
+    let workspace_root = state.workspace_root.read().await.clone();
+    write_workspace_file(&workspace_root, &request.path, &request.contents)?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Debug, Deserialize)]
+struct SearchQuery {
+    query: String,
+}
+
+async fn search(
+    State(state): State<HttpServerState>,
+    Query(query): Query<SearchQuery>,
+) -> Result<Json<Vec<SearchMatch>>, ApiError> {
+    let workspace_root = state.workspace_root.read().await.clone();
+    Ok(Json(search_workspace(&workspace_root, &query.query, 200)?))
 }
 
 async fn get_agent_context(State(state): State<HttpServerState>) -> Json<AgentContext> {

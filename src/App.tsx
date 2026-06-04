@@ -3,8 +3,9 @@ import {
   ChevronRight,
   Circle,
   FileCog,
-  FolderOpen,
+  FolderPlus,
   PanelLeftClose,
+  RefreshCw,
   Save,
   Search,
   X,
@@ -16,12 +17,15 @@ import {
   EditorSelection,
   FileEntry,
   LspServerStatus,
+  SearchMatch,
   getClaudeBridgeStatus,
   getHttpEndpoint,
   getLspServers,
   getWorkspaceRoot,
   listFiles,
+  pickWorkspaceFolder,
   readFile,
+  searchFiles,
   updateAgentContext,
   writeFile,
 } from "./tauri";
@@ -49,6 +53,9 @@ export default function App() {
   const [selectedPath, setSelectedPath] = useState<string>();
   const [openFiles, setOpenFiles] = useState<EditorTab[]>([]);
   const [filter, setFilter] = useState("");
+  const [contentQuery, setContentQuery] = useState("");
+  const [searchResults, setSearchResults] = useState<SearchMatch[]>([]);
+  const [searching, setSearching] = useState(false);
   const [error, setError] = useState<string>();
   const [status, setStatus] = useState("Ready");
   const [selection, setSelection] = useState<EditorSelection>();
@@ -80,6 +87,39 @@ export default function App() {
   useEffect(() => {
     refreshFiles().catch((reason) => setError(String(reason)));
   }, [refreshFiles]);
+
+  useEffect(() => {
+    const query = contentQuery.trim();
+    if (query.length < 2) {
+      setSearchResults([]);
+      setSearching(false);
+      return;
+    }
+
+    setSearching(true);
+    let cancelled = false;
+    const timeout = window.setTimeout(() => {
+      searchFiles(query)
+        .then((results) => {
+          if (cancelled) return;
+          setSearchResults(results);
+          setStatus(results.length === 1 ? "1 match" : `${results.length} matches`);
+        })
+        .catch((reason) => {
+          if (cancelled) return;
+          setError(`Search failed: ${String(reason)}`);
+          setSearchResults([]);
+        })
+        .finally(() => {
+          if (!cancelled) setSearching(false);
+        });
+    }, 180);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeout);
+    };
+  }, [contentQuery]);
 
   useEffect(() => {
     setLspErrorHandler(setError);
@@ -135,6 +175,18 @@ export default function App() {
     [openFiles],
   );
 
+  const openPathByName = useCallback(
+    async (path: string, pinned = false) => {
+      const entry = files.find((candidate) => candidate.path === path);
+      if (!entry) {
+        setError(`File is not in the current workspace: ${path}`);
+        return;
+      }
+      await openPath(entry, pinned);
+    },
+    [files, openPath],
+  );
+
   const updateContents = useCallback((path: string, contents: string) => {
     setOpenFiles((current) => updateTabContents(current, path, contents));
   }, []);
@@ -166,6 +218,36 @@ export default function App() {
     }
   }, [activeFile, refreshFiles]);
 
+  const openWorkspace = useCallback(async () => {
+    if (openFiles.some((file) => file.dirty)) {
+      setError("Save or close modified files before switching workspace.");
+      return;
+    }
+
+    setError(undefined);
+    setStatus("Opening folder");
+    try {
+      const selected = await pickWorkspaceFolder();
+      if (!selected) {
+        setStatus("Ready");
+        return;
+      }
+
+      setOpenFiles([]);
+      setActivePath(undefined);
+      setSelectedPath(undefined);
+      setSelection(undefined);
+      setFilter("");
+      setContentQuery("");
+      setSearchResults([]);
+      await refreshFiles();
+      setStatus(`Opened ${lastSegment(selected) || selected}`);
+    } catch (reason) {
+      setError(String(reason));
+      setStatus("Open folder failed");
+    }
+  }, [openFiles, refreshFiles]);
+
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "s") {
@@ -185,9 +267,14 @@ export default function App() {
             <div className="eyebrow">Workspace</div>
             <strong>{lastSegment(workspaceRoot) || "Loading"}</strong>
           </div>
-          <button className="icon-button" title="Refresh files" onClick={refreshFiles}>
-            <FolderOpen size={17} />
-          </button>
+          <div className="sidebar__actions">
+            <button className="icon-button" title="Open folder" onClick={openWorkspace}>
+              <FolderPlus size={17} />
+            </button>
+            <button className="icon-button" title="Refresh files" onClick={refreshFiles}>
+              <RefreshCw size={16} />
+            </button>
+          </div>
         </div>
 
         <label className="search-box">
@@ -198,6 +285,40 @@ export default function App() {
             placeholder="Filter files"
           />
         </label>
+
+        <label className="search-box">
+          <Search size={15} />
+          <input
+            value={contentQuery}
+            onChange={(event) => setContentQuery(event.target.value)}
+            placeholder="Search contents"
+          />
+        </label>
+
+        {contentQuery.trim().length >= 2 ? (
+          <div className="search-results" aria-label="Content search results">
+            <div className="search-results__header">
+              <span>{searching ? "Searching" : "Results"}</span>
+              <span>{searchResults.length}</span>
+            </div>
+            {searchResults.map((result) => (
+              <button
+                className="search-result"
+                key={`${result.path}:${result.lineNumber}:${result.matchStart}`}
+                onClick={() => openPathByName(result.path, false)}
+                onDoubleClick={() => openPathByName(result.path, true)}
+              >
+                <span className="search-result__path">
+                  {result.path}:{result.lineNumber}
+                </span>
+                <span className="search-result__line">{result.lineText}</span>
+              </button>
+            ))}
+            {!searching && searchResults.length === 0 ? (
+              <div className="search-results__empty">No matches</div>
+            ) : null}
+          </div>
+        ) : null}
 
         <nav className="file-tree" aria-label="Workspace files">
           {filteredTree.map((node) => (

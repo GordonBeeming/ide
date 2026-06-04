@@ -8,6 +8,8 @@ Security is a core product constraint for this IDE. Changes should be reviewed w
 - Absolute paths and parent traversal are rejected.
 - File opens are capped at 5 MiB.
 - Common generated folders and `.git` are skipped during tree scans.
+- Content search skips generated folders, skips binary-looking files, caps searched file size, caps query length, and caps result count.
+- Workspace switching canonicalizes selected directories, clears backend editor context, and clears LSP sessions.
 - LSP markdown is sanitized before display.
 - Language servers are discovered through fixed command definitions, not arbitrary user-provided command strings.
 - LSP servers are lazy-started only for matching file types.
@@ -38,4 +40,5 @@ Before committing security-sensitive changes:
 - Can an agent tool mutate files without visible confirmation?
 - Are failures visible to the user?
 - Are large files, generated folders, and long-running processes bounded?
+- Does workspace switching clear stale context from local agent integrations?
 - Is the behavior covered by tests?

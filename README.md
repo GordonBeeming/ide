@@ -11,6 +11,8 @@ Implemented:
 - Tauri 2 desktop shell with a Rust backend.
 - React frontend.
 - File tree with file and folder icons.
+- Native folder picker for switching workspaces.
+- File-name filtering and bounded text search across the current workspace.
 - Guarded Rust-native workspace scanning and file read/write commands.
 - CodeMirror 6 editor.
 - Syntax highlighting for Rust, TypeScript, JavaScript, React/TSX/JSX, HTML, CSS, and C#.
@@ -24,6 +26,7 @@ Implemented:
 Planned:
 
 - Go-to definition and richer diagnostics through CodeMirror LSP integration.
+- Better keyboard-first navigation for search results and tabs.
 - Diff review and write-capable Claude bridge tools with explicit editor UI review.
 - Codex IDE integration if OpenAI documents a third-party custom IDE protocol.
 - PR-ready local polish and testing workflow.

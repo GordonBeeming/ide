@@ -16,7 +16,7 @@ use crate::AgentContext;
 
 #[derive(Clone)]
 struct ClaudeBridgeState {
-    workspace_root: PathBuf,
+    workspace_root: Arc<RwLock<PathBuf>>,
     agent_context: Arc<RwLock<AgentContext>>,
 }
 
@@ -44,7 +44,7 @@ struct JsonRpcMessage {
     params: Option<Value>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct LockFile {
     pid: u32,
@@ -55,14 +55,15 @@ struct LockFile {
 }
 
 pub async fn start_claude_bridge(
-    workspace_root: PathBuf,
+    workspace_root: Arc<RwLock<PathBuf>>,
     agent_context: Arc<RwLock<AgentContext>>,
     bridge_error: Arc<RwLock<Option<String>>>,
 ) -> Result<ClaudeBridgeInfo, ClaudeBridgeError> {
     let listener = TcpListener::bind(SocketAddr::from((Ipv4Addr::LOCALHOST, 0))).await?;
     let port = listener.local_addr()?.port();
     let auth_token = Uuid::new_v4().to_string();
-    let lock_file = write_lock_file(port, &workspace_root, &auth_token)?;
+    let initial_root = workspace_root.read().await.clone();
+    let lock_file = write_lock_file(port, &initial_root, &auth_token)?;
     let endpoint = format!("ws://127.0.0.1:{port}");
     let state = ClaudeBridgeState {
         workspace_root,
@@ -81,6 +82,19 @@ pub async fn start_claude_bridge(
         endpoint,
         lock_file: lock_file.to_string_lossy().to_string(),
     })
+}
+
+pub fn update_lock_workspace(
+    lock_file: &str,
+    workspace_root: &Path,
+) -> Result<(), ClaudeBridgeError> {
+    let lock_path = PathBuf::from(lock_file);
+    let contents = std::fs::read_to_string(&lock_path)?;
+    let mut lock = serde_json::from_str::<LockFile>(&contents)?;
+    lock.workspace_folders = vec![workspace_root.to_string_lossy().to_string()];
+    std::fs::write(&lock_path, serde_json::to_vec_pretty(&lock)?)?;
+    set_file_permissions(&lock_path)?;
+    Ok(())
 }
 
 async fn accept_connections(
@@ -201,10 +215,13 @@ async fn handle_tool_call(state: &ClaudeBridgeState, id: Value, params: Option<V
     };
 
     let context = state.agent_context.read().await.clone();
+    let workspace_root = state.workspace_root.read().await.clone();
     let result = match name {
-        "getCurrentSelection" | "getLatestSelection" => current_selection(state, &context),
-        "getOpenEditors" => open_editors(state, &context),
-        "getWorkspaceFolders" => workspace_folders(state),
+        "getCurrentSelection" | "getLatestSelection" => {
+            current_selection(&workspace_root, &context)
+        }
+        "getOpenEditors" => open_editors(&workspace_root, &context),
+        "getWorkspaceFolders" => workspace_folders(&workspace_root),
         "getDiagnostics" => json!([]),
         _ => {
             return error_response(id.into(), -32601, format!("Unknown tool: {name}"));
@@ -214,12 +231,12 @@ async fn handle_tool_call(state: &ClaudeBridgeState, id: Value, params: Option<V
     success_response(id, mcp_text_response(result.to_string()))
 }
 
-fn current_selection(state: &ClaudeBridgeState, context: &AgentContext) -> Value {
+fn current_selection(workspace_root: &Path, context: &AgentContext) -> Value {
     let Some(selection) = context.selection.as_ref() else {
         return json!({ "success": false, "message": "No selection available" });
     };
 
-    let file_path = absolute_path(&state.workspace_root, &selection.file_path);
+    let file_path = absolute_path(workspace_root, &selection.file_path);
     json!({
         "success": true,
         "text": selection.text,
@@ -233,12 +250,12 @@ fn current_selection(state: &ClaudeBridgeState, context: &AgentContext) -> Value
     })
 }
 
-fn open_editors(state: &ClaudeBridgeState, context: &AgentContext) -> Value {
+fn open_editors(workspace_root: &Path, context: &AgentContext) -> Value {
     let tabs = context
         .open_files
         .iter()
         .map(|path| {
-            let file_path = absolute_path(&state.workspace_root, path);
+            let file_path = absolute_path(workspace_root, path);
             json!({
                 "uri": file_url(&file_path),
                 "isActive": context.active_file.as_deref() == Some(path.as_str()),
@@ -255,10 +272,9 @@ fn open_editors(state: &ClaudeBridgeState, context: &AgentContext) -> Value {
     json!({ "tabs": tabs })
 }
 
-fn workspace_folders(state: &ClaudeBridgeState) -> Value {
-    let root_path = state.workspace_root.to_string_lossy().to_string();
-    let name = state
-        .workspace_root
+fn workspace_folders(workspace_root: &Path) -> Value {
+    let root_path = workspace_root.to_string_lossy().to_string();
+    let name = workspace_root
         .file_name()
         .and_then(|value| value.to_str())
         .unwrap_or("workspace");
@@ -422,12 +438,8 @@ mod tests {
     #[test]
     fn workspace_folders_returns_file_url_and_path() {
         let dir = tempdir().unwrap();
-        let state = ClaudeBridgeState {
-            workspace_root: dir.path().to_path_buf(),
-            agent_context: Arc::new(RwLock::new(AgentContext::default())),
-        };
 
-        let folders = workspace_folders(&state);
+        let folders = workspace_folders(dir.path());
 
         assert_eq!(folders["success"], true);
         assert_eq!(
@@ -444,12 +456,8 @@ mod tests {
             open_files: vec!["README.md".to_string(), "src/main.rs".to_string()],
             selection: None,
         };
-        let state = ClaudeBridgeState {
-            workspace_root: dir.path().to_path_buf(),
-            agent_context: Arc::new(RwLock::new(AgentContext::default())),
-        };
 
-        let editors = open_editors(&state, &context);
+        let editors = open_editors(dir.path(), &context);
 
         assert_eq!(editors["tabs"][0]["isActive"], false);
         assert_eq!(editors["tabs"][1]["isActive"], true);
@@ -458,7 +466,9 @@ mod tests {
 
     #[test]
     fn expected_client_connection_errors_do_not_mark_bridge_failed() {
-        assert!(!should_surface_connection_error("HTTP error: 401 Unauthorized"));
+        assert!(!should_surface_connection_error(
+            "HTTP error: 401 Unauthorized"
+        ));
         assert!(!should_surface_connection_error("Connection reset by peer"));
         assert!(should_surface_connection_error("listener failed"));
     }

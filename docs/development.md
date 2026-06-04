@@ -51,6 +51,7 @@ Current constraints:
 - No Monaco editor.
 - No filesystem plugin for broad client-side filesystem access.
 - Ignore `node_modules`, `target`, `dist`, `.git`, and common generated folders during tree scans.
+- Workspace content search runs in Rust, skips generated folders and binary-looking files, caps searched file size, and limits returned matches.
 - Keep syntax language packages dynamically imported by extension.
 - Keep LSP optional and lazy. Language servers should start only when a matching file type is opened.
 
@@ -77,6 +78,19 @@ cd src-tauri && cargo test
 ```
 
 Prefer pure helper tests for UI state rules, and Rust unit tests for filesystem, path safety, process detection, and protocol framing. Add heavier rendered UI tests only where the behavior cannot be validated through smaller units.
+
+## Workspace Switching
+
+The native folder picker is owned by the Rust backend through `tauri-plugin-dialog`. Switching workspace roots:
+
+- canonicalizes the selected directory
+- rejects non-directory paths
+- clears open editor tabs in the frontend
+- clears backend agent context
+- clears running LSP sessions so a language server is not reused with the wrong root
+- rewrites the Claude bridge lock file workspace metadata
+
+The frontend refuses to switch folders while any open tab is dirty.
 
 ## LSP Direction
 

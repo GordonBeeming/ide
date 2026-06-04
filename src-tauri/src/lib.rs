@@ -8,12 +8,15 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use tauri::State;
+use tauri_plugin_dialog::DialogExt;
 use tokio::sync::RwLock;
-use workspace::{read_workspace_file, scan_workspace, write_workspace_file, WorkspaceError};
+use workspace::{
+    read_workspace_file, scan_workspace, search_workspace, write_workspace_file, WorkspaceError,
+};
 
 #[derive(Clone)]
 struct AppState {
-    workspace_root: PathBuf,
+    workspace_root: Arc<RwLock<PathBuf>>,
     agent_context: Arc<RwLock<AgentContext>>,
     lsp_manager: lsp::LspManager,
     http_endpoint: Arc<RwLock<Option<String>>>,
@@ -51,6 +54,10 @@ enum CommandError {
     HttpServer(String),
     #[error("Claude IDE bridge failed: {0}")]
     ClaudeBridge(String),
+    #[error("selected workspace path is not a directory")]
+    WorkspaceNotDirectory,
+    #[error("dialog error: {0}")]
+    Dialog(String),
 }
 
 impl serde::Serialize for CommandError {
@@ -63,27 +70,72 @@ impl serde::Serialize for CommandError {
 }
 
 #[tauri::command]
-fn get_workspace_root(state: State<'_, AppState>) -> String {
-    state.workspace_root.to_string_lossy().to_string()
+async fn get_workspace_root(state: State<'_, AppState>) -> Result<String, CommandError> {
+    Ok(state
+        .workspace_root
+        .read()
+        .await
+        .to_string_lossy()
+        .to_string())
 }
 
 #[tauri::command]
-fn list_files(state: State<'_, AppState>) -> Result<Vec<workspace::FileEntry>, CommandError> {
-    scan_workspace(&state.workspace_root, 4_000).map_err(CommandError::from)
+async fn list_files(state: State<'_, AppState>) -> Result<Vec<workspace::FileEntry>, CommandError> {
+    let workspace_root = state.workspace_root.read().await.clone();
+    scan_workspace(&workspace_root, 4_000).map_err(CommandError::from)
 }
 
 #[tauri::command]
-fn read_file(state: State<'_, AppState>, path: String) -> Result<String, CommandError> {
-    read_workspace_file(&state.workspace_root, &path).map_err(CommandError::from)
+async fn read_file(state: State<'_, AppState>, path: String) -> Result<String, CommandError> {
+    let workspace_root = state.workspace_root.read().await.clone();
+    read_workspace_file(&workspace_root, &path).map_err(CommandError::from)
 }
 
 #[tauri::command]
-fn write_file(
+async fn write_file(
     state: State<'_, AppState>,
     path: String,
     contents: String,
 ) -> Result<(), CommandError> {
-    write_workspace_file(&state.workspace_root, &path, &contents).map_err(CommandError::from)
+    let workspace_root = state.workspace_root.read().await.clone();
+    write_workspace_file(&workspace_root, &path, &contents).map_err(CommandError::from)
+}
+
+#[tauri::command]
+async fn search_files(
+    state: State<'_, AppState>,
+    query: String,
+) -> Result<Vec<workspace::SearchMatch>, CommandError> {
+    let workspace_root = state.workspace_root.read().await.clone();
+    search_workspace(&workspace_root, &query, 200).map_err(CommandError::from)
+}
+
+#[tauri::command]
+async fn pick_workspace_folder(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<Option<String>, CommandError> {
+    let Some(path) = app
+        .dialog()
+        .file()
+        .set_title("Open Folder")
+        .blocking_pick_folder()
+    else {
+        return Ok(None);
+    };
+
+    let path = path
+        .into_path()
+        .map_err(|error| CommandError::Dialog(error.to_string()))?;
+    set_workspace_root_path(&state, path).await.map(Some)
+}
+
+#[tauri::command]
+async fn set_workspace_root(
+    state: State<'_, AppState>,
+    path: String,
+) -> Result<String, CommandError> {
+    set_workspace_root_path(&state, PathBuf::from(path)).await
 }
 
 #[tauri::command]
@@ -131,9 +183,10 @@ async fn start_lsp(
     state: State<'_, AppState>,
     language: String,
 ) -> Result<lsp::LspStartResult, CommandError> {
+    let workspace_root = state.workspace_root.read().await.clone();
     state
         .lsp_manager
-        .start(app, &language, &state.workspace_root)
+        .start(app, &language, &workspace_root)
         .await
         .map_err(CommandError::from)
 }
@@ -161,7 +214,7 @@ pub fn run() {
     let claude_bridge = Arc::new(RwLock::new(None));
     let claude_bridge_error = Arc::new(RwLock::new(None));
     let app_state = AppState {
-        workspace_root,
+        workspace_root: Arc::new(RwLock::new(workspace_root)),
         agent_context,
         lsp_manager,
         http_endpoint,
@@ -220,11 +273,15 @@ pub fn run() {
             });
             Ok(())
         })
+        .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             get_workspace_root,
             list_files,
             read_file,
             write_file,
+            search_files,
+            pick_workspace_folder,
+            set_workspace_root,
             update_agent_context,
             get_agent_context,
             get_lsp_servers,
@@ -235,6 +292,26 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running application");
+}
+
+async fn set_workspace_root_path(
+    state: &State<'_, AppState>,
+    path: PathBuf,
+) -> Result<String, CommandError> {
+    let canonical = path.canonicalize().map_err(WorkspaceError::from)?;
+    if !canonical.is_dir() {
+        return Err(CommandError::WorkspaceNotDirectory);
+    }
+
+    *state.workspace_root.write().await = canonical.clone();
+    *state.agent_context.write().await = AgentContext::default();
+    state.lsp_manager.stop_all().await;
+    if let Some(bridge) = state.claude_bridge.read().await.clone() {
+        claude_bridge::update_lock_workspace(&bridge.lock_file, &canonical)
+            .map_err(|error| CommandError::ClaudeBridge(error.to_string()))?;
+    }
+
+    Ok(canonical.to_string_lossy().to_string())
 }
 
 fn resolve_workspace_root() -> Result<PathBuf, std::io::Error> {

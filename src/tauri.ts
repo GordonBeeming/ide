@@ -46,6 +46,14 @@ export interface ClaudeBridgeStatus {
   lockFile: string;
 }
 
+export interface SearchMatch {
+  path: string;
+  lineNumber: number;
+  lineText: string;
+  matchStart: number;
+  matchEnd: number;
+}
+
 export function isNativeTauri() {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 }
@@ -71,6 +79,20 @@ export function writeFile(path: string, contents: string) {
     body: { path, contents },
     invokeArgs: { path, contents },
   });
+}
+
+export function searchFiles(query: string) {
+  return callApi<SearchMatch[]>("search_files", `/api/search?query=${encodeURIComponent(query)}`, {
+    method: "GET",
+    invokeArgs: { query },
+  });
+}
+
+export function pickWorkspaceFolder() {
+  if (!isNativeTauri()) {
+    return Promise.reject(new Error("Folder picker is only available in the native Tauri app"));
+  }
+  return invoke<string | undefined>("pick_workspace_folder");
 }
 
 export function updateAgentContext(context: AgentContext) {
