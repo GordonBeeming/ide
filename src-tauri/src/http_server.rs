@@ -1,6 +1,7 @@
 use std::net::{Ipv4Addr, SocketAddr};
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
+use std::{fmt, io};
 
 use axum::extract::{Query, State};
 use axum::http::{header, HeaderMap, HeaderValue, Request, StatusCode};
@@ -112,8 +113,25 @@ async fn bind_loopback() -> Result<TcpListener, std::io::Error> {
     let preferred = SocketAddr::from((Ipv4Addr::LOCALHOST, 17877));
     match TcpListener::bind(preferred).await {
         Ok(listener) => Ok(listener),
-        Err(_) => TcpListener::bind(SocketAddr::from((Ipv4Addr::LOCALHOST, 0))).await,
+        Err(preferred_error) => bind_fallback_loopback(preferred, preferred_error).await,
     }
+}
+
+async fn bind_fallback_loopback(
+    preferred: SocketAddr,
+    preferred_error: io::Error,
+) -> Result<TcpListener, io::Error> {
+    TcpListener::bind(SocketAddr::from((Ipv4Addr::LOCALHOST, 0)))
+        .await
+        .map_err(|fallback_error| {
+            io::Error::new(
+                fallback_error.kind(),
+                format!(
+                    "failed to bind preferred loopback {preferred}: {preferred_error}; \
+                     failed to bind fallback loopback: {fallback_error}"
+                ),
+            )
+        })
 }
 
 async fn cors_preflight(headers: HeaderMap) -> Response {
@@ -461,10 +479,28 @@ async fn serve_static_path(frontend_dist: &Path, requested: &str) -> Response {
             let content_type = content_type_for(&path);
             ([(header::CONTENT_TYPE, content_type)], bytes).into_response()
         }
-        Err(_) => Html(
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Html(
             "<!doctype html><title>Ide</title><p>Build the web assets with <code>npm run build</code>, then reload.</p>",
         )
         .into_response(),
+        Err(error) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Unable to read static asset {}: {error}", DisplayPath(&path)),
+        )
+            .into_response(),
+    }
+}
+
+struct DisplayPath<'a>(&'a Path);
+
+impl fmt::Display for DisplayPath<'_> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let name = self
+            .0
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or("requested file");
+        formatter.write_str(name)
     }
 }
 
