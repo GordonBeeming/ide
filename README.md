@@ -13,7 +13,7 @@ Implemented:
 - File tree with file and folder icons.
 - Native folder picker for switching workspaces.
 - File-name filtering and bounded text search across the current workspace.
-- Keyboard quick-open palette for opening files by path.
+- Keyboard quick-open palette for opening files by path, including arrow-key result selection.
 - Dirty-file prompts before closing tabs or the native app window.
 - Guarded Rust-native workspace scanning and file read/write commands.
 - CodeMirror 6 editor.
@@ -21,14 +21,14 @@ Implemented:
 - Lazy editor loading and lazy language loading for better startup performance.
 - System light/dark mode via `prefers-color-scheme` with a high-contrast bias.
 - Active file, open file, and selection context stored in backend state.
-- LSP process manager for Rust, TypeScript/React, and C#.
+- LSP process manager for Rust, TypeScript/React, and C# with status refresh after bridge events.
 - Local HTTP context endpoint for terminal/browser integrations.
 - Claude Code `/ide` discovery bridge with authenticated localhost WebSocket MCP and read-only editor-context tools.
 - Codex-compatible read-only MCP endpoint with a per-run bearer token.
 
 Planned:
 
-- Go-to definition and richer diagnostics through CodeMirror LSP integration.
+- Persisted diagnostics and a visible diagnostics panel.
 - Better keyboard-first navigation for search results and tabs.
 - Diff review and write-capable Claude bridge tools with explicit editor UI review.
 - Deeper Codex IDE integration if OpenAI documents a third-party custom IDE protocol beyond MCP.
@@ -72,6 +72,8 @@ The public Codex docs describe `/ide` for Codex-owned IDE surfaces, but do not c
 ```bash
 ./run-tests.sh
 ```
+
+`npm audit --audit-level=moderate` currently reports no known npm vulnerabilities. Rust advisory scanning should be run with `cargo audit` once `cargo-audit` is installed locally.
 
 ## Design Constraints
 

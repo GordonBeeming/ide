@@ -17,6 +17,7 @@ Security is a core product constraint for this IDE. Changes should be reviewed w
 - Claude IDE bridge discovery uses a user-only `~/.claude/ide/` directory, a `0600` lock file, and a per-run UUID auth token.
 - Claude bridge tools are read-only in the first implementation.
 - Codex MCP requests require a per-run bearer token and expose only read-only editor context tools. The token is available from the loopback status API because the terminal-browser UI needs to show it.
+- Dev-mode CORS is limited to loopback origins so the Vite frontend can talk to the Rust loopback API without opening the API to arbitrary websites.
 - Errors should be surfaced to the UI. Do not add empty catches or console-only error handling.
 
 ## Rules For Future Changes
@@ -43,3 +44,4 @@ Before committing security-sensitive changes:
 - Are large files, generated folders, and long-running processes bounded?
 - Does workspace switching clear stale context from local agent integrations?
 - Is the behavior covered by tests?
+- Have `npm audit --audit-level=moderate` and `cargo audit` been run for dependency-sensitive changes?

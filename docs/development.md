@@ -36,7 +36,7 @@ The app is intentionally split into a small always-loaded shell and lazy-loaded 
 - `src/App.tsx`: workspace shell, tree view, tabs, file open/save orchestration.
 - `src/EditorPane.tsx`: CodeMirror editor. Loaded only after a file is opened.
 - `src/appWindow.ts`: guarded Tauri window-close integration.
-- `src/quickOpen.ts`: tested quick-open file matching and ranking.
+- `src/quickOpen.ts`: tested quick-open file matching, ranking, and keyboard selection rules.
 - `src/editorNavigation.ts`: tested line clamping for search-result reveal behavior.
 - `src/language.ts`: lazy language loaders for Rust, TypeScript/JavaScript/React, HTML, CSS, and C#.
 - `src-tauri/src/workspace.rs`: Rust-native workspace scanning and guarded file IO.
@@ -57,6 +57,7 @@ Current constraints:
 - Workspace content search runs in Rust, skips generated folders and binary-looking files, caps searched file size, and limits returned matches.
 - Keep syntax language packages dynamically imported by extension.
 - Keep LSP optional and lazy. Language servers should start only when a matching file type is opened.
+- Refresh LSP status from bridge events so the sidebar does not show stale running state after server start or exit.
 
 When adding dependencies, check the production bundle:
 
@@ -82,6 +83,15 @@ cd src-tauri && cargo test
 
 Prefer pure helper tests for UI state rules, and Rust unit tests for filesystem, path safety, process detection, and protocol framing. Add heavier rendered UI tests only where the behavior cannot be validated through smaller units.
 
+Security verification:
+
+```bash
+npm audit --audit-level=moderate
+cd src-tauri && cargo audit
+```
+
+`cargo audit` requires the `cargo-audit` tool to be installed. If it is missing, install it before treating Rust advisory scanning as complete.
+
 ## Workspace Switching
 
 The native folder picker is owned by the Rust backend through `tauri-plugin-dialog`. Switching workspace roots:
@@ -104,6 +114,8 @@ The planned LSP support is:
 - C#: OmniSharp or C# Dev Kit compatible language server when available outside VS Code
 
 The editor should use the official `@codemirror/lsp-client` transport interface. The Rust backend should own language-server process management so the UI can stay browser-safe and avoid spawning processes from the frontend.
+
+`@codemirror/lsp-client` currently provides the editor-side keymaps for definition/declaration/type-definition/implementation jumps, references, rename, formatting, completion, hover, and signature help through `languageServerExtensions()`. Diagnostics still need an app-level persistence and display surface.
 
 ## Agent Context Direction
 
