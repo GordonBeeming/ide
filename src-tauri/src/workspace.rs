@@ -36,6 +36,12 @@ pub enum WorkspaceError {
     InvalidPath,
     #[error("file is too large to open in the editor")]
     FileTooLarge,
+    #[error("file already exists")]
+    FileAlreadyExists,
+    #[error("path is not a file")]
+    NotAFile,
+    #[error("file changed on disk since it was opened")]
+    FileModifiedExternally,
     #[error("search query is too long")]
     SearchQueryTooLong,
     #[error("io error: {0}")]
@@ -180,9 +186,75 @@ pub fn write_workspace_file(
     root: &Path,
     relative: &str,
     contents: &str,
+    expected_modified_ms: Option<u128>,
 ) -> Result<(), WorkspaceError> {
     let path = resolve_workspace_path(root, relative)?;
+    if let Some(expected_modified_ms) = expected_modified_ms {
+        let current_modified_ms = fs::metadata(&path)?
+            .modified()
+            .ok()
+            .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+            .map(|duration| duration.as_millis())
+            .ok_or(WorkspaceError::FileModifiedExternally)?;
+        if current_modified_ms != expected_modified_ms {
+            return Err(WorkspaceError::FileModifiedExternally);
+        }
+    }
+
     fs::write(path, contents).map_err(WorkspaceError::from)
+}
+
+pub fn create_workspace_file(root: &Path, relative: &str) -> Result<(), WorkspaceError> {
+    let path = resolve_workspace_path(root, relative)?;
+    let file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path);
+
+    match file {
+        Ok(_) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            Err(WorkspaceError::FileAlreadyExists)
+        }
+        Err(error) => Err(WorkspaceError::Io(error)),
+    }
+}
+
+pub fn create_workspace_folder(root: &Path, relative: &str) -> Result<(), WorkspaceError> {
+    let path = resolve_workspace_path(root, relative)?;
+    match fs::create_dir(path) {
+        Ok(_) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            Err(WorkspaceError::FileAlreadyExists)
+        }
+        Err(error) => Err(WorkspaceError::Io(error)),
+    }
+}
+
+pub fn rename_workspace_file(
+    root: &Path,
+    from: &str,
+    to: &str,
+) -> Result<(), WorkspaceError> {
+    let from_path = resolve_workspace_path(root, from)?;
+    let to_path = resolve_workspace_path(root, to)?;
+    if !from_path.metadata()?.is_file() {
+        return Err(WorkspaceError::NotAFile);
+    }
+    if to_path.exists() {
+        return Err(WorkspaceError::FileAlreadyExists);
+    }
+
+    fs::rename(from_path, to_path).map_err(WorkspaceError::from)
+}
+
+pub fn delete_workspace_file(root: &Path, relative: &str) -> Result<(), WorkspaceError> {
+    let path = resolve_workspace_path(root, relative)?;
+    if !path.metadata()?.is_file() {
+        return Err(WorkspaceError::NotAFile);
+    }
+
+    fs::remove_file(path).map_err(WorkspaceError::from)
 }
 
 fn workspace_walker(root: &Path) -> WalkBuilder {
@@ -291,11 +363,177 @@ mod tests {
         fs::write(dir.path().join("note.txt"), "before").unwrap();
 
         let before = read_workspace_file(dir.path(), "note.txt").unwrap();
-        write_workspace_file(dir.path(), "note.txt", "after").unwrap();
+        write_workspace_file(dir.path(), "note.txt", "after", None).unwrap();
         let after = read_workspace_file(dir.path(), "note.txt").unwrap();
 
         assert_eq!(before, "before");
         assert_eq!(after, "after");
+    }
+
+    #[test]
+    fn write_workspace_file_rejects_stale_modified_timestamps() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("note.txt");
+        fs::write(&path, "before").unwrap();
+        let modified_ms = fs::metadata(&path)
+            .unwrap()
+            .modified()
+            .unwrap()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis();
+
+        fs::write(&path, "outside change").unwrap();
+        let stale_modified_ms = modified_ms.saturating_sub(1);
+        let result = write_workspace_file(
+            dir.path(),
+            "note.txt",
+            "after",
+            Some(stale_modified_ms),
+        );
+
+        assert!(matches!(result, Err(WorkspaceError::FileModifiedExternally)));
+        assert_eq!(fs::read_to_string(path).unwrap(), "outside change");
+    }
+
+    #[test]
+    fn create_workspace_file_creates_empty_file_inside_root() {
+        let dir = tempdir().unwrap();
+        fs::create_dir(dir.path().join("src")).unwrap();
+
+        create_workspace_file(dir.path(), "src/new.rs").unwrap();
+
+        assert_eq!(fs::read_to_string(dir.path().join("src/new.rs")).unwrap(), "");
+    }
+
+    #[test]
+    fn create_workspace_file_rejects_existing_files() {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join("note.txt"), "before").unwrap();
+
+        let result = create_workspace_file(dir.path(), "note.txt");
+
+        assert!(matches!(result, Err(WorkspaceError::FileAlreadyExists)));
+        assert_eq!(fs::read_to_string(dir.path().join("note.txt")).unwrap(), "before");
+    }
+
+    #[test]
+    fn create_workspace_file_rejects_parent_traversal() {
+        let dir = tempdir().unwrap();
+
+        let result = create_workspace_file(dir.path(), "../secret.txt");
+
+        assert!(matches!(result, Err(WorkspaceError::InvalidPath)));
+    }
+
+    #[test]
+    fn create_workspace_folder_creates_directory_inside_root() {
+        let dir = tempdir().unwrap();
+
+        create_workspace_folder(dir.path(), "src").unwrap();
+
+        assert!(dir.path().join("src").is_dir());
+    }
+
+    #[test]
+    fn create_workspace_folder_rejects_existing_directories() {
+        let dir = tempdir().unwrap();
+        fs::create_dir(dir.path().join("src")).unwrap();
+
+        let result = create_workspace_folder(dir.path(), "src");
+
+        assert!(matches!(result, Err(WorkspaceError::FileAlreadyExists)));
+        assert!(dir.path().join("src").is_dir());
+    }
+
+    #[test]
+    fn create_workspace_folder_rejects_parent_traversal() {
+        let dir = tempdir().unwrap();
+
+        let result = create_workspace_folder(dir.path(), "../outside");
+
+        assert!(matches!(result, Err(WorkspaceError::InvalidPath)));
+    }
+
+    #[test]
+    fn rename_workspace_file_moves_file_inside_root() {
+        let dir = tempdir().unwrap();
+        fs::create_dir(dir.path().join("src")).unwrap();
+        fs::write(dir.path().join("note.txt"), "contents").unwrap();
+
+        rename_workspace_file(dir.path(), "note.txt", "src/renamed.txt").unwrap();
+
+        assert!(!dir.path().join("note.txt").exists());
+        assert_eq!(
+            fs::read_to_string(dir.path().join("src/renamed.txt")).unwrap(),
+            "contents"
+        );
+    }
+
+    #[test]
+    fn rename_workspace_file_rejects_existing_destination() {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join("note.txt"), "contents").unwrap();
+        fs::write(dir.path().join("existing.txt"), "other").unwrap();
+
+        let result = rename_workspace_file(dir.path(), "note.txt", "existing.txt");
+
+        assert!(matches!(result, Err(WorkspaceError::FileAlreadyExists)));
+        assert_eq!(fs::read_to_string(dir.path().join("note.txt")).unwrap(), "contents");
+        assert_eq!(fs::read_to_string(dir.path().join("existing.txt")).unwrap(), "other");
+    }
+
+    #[test]
+    fn rename_workspace_file_rejects_directory_sources() {
+        let dir = tempdir().unwrap();
+        fs::create_dir(dir.path().join("src")).unwrap();
+
+        let result = rename_workspace_file(dir.path(), "src", "renamed");
+
+        assert!(matches!(result, Err(WorkspaceError::NotAFile)));
+    }
+
+    #[test]
+    fn rename_workspace_file_rejects_parent_traversal() {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join("note.txt"), "contents").unwrap();
+
+        let result = rename_workspace_file(dir.path(), "note.txt", "../secret.txt");
+
+        assert!(matches!(result, Err(WorkspaceError::InvalidPath)));
+        assert!(dir.path().join("note.txt").exists());
+    }
+
+    #[test]
+    fn delete_workspace_file_removes_file_inside_root() {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join("note.txt"), "contents").unwrap();
+
+        delete_workspace_file(dir.path(), "note.txt").unwrap();
+
+        assert!(!dir.path().join("note.txt").exists());
+    }
+
+    #[test]
+    fn delete_workspace_file_rejects_directory_sources() {
+        let dir = tempdir().unwrap();
+        fs::create_dir(dir.path().join("src")).unwrap();
+
+        let result = delete_workspace_file(dir.path(), "src");
+
+        assert!(matches!(result, Err(WorkspaceError::NotAFile)));
+        assert!(dir.path().join("src").is_dir());
+    }
+
+    #[test]
+    fn delete_workspace_file_rejects_parent_traversal() {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join("note.txt"), "contents").unwrap();
+
+        let result = delete_workspace_file(dir.path(), "../secret.txt");
+
+        assert!(matches!(result, Err(WorkspaceError::InvalidPath)));
+        assert!(dir.path().join("note.txt").exists());
     }
 
     #[test]

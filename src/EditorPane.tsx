@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
 import { bracketMatching, defaultHighlightStyle, foldGutter, syntaxHighlighting } from "@codemirror/language";
 import { highlightSelectionMatches, searchKeymap } from "@codemirror/search";
@@ -15,11 +15,15 @@ import {
   lineNumbers,
   rectangularSelection,
 } from "@codemirror/view";
-import { oneDark } from "@codemirror/theme-one-dark";
 import { languageForPath } from "./language";
 import { lspExtensionsForPath } from "./lsp";
 import type { EditorSelection } from "./tauri";
 import { clampLineNumber } from "./editorNavigation";
+import {
+  darkSchemeQuery,
+  editorThemeExtensions,
+  systemPrefersDark,
+} from "./editorTheme";
 
 interface EditorPaneProps {
   path: string;
@@ -40,6 +44,21 @@ export default function EditorPane({
 }: EditorPaneProps) {
   const host = useRef<HTMLDivElement | null>(null);
   const viewRef = useRef<EditorView | null>(null);
+  const suppressNextChangeRef = useRef(false);
+  const [prefersDark, setPrefersDark] = useState(systemPrefersDark);
+
+  useEffect(() => {
+    const media = window.matchMedia?.(darkSchemeQuery);
+    if (!media) return;
+
+    const handleThemeChange = (event: MediaQueryListEvent) => {
+      setPrefersDark(event.matches);
+    };
+
+    setPrefersDark(media.matches);
+    media.addEventListener("change", handleThemeChange);
+    return () => media.removeEventListener("change", handleThemeChange);
+  }, []);
 
   useEffect(() => {
     if (!host.current) return;
@@ -74,7 +93,11 @@ export default function EditorPane({
             EditorView.lineWrapping,
             EditorView.updateListener.of((update) => {
               if (update.docChanged) {
-                onChange(path, update.state.doc.toString());
+                if (suppressNextChangeRef.current) {
+                  suppressNextChangeRef.current = false;
+                } else {
+                  onChange(path, update.state.doc.toString());
+                }
               }
 
               if (update.selectionSet || update.docChanged) {
@@ -96,8 +119,7 @@ export default function EditorPane({
                 );
               }
             }),
-            highContrastTheme,
-            oneDark,
+            ...editorThemeExtensions(prefersDark),
           ],
         }),
       });
@@ -115,7 +137,24 @@ export default function EditorPane({
       viewRef.current?.destroy();
       viewRef.current = null;
     };
-  }, [path]);
+  }, [path, prefersDark]);
+
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view) return;
+
+    const current = view.state.doc.toString();
+    if (current === contents) return;
+
+    suppressNextChangeRef.current = true;
+    view.dispatch({
+      changes: {
+        from: 0,
+        to: view.state.doc.length,
+        insert: contents,
+      },
+    });
+  }, [contents]);
 
   useEffect(() => {
     if (viewRef.current) {
@@ -137,18 +176,3 @@ function revealLineInView(view: EditorView, lineNumber: number | undefined) {
   });
   view.focus();
 }
-
-const highContrastTheme = EditorView.theme({
-  "&": {
-    height: "100%",
-    fontSize: "13px",
-  },
-  ".cm-scroller": {
-    fontFamily:
-      "'SF Mono', 'Cascadia Code', 'JetBrains Mono', ui-monospace, monospace",
-    lineHeight: "1.55",
-  },
-  ".cm-gutters": {
-    borderRight: "1px solid var(--border)",
-  },
-});

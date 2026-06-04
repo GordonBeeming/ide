@@ -11,7 +11,8 @@ use tauri::State;
 use tauri_plugin_dialog::DialogExt;
 use tokio::sync::RwLock;
 use workspace::{
-    read_workspace_file, scan_workspace, search_workspace, write_workspace_file, WorkspaceError,
+    create_workspace_file, create_workspace_folder, delete_workspace_file, read_workspace_file,
+    rename_workspace_file, scan_workspace, search_workspace, write_workspace_file, WorkspaceError,
 };
 
 #[derive(Clone)]
@@ -32,6 +33,8 @@ struct AgentContext {
     active_file: Option<String>,
     open_files: Vec<String>,
     selection: Option<EditorSelection>,
+    #[serde(default)]
+    diagnostics: Vec<EditorDiagnostic>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -39,6 +42,20 @@ struct AgentContext {
 struct EditorSelection {
     file_path: String,
     text: String,
+    start_line: u32,
+    start_column: u32,
+    end_line: u32,
+    end_column: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct EditorDiagnostic {
+    file_path: String,
+    message: String,
+    severity: Option<u32>,
+    source: Option<String>,
+    code: Option<String>,
     start_line: u32,
     start_column: u32,
     end_line: u32,
@@ -104,9 +121,39 @@ async fn write_file(
     state: State<'_, AppState>,
     path: String,
     contents: String,
+    expected_modified_ms: Option<u128>,
 ) -> Result<(), CommandError> {
     let workspace_root = state.workspace_root.read().await.clone();
-    write_workspace_file(&workspace_root, &path, &contents).map_err(CommandError::from)
+    write_workspace_file(&workspace_root, &path, &contents, expected_modified_ms)
+        .map_err(CommandError::from)
+}
+
+#[tauri::command]
+async fn create_file(state: State<'_, AppState>, path: String) -> Result<(), CommandError> {
+    let workspace_root = state.workspace_root.read().await.clone();
+    create_workspace_file(&workspace_root, &path).map_err(CommandError::from)
+}
+
+#[tauri::command]
+async fn create_folder(state: State<'_, AppState>, path: String) -> Result<(), CommandError> {
+    let workspace_root = state.workspace_root.read().await.clone();
+    create_workspace_folder(&workspace_root, &path).map_err(CommandError::from)
+}
+
+#[tauri::command]
+async fn rename_file(
+    state: State<'_, AppState>,
+    from_path: String,
+    to_path: String,
+) -> Result<(), CommandError> {
+    let workspace_root = state.workspace_root.read().await.clone();
+    rename_workspace_file(&workspace_root, &from_path, &to_path).map_err(CommandError::from)
+}
+
+#[tauri::command]
+async fn delete_file(state: State<'_, AppState>, path: String) -> Result<(), CommandError> {
+    let workspace_root = state.workspace_root.read().await.clone();
+    delete_workspace_file(&workspace_root, &path).map_err(CommandError::from)
 }
 
 #[tauri::command]
@@ -306,6 +353,10 @@ pub fn run() {
             list_files,
             read_file,
             write_file,
+            create_file,
+            create_folder,
+            rename_file,
+            delete_file,
             search_files,
             pick_workspace_folder,
             set_workspace_root,

@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   addPreviewTab,
+  adjacentTabPath,
+  dirtyTabSummary,
   nextActivePathAfterClose,
   pinTab,
   tabCloseRequiresConfirmation,
@@ -77,5 +79,28 @@ describe("tab state", () => {
     expect(tabCloseRequiresConfirmation([tab("a.ts", true, true)], "b.ts")).toBe(
       false,
     );
+  });
+
+  it("summarizes dirty tab counts", () => {
+    expect(dirtyTabSummary([])).toBe("0 unsaved files");
+    expect(dirtyTabSummary([tab("a.ts", true, true)])).toBe("1 unsaved file");
+    expect(dirtyTabSummary([tab("a.ts", true, true), tab("b.ts", true, true)])).toBe(
+      "2 unsaved files",
+    );
+  });
+
+  it("finds adjacent tabs with wrapping", () => {
+    const tabs = [tab("a.ts"), tab("b.ts"), tab("c.ts")];
+
+    expect(adjacentTabPath(tabs, "a.ts", 1)).toBe("b.ts");
+    expect(adjacentTabPath(tabs, "a.ts", -1)).toBe("c.ts");
+    expect(adjacentTabPath(tabs, "c.ts", 1)).toBe("a.ts");
+  });
+
+  it("falls back to the first tab when active path is missing", () => {
+    expect(adjacentTabPath([tab("a.ts"), tab("b.ts")], undefined, 1)).toBe(
+      "b.ts",
+    );
+    expect(adjacentTabPath([], undefined, 1)).toBeUndefined();
   });
 });

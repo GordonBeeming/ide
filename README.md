@@ -12,24 +12,35 @@ Implemented:
 - React frontend.
 - File tree with file and folder icons.
 - Native folder picker for switching workspaces.
+- Explicit workspace loading, empty, and load-failure retry states.
+- Collapsible sidebar for focused editing.
 - File-name filtering and bounded text search across the current workspace.
+- Current-file search over loaded and unsaved editor contents.
 - Keyboard quick-open palette for opening files by path, including arrow-key result selection.
+- Keyboard tab navigation and close commands.
 - Dirty-file prompts before closing tabs or the native app window.
-- Guarded Rust-native workspace scanning and file read/write commands.
+- Reload active files from disk, with confirmation before discarding unsaved edits.
+- New-file creation inside the current workspace.
+- New-folder creation inside the current workspace.
+- File rename inside the current workspace.
+- Confirmed file deletion inside the current workspace.
+- Save active file and Save All commands.
+- Stale-save protection so externally modified files are not silently overwritten.
+- Guarded Rust-native workspace scanning, file/folder creation, rename, deletion, and file read/write commands.
 - CodeMirror 6 editor.
 - Syntax highlighting for Rust, TypeScript, JavaScript, React/TSX/JSX, HTML, CSS, and C#.
 - Lazy editor loading and lazy language loading for better startup performance.
-- System light/dark mode via `prefers-color-scheme` with a high-contrast bias.
+- System light/dark mode via `prefers-color-scheme` with a high-contrast bias, including the editor surface.
 - Active file, open file, and selection context stored in backend state.
 - LSP process manager for Rust, TypeScript/React, and C# with status refresh after bridge events.
+- LSP diagnostics panel and read-only agent context.
 - Local HTTP context endpoint for terminal/browser integrations.
 - Claude Code `/ide` discovery bridge with authenticated localhost WebSocket MCP and read-only editor-context tools.
 - Codex-compatible read-only MCP endpoint with a per-run bearer token.
+- Bearer-token protection for mutating local HTTP browser API calls.
 
 Planned:
 
-- Persisted diagnostics and a visible diagnostics panel.
-- Better keyboard-first navigation for search results and tabs.
 - Diff review and write-capable Claude bridge tools with explicit editor UI review.
 - Deeper Codex IDE integration if OpenAI documents a third-party custom IDE protocol beyond MCP.
 - PR-ready local polish and testing workflow.
@@ -67,6 +78,8 @@ bearer_token_env_var = "IDE_CODEX_MCP_TOKEN"
 
 The public Codex docs describe `/ide` for Codex-owned IDE surfaces, but do not currently document a Claude-style third-party lockfile protocol.
 
+The loopback browser API is read-friendly for local terminal/browser views. Mutating routes, including file writes and editor-context updates, require the same per-run bearer token.
+
 ## Verification
 
 ```bash
@@ -74,6 +87,8 @@ The public Codex docs describe `/ide` for Codex-owned IDE surfaces, but do not c
 ```
 
 `npm audit --audit-level=moderate` currently reports no known npm vulnerabilities. Rust advisory scanning should be run with `cargo audit` once `cargo-audit` is installed locally.
+
+`run-tests.sh` runs the npm audit automatically. It also runs `cargo audit` when `cargo-audit` is installed and prints an explicit warning when that tool is missing.
 
 ## Design Constraints
 

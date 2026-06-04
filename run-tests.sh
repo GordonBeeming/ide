@@ -20,9 +20,15 @@ fi
 
 npm test
 npm run build
+npm audit --audit-level=moderate
 
 (
   cd src-tauri
   cargo test
   cargo check
+  if command -v cargo-audit >/dev/null 2>&1; then
+    cargo audit
+  else
+    echo "cargo-audit is not installed; Rust advisory scan skipped. Install with: cargo install cargo-audit" >&2
+  fi
 )

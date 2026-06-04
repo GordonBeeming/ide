@@ -5,7 +5,12 @@ import {
   type Transport,
 } from "@codemirror/lsp-client";
 import type { Extension } from "@codemirror/state";
-import { isNativeTauri, sendLspMessage, startLsp } from "./tauri";
+import {
+  isNativeTauri,
+  sendLspMessage,
+  startLsp,
+  type EditorDiagnostic,
+} from "./tauri";
 
 interface LspMessageEvent {
   language: string;
@@ -18,20 +23,52 @@ interface LspLogEvent {
   message: string;
 }
 
+interface LspDiagnosticMessage {
+  method?: string;
+  params?: {
+    uri?: string;
+    diagnostics?: LspDiagnostic[];
+  };
+}
+
+interface LspDiagnostic {
+  message?: string;
+  severity?: number;
+  source?: string;
+  code?: string | number;
+  range?: {
+    start?: { line?: number; character?: number };
+    end?: { line?: number; character?: number };
+  };
+}
+
 interface ClientRecord {
   client: LSPClient;
   sessionId: string;
   ready: Promise<void>;
+  dispose: () => void;
+}
+
+interface ManagedTransport {
+  transport: Transport;
+  dispose: () => void;
 }
 
 const clients = new Map<string, ClientRecord>();
 let rootUri = "";
 let errorHandler: ((message: string) => void) | undefined;
 let statusHandler: (() => void) | undefined;
+let diagnosticsHandler:
+  | ((filePath: string, diagnostics: EditorDiagnostic[]) => void)
+  | undefined;
 let lspLogListenerStarted = false;
 
 export function setLspRootUri(uri: string) {
-  rootUri = uri;
+  const nextRootUri = normalizeRootUri(uri);
+  if (nextRootUri !== normalizeRootUri(rootUri)) {
+    clearLspClientCache();
+  }
+  rootUri = nextRootUri;
 }
 
 export function setLspErrorHandler(handler: (message: string) => void) {
@@ -52,6 +89,12 @@ export function setLspStatusHandler(handler: () => void) {
   statusHandler = handler;
 }
 
+export function setLspDiagnosticsHandler(
+  handler: (filePath: string, diagnostics: EditorDiagnostic[]) => void,
+) {
+  diagnosticsHandler = handler;
+}
+
 export async function lspExtensionsForPath(path: string): Promise<Extension[]> {
   const language = languageForLsp(path);
   if (!language) return [];
@@ -59,7 +102,7 @@ export async function lspExtensionsForPath(path: string): Promise<Extension[]> {
 
   const record = await getClient(language);
   await record.ready;
-  return [record.client.plugin(fileUriForPath(path), languageIdForLsp(language))];
+  return [record.client.plugin(fileUriForPath(path), languageIdForPath(path))];
 }
 
 async function getClient(language: string): Promise<ClientRecord> {
@@ -67,24 +110,41 @@ async function getClient(language: string): Promise<ClientRecord> {
   if (existing) return existing;
 
   const started = await startLsp(language);
-  const transport = await tauriTransport(language, started.sessionId);
+  const managedTransport = await tauriTransport(language, started.sessionId);
   const client = new LSPClient({
     rootUri,
     extensions: languageServerExtensions(),
     timeout: 5000,
     sanitizeHTML: sanitizeHtml,
-  }).connect(transport);
+  }).connect(managedTransport.transport);
   const record = {
     client,
     sessionId: started.sessionId,
     ready: client.initializing.then(() => undefined),
+    dispose: managedTransport.dispose,
   };
   clients.set(language, record);
   statusHandler?.();
   return record;
 }
 
-async function tauriTransport(language: string, sessionId: string): Promise<Transport> {
+function clearLspClientCache() {
+  for (const record of clients.values()) {
+    record.client.disconnect();
+    record.dispose();
+  }
+  clients.clear();
+  statusHandler?.();
+}
+
+function normalizeRootUri(uri: string) {
+  return uri.replace(/\/$/, "");
+}
+
+async function tauriTransport(
+  language: string,
+  sessionId: string,
+): Promise<ManagedTransport> {
   let handlers: Array<(value: string) => void> = [];
   let unlisten: UnlistenFn | undefined;
 
@@ -93,24 +153,56 @@ async function tauriTransport(language: string, sessionId: string): Promise<Tran
       event.payload.language === language &&
       event.payload.sessionId === sessionId
     ) {
+      handleDiagnosticsMessage(event.payload.message);
       for (const handler of handlers) handler(event.payload.message);
     }
   });
 
   return {
-    send(message: string) {
-      sendLspMessage(language, message).catch((error) => {
-        errorHandler?.(`LSP send failed for ${language}: ${String(error)}`);
-        unlisten?.();
-      });
+    transport: {
+      send(message: string) {
+        sendLspMessage(language, message).catch((error) => {
+          errorHandler?.(`LSP send failed for ${language}: ${String(error)}`);
+          unlisten?.();
+        });
+      },
+      subscribe(handler: (value: string) => void) {
+        handlers.push(handler);
+      },
+      unsubscribe(handler: (value: string) => void) {
+        handlers = handlers.filter((candidate) => candidate !== handler);
+      },
     },
-    subscribe(handler: (value: string) => void) {
-      handlers.push(handler);
-    },
-    unsubscribe(handler: (value: string) => void) {
-      handlers = handlers.filter((candidate) => candidate !== handler);
+    dispose() {
+      handlers = [];
+      unlisten?.();
+      unlisten = undefined;
     },
   };
+}
+
+export function __primeLspClientCacheForTest(
+  root: string,
+  records: Array<{
+    language: string;
+    disconnect: () => void;
+    dispose: () => void;
+  }>,
+) {
+  rootUri = normalizeRootUri(root);
+  clients.clear();
+  for (const record of records) {
+    clients.set(record.language, {
+      client: { disconnect: record.disconnect } as LSPClient,
+      sessionId: `${record.language}-test`,
+      ready: Promise.resolve(),
+      dispose: record.dispose,
+    });
+  }
+}
+
+export function __lspClientCacheSizeForTest() {
+  return clients.size;
 }
 
 export function languageForLsp(path: string): string | undefined {
@@ -121,15 +213,89 @@ export function languageForLsp(path: string): string | undefined {
   return undefined;
 }
 
-function languageIdForLsp(language: string) {
-  if (language === "typescript") return "typescript";
-  if (language === "csharp") return "csharp";
-  return language;
+export function languageIdForPath(path: string) {
+  const lower = path.toLowerCase();
+  if (lower.endsWith(".tsx")) return "typescriptreact";
+  if (lower.endsWith(".ts")) return "typescript";
+  if (lower.endsWith(".jsx")) return "javascriptreact";
+  if (lower.endsWith(".js")) return "javascript";
+  if (lower.endsWith(".cs")) return "csharp";
+  if (lower.endsWith(".rs")) return "rust";
+  return "plaintext";
 }
 
 function fileUriForPath(path: string) {
   const root = rootUri.replace(/\/$/, "");
   return `${root}/${path.split("/").map(encodeURIComponent).join("/")}`;
+}
+
+function handleDiagnosticsMessage(message: string) {
+  if (!diagnosticsHandler) return;
+
+  let result: { filePath: string; diagnostics: EditorDiagnostic[] } | undefined;
+  try {
+    result = diagnosticsFromLspMessage(message, rootUri);
+  } catch (error) {
+    errorHandler?.(`Unable to parse LSP diagnostics message: ${String(error)}`);
+    return;
+  }
+
+  if (result) diagnosticsHandler(result.filePath, result.diagnostics);
+}
+
+export function diagnosticsFromLspMessage(message: string, root: string) {
+  const parsed = JSON.parse(message) as LspDiagnosticMessage;
+  if (parsed.method !== "textDocument/publishDiagnostics") return undefined;
+
+  const uri = parsed.params?.uri;
+  const filePath = uri ? filePathFromUri(uri, root) : undefined;
+  if (!filePath) {
+    throw new Error("Received LSP diagnostics for a file outside the current workspace");
+  }
+
+  return {
+    filePath,
+    diagnostics: (parsed.params?.diagnostics ?? []).map((diagnostic) =>
+      normalizeDiagnostic(filePath, diagnostic),
+    ),
+  };
+}
+
+function filePathFromUri(uri: string, rootUriValue: string) {
+  const root = rootUriValue.replace(/\/$/, "");
+  if (!uri.startsWith(`${root}/`)) return undefined;
+  const filePath = decodeURIComponent(uri.slice(root.length + 1));
+  if (!isSafeWorkspaceRelativePath(filePath)) return undefined;
+  return filePath;
+}
+
+function isSafeWorkspaceRelativePath(filePath: string) {
+  if (!filePath || filePath.startsWith("/") || /^[a-z]:/i.test(filePath)) {
+    return false;
+  }
+
+  return !filePath
+    .split(/[\\/]+/)
+    .some((part) => part === "" || part === "." || part === "..");
+}
+
+function normalizeDiagnostic(
+  filePath: string,
+  diagnostic: LspDiagnostic,
+): EditorDiagnostic {
+  const start = diagnostic.range?.start;
+  const end = diagnostic.range?.end;
+  return {
+    filePath,
+    message: diagnostic.message ?? "Language server diagnostic",
+    severity: diagnostic.severity,
+    source: diagnostic.source,
+    code: diagnostic.code === undefined ? undefined : String(diagnostic.code),
+    startLine: (start?.line ?? 0) + 1,
+    startColumn: (start?.character ?? 0) + 1,
+    endLine: (end?.line ?? start?.line ?? 0) + 1,
+    endColumn: (end?.character ?? start?.character ?? 0) + 1,
+  };
 }
 
 export function sanitizeHtml(html: string) {

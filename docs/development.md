@@ -24,23 +24,32 @@ Or run individual checks:
 npm install
 npm run build
 npm test
+npm audit --audit-level=moderate
 cd src-tauri && cargo check
 cd src-tauri && cargo test
+cd src-tauri && cargo audit
 npm run tauri:dev
 ```
+
+`run-tests.sh` runs `cargo audit` when `cargo-audit` is installed. If it is missing, the script prints an explicit warning so the advisory scan gap is visible.
 
 ## Architecture
 
 The app is intentionally split into a small always-loaded shell and lazy-loaded editor pieces.
 
-- `src/App.tsx`: workspace shell, tree view, tabs, file open/save orchestration.
+- `src/App.tsx`: workspace shell, tree view, tabs, file/folder create, file delete/open/rename/save orchestration.
 - `src/EditorPane.tsx`: CodeMirror editor. Loaded only after a file is opened.
+- `src/EditorPane.test.tsx`: real CodeMirror component coverage for programmatic content sync, including reload-from-disk updates that must not report a user edit.
+- `src/editorTheme.ts`: system-aware CodeMirror theme selection and high-contrast editor styling.
 - `src/appWindow.ts`: guarded Tauri window-close integration.
 - `src/quickOpen.ts`: tested quick-open file matching, ranking, and keyboard selection rules.
 - `src/editorNavigation.ts`: tested line clamping for search-result reveal behavior.
+- `src/currentFileSearch.ts`: tested current-file search over loaded and unsaved editor contents.
+- `src/App.test.tsx`: rendered shell coverage for non-text file selection, preview-tab lifecycle, current-file search, new-file/folder creation, file rename/delete, reload-from-disk behavior, stale-save handling, Save All success/failure behavior, active-file-safe agent selection context, and content search result/error behavior.
+- `src/tauri.test.ts`: hosted browser transport coverage for bearer-token file/folder creation, file rename/delete/writes, stale-save tokens, and loopback API base selection.
 - `src/language.ts`: lazy language loaders for Rust, TypeScript/JavaScript/React, HTML, CSS, and C#.
-- `src-tauri/src/workspace.rs`: Rust-native workspace scanning and guarded file IO.
-- `src-tauri/src/http_server.rs`: loopback HTTP API, static asset server, and authenticated read-only Codex MCP endpoint.
+- `src-tauri/src/workspace.rs`: Rust-native workspace scanning, guarded file/folder creation, guarded file rename/delete, and guarded file IO.
+- `src-tauri/src/http_server.rs`: loopback HTTP API, static asset server, authenticated write routes, and authenticated read-only Codex MCP endpoint.
 - `src-tauri/src/claude_bridge.rs`: authenticated Claude Code IDE WebSocket bridge.
 - `src-tauri/src/lib.rs`: Tauri command registration and in-memory editor context state.
 
@@ -56,8 +65,10 @@ Current constraints:
 - Ignore `node_modules`, `target`, `dist`, `.git`, and common generated folders during tree scans.
 - Workspace content search runs in Rust, skips generated folders and binary-looking files, caps searched file size, and limits returned matches.
 - Keep syntax language packages dynamically imported by extension.
+- Keep the editor theme tied to `prefers-color-scheme`; the app shell and CodeMirror surface should not drift into different light/dark modes.
 - Keep LSP optional and lazy. Language servers should start only when a matching file type is opened.
 - Refresh LSP status from bridge events so the sidebar does not show stale running state after server start or exit.
+- Persist LSP `textDocument/publishDiagnostics` messages into backend agent context for read-only Claude and Codex bridge access.
 
 When adding dependencies, check the production bundle:
 
@@ -100,10 +111,26 @@ The native folder picker is owned by the Rust backend through `tauri-plugin-dial
 - rejects non-directory paths
 - clears open editor tabs in the frontend
 - clears backend agent context
-- clears running LSP sessions so a language server is not reused with the wrong root
+- clears backend LSP sessions and frontend LSP client caches so a language server is not reused with the wrong root
 - rewrites the Claude bridge lock file workspace metadata
 
 The frontend refuses to switch folders while any open tab is dirty.
+
+## Editor Workflow
+
+Supported keyboard commands:
+
+- `Cmd/Ctrl+S`: save the active file.
+- `Cmd/Ctrl+Shift+S`: save all dirty files.
+- `Cmd/Ctrl+W`: close the active tab.
+- `Cmd/Ctrl+B`: toggle the sidebar.
+- `Cmd/Ctrl+F`: focus current-file search.
+- `Cmd/Ctrl+N`: create a new file.
+- `Cmd/Ctrl+P`: open the quick-open palette.
+- `F2`: rename the selected file.
+- `Ctrl+Tab` / `Ctrl+Shift+Tab`: move between open tabs.
+
+Current-file search runs against the active tab contents, including unsaved edits, and can reveal a matched line in the editor. New-file and new-folder creation use the selected folder or selected file's parent as the default path and reject existing targets. New files open as persistent tabs with their first scanned `modifiedMs`, so their first save gets the same stale-write protection as opened files. File rename is file-only for now, rejects existing destination paths, and updates an open tab plus its refreshed `modifiedMs` when the renamed file is open. File deletion is file-only, requires confirmation, and closes the deleted file's open tab. Reload from disk refreshes the active file contents and modification timestamp; dirty files require confirmation before unsaved edits are discarded. Saves send the file's last known `modifiedMs`; if the disk file changed since it was opened, the backend returns a conflict and the tab remains dirty. Save All walks dirty tabs in order and stops at the first failed write so the error remains visible to the user.
 
 ## LSP Direction
 
@@ -115,7 +142,11 @@ The planned LSP support is:
 
 The editor should use the official `@codemirror/lsp-client` transport interface. The Rust backend should own language-server process management so the UI can stay browser-safe and avoid spawning processes from the frontend.
 
-`@codemirror/lsp-client` currently provides the editor-side keymaps for definition/declaration/type-definition/implementation jumps, references, rename, formatting, completion, hover, and signature help through `languageServerExtensions()`. Diagnostics still need an app-level persistence and display surface.
+`@codemirror/lsp-client` currently provides the editor-side keymaps for definition/declaration/type-definition/implementation jumps, references, rename, formatting, completion, hover, and signature help through `languageServerExtensions()`. Diagnostics are persisted for bridge access and shown in the sidebar diagnostics panel.
+
+The TypeScript language server is reused for `.ts`, `.tsx`, `.js`, and `.jsx` files, but editor documents must still use path-specific language IDs: `typescript`, `typescriptreact`, `javascript`, and `javascriptreact`. This keeps React and JavaScript files aligned with TypeScript server expectations without launching separate servers.
+
+Changing workspace roots must disconnect cached frontend LSP clients and dispose their Tauri event listeners. The backend already stops server processes during a root switch, and the frontend cache must not reconnect a CodeMirror document to a stale root/session pair.
 
 ## Agent Context Direction
 
@@ -125,13 +156,17 @@ The app tracks active file, open files, and selected text through shared backend
 - Codex-compatible localhost MCP endpoint over HTTP with a per-run bearer token.
 - Local HTTP context endpoint for terminal/browser integrations.
 
+The local HTTP API supports terminal/browser views over loopback. `POST /api/file`, `POST /api/folder`, `PATCH /api/file`, `DELETE /api/file`, `PUT /api/file`, and `PUT /api/agent-context` require the per-run bearer token; unauthenticated local callers can read context but cannot mutate files or editor state. `PUT /api/file` accepts an optional `expectedModifiedMs` value and returns `409 Conflict` when it does not match the current disk timestamp.
+
+Selection context is published only when the recorded selection belongs to the current active file. Tab changes and file switches should never leak a stale selection from a previously active editor into Claude or Codex context.
+
 The Claude bridge currently exposes read-only tools:
 
 - `getCurrentSelection`
 - `getLatestSelection`
 - `getOpenEditors`
 - `getWorkspaceFolders`
-- `getDiagnostics` returning an empty list until diagnostics are persisted by the editor
+- `getDiagnostics`
 
 The Codex MCP endpoint exposes equivalent read-only tools with snake_case names:
 
@@ -140,6 +175,7 @@ The Codex MCP endpoint exposes equivalent read-only tools with snake_case names:
 - `get_open_editors`
 - `get_workspace_folders`
 - `get_editor_context`
+- `get_diagnostics`
 
 Write-capable tools such as `openDiff`, `saveDocument`, or code execution should not be added until the editor has a visible review/confirmation surface for those actions.
 

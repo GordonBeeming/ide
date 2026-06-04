@@ -23,6 +23,19 @@ export interface AgentContext {
   activeFile?: string;
   openFiles: string[];
   selection?: EditorSelection;
+  diagnostics: EditorDiagnostic[];
+}
+
+export interface EditorDiagnostic {
+  filePath: string;
+  message: string;
+  severity?: number;
+  source?: string;
+  code?: string;
+  startLine: number;
+  startColumn: number;
+  endLine: number;
+  endColumn: number;
 }
 
 export interface LspServerStatus {
@@ -78,11 +91,43 @@ export function readFile(path: string) {
   });
 }
 
-export function writeFile(path: string, contents: string) {
+export function writeFile(path: string, contents: string, expectedModifiedMs?: number) {
   return callApi<void>("write_file", "/api/file", {
     method: "PUT",
-    body: { path, contents },
-    invokeArgs: { path, contents },
+    body: { path, contents, expectedModifiedMs },
+    invokeArgs: { path, contents, expectedModifiedMs },
+  });
+}
+
+export function createFile(path: string) {
+  return callApi<void>("create_file", "/api/file", {
+    method: "POST",
+    body: { path, contents: "" },
+    invokeArgs: { path },
+  });
+}
+
+export function createFolder(path: string) {
+  return callApi<void>("create_folder", "/api/folder", {
+    method: "POST",
+    body: { path },
+    invokeArgs: { path },
+  });
+}
+
+export function renameFile(fromPath: string, toPath: string) {
+  return callApi<void>("rename_file", "/api/file", {
+    method: "PATCH",
+    body: { fromPath, toPath },
+    invokeArgs: { fromPath, toPath },
+  });
+}
+
+export function deleteFile(path: string) {
+  return callApi<void>("delete_file", "/api/file", {
+    method: "DELETE",
+    body: { path },
+    invokeArgs: { path },
   });
 }
 
@@ -141,10 +186,12 @@ export function sendLspMessage(language: string, message: string) {
 }
 
 interface ApiOptions {
-  method?: "GET" | "PUT";
+  method?: "DELETE" | "GET" | "PATCH" | "POST" | "PUT";
   body?: unknown;
   invokeArgs?: Record<string, unknown>;
 }
+
+let localBearerToken: Promise<string> | undefined;
 
 async function callApi<T>(
   command: string,
@@ -155,9 +202,22 @@ async function callApi<T>(
     return invoke<T>(command, options.invokeArgs);
   }
 
+  const headers = new Headers();
+  if (options.body) {
+    headers.set("Content-Type", "application/json");
+  }
+  if (
+    options.method === "DELETE" ||
+    options.method === "PATCH" ||
+    options.method === "POST" ||
+    options.method === "PUT"
+  ) {
+    headers.set("Authorization", `Bearer ${await localWriteToken()}`);
+  }
+
   const response = await fetch(`${httpBase()}${path}`, {
     method: options.method ?? "GET",
-    headers: options.body ? { "Content-Type": "application/json" } : undefined,
+    headers,
     body: options.body ? JSON.stringify(options.body) : undefined,
   });
 
@@ -165,7 +225,7 @@ async function callApi<T>(
     throw new Error(await response.text());
   }
 
-  if (response.status === 204) {
+  if (response.status === 204 || response.status === 201) {
     return undefined as T;
   }
 
@@ -178,8 +238,30 @@ async function callApi<T>(
 }
 
 function httpBase() {
-  if (window.location.port === "1420") {
+  return apiBaseForLocation(window.location);
+}
+
+export function apiBaseForLocation(location: Pick<Location, "port">) {
+  if (location.port === "1420") {
     return "http://127.0.0.1:17877";
   }
   return "";
+}
+
+async function localWriteToken() {
+  localBearerToken ??= fetch(`${httpBase()}/api/codex-mcp`)
+    .then(async (response) => {
+      if (!response.ok) {
+        throw new Error(await response.text());
+      }
+      return response.json() as Promise<CodexMcpStatus>;
+    })
+    .then((status) => {
+      if (!status?.bearerToken) {
+        throw new Error("Local write token is unavailable");
+      }
+      return status.bearerToken;
+    });
+
+  return localBearerToken;
 }

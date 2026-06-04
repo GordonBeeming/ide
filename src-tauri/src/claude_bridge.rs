@@ -222,7 +222,7 @@ async fn handle_tool_call(state: &ClaudeBridgeState, id: Value, params: Option<V
         }
         "getOpenEditors" => open_editors(&workspace_root, &context),
         "getWorkspaceFolders" => workspace_folders(&workspace_root),
-        "getDiagnostics" => json!([]),
+        "getDiagnostics" => diagnostics(&workspace_root, &context),
         _ => {
             return error_response(id.into(), -32601, format!("Unknown tool: {name}"));
         }
@@ -314,7 +314,7 @@ fn tool_definitions() -> Value {
         },
         {
             "name": "getDiagnostics",
-            "description": "Get language diagnostics known to the IDE. This first bridge returns an empty list until diagnostics are persisted by the editor.",
+            "description": "Get language diagnostics known to the IDE.",
             "inputSchema": {
                 "type": "object",
                 "properties": { "uri": { "type": "string" } },
@@ -339,6 +339,37 @@ fn error_response(id: Option<Value>, code: i32, message: String) -> String {
         "error": { "code": code, "message": message }
     })
     .to_string()
+}
+
+fn diagnostics(workspace_root: &Path, context: &AgentContext) -> Value {
+    let items = context
+        .diagnostics
+        .iter()
+        .map(|diagnostic| {
+            let file_path = absolute_path(workspace_root, &diagnostic.file_path);
+            json!({
+                "filePath": file_path,
+                "fileUrl": file_url(&file_path),
+                "relativePath": diagnostic.file_path,
+                "message": diagnostic.message,
+                "severity": diagnostic.severity,
+                "source": diagnostic.source,
+                "code": diagnostic.code,
+                "range": {
+                    "start": {
+                        "line": diagnostic.start_line,
+                        "character": diagnostic.start_column
+                    },
+                    "end": {
+                        "line": diagnostic.end_line,
+                        "character": diagnostic.end_column
+                    }
+                }
+            })
+        })
+        .collect::<Vec<_>>();
+
+    json!({ "items": items })
 }
 
 fn write_lock_file(
@@ -455,6 +486,7 @@ mod tests {
             active_file: Some("src/main.rs".to_string()),
             open_files: vec!["README.md".to_string(), "src/main.rs".to_string()],
             selection: None,
+            diagnostics: Vec::new(),
         };
 
         let editors = open_editors(dir.path(), &context);
@@ -471,5 +503,32 @@ mod tests {
         ));
         assert!(!should_surface_connection_error("Connection reset by peer"));
         assert!(should_surface_connection_error("listener failed"));
+    }
+
+    #[test]
+    fn diagnostics_include_absolute_and_relative_paths() {
+        let dir = tempdir().unwrap();
+        let context = AgentContext {
+            active_file: None,
+            open_files: Vec::new(),
+            selection: None,
+            diagnostics: vec![crate::EditorDiagnostic {
+                file_path: "src/main.rs".to_string(),
+                message: "expected item".to_string(),
+                severity: Some(1),
+                source: Some("rust-analyzer".to_string()),
+                code: Some("E0001".to_string()),
+                start_line: 2,
+                start_column: 3,
+                end_line: 2,
+                end_column: 8,
+            }],
+        };
+
+        let result = diagnostics(dir.path(), &context);
+
+        assert_eq!(result["items"][0]["relativePath"], "src/main.rs");
+        assert_eq!(result["items"][0]["message"], "expected item");
+        assert_eq!(result["items"][0]["range"]["start"]["line"], 2);
     }
 }

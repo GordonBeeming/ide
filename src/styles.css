@@ -58,12 +58,20 @@ button {
   background: var(--bg);
 }
 
+.app-shell--sidebar-collapsed {
+  grid-template-columns: 0 minmax(0, 1fr);
+}
+
 .sidebar {
   display: flex;
   min-width: 0;
   flex-direction: column;
   border-right: 1px solid var(--border);
   background: var(--panel);
+}
+
+.app-shell--sidebar-collapsed .sidebar {
+  display: none;
 }
 
 .sidebar__header {
@@ -153,6 +161,22 @@ button {
   padding: 3px 0 12px;
 }
 
+.tree-empty {
+  display: grid;
+  gap: 8px;
+  padding: 14px 12px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.tree-empty--error {
+  color: var(--danger);
+}
+
+.tree-empty .command-button {
+  justify-self: start;
+}
+
 .search-results {
   max-height: 240px;
   overflow: auto;
@@ -210,6 +234,80 @@ button {
 
 .search-results__empty {
   padding: 8px 10px 10px;
+  color: var(--muted);
+}
+
+.diagnostics-panel {
+  max-height: 190px;
+  overflow: auto;
+  border-top: 1px solid var(--border);
+  background: color-mix(in oklch, var(--panel) 90%, var(--bg));
+}
+
+.diagnostics-panel__header {
+  display: flex;
+  justify-content: space-between;
+  padding: 7px 10px 5px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 650;
+  text-transform: uppercase;
+}
+
+.diagnostics-panel__empty {
+  padding: 4px 10px 9px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.diagnostic-row {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
+  width: 100%;
+  min-height: 48px;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 10px;
+  border: 0;
+  border-top: 1px solid color-mix(in oklch, var(--border) 65%, transparent);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  text-align: left;
+}
+
+.diagnostic-row:hover,
+.diagnostic-row:focus-visible {
+  background: var(--accent-weak);
+  color: var(--text);
+  outline: 0;
+}
+
+.diagnostic-row__main {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.diagnostic-row__path,
+.diagnostic-row__message {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.diagnostic-row__path {
+  color: var(--text);
+  font-family: ui-monospace, "SF Mono", monospace;
+  font-size: 11px;
+}
+
+.diagnostic-row__message,
+.diagnostic-row__severity {
+  font-size: 12px;
+}
+
+.diagnostic-row__severity {
   color: var(--muted);
 }
 
@@ -422,10 +520,111 @@ button {
   gap: 6px;
 }
 
+.topbar-find {
+  display: grid;
+  grid-template-columns: 16px minmax(80px, 180px) 28px;
+  height: 32px;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel-strong);
+  color: var(--muted);
+}
+
+.topbar-find input {
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text);
+  font-size: 12px;
+}
+
+.topbar-find input:disabled {
+  color: var(--muted);
+  cursor: not-allowed;
+}
+
+.topbar-find span {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 11px;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .editor-region {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
   min-height: 0;
   overflow: hidden;
   background: oklch(18% 0.014 230);
+}
+
+.current-find-results {
+  max-height: 148px;
+  overflow: auto;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel);
+}
+
+.current-find-results__header {
+  display: flex;
+  justify-content: space-between;
+  padding: 7px 10px 5px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 650;
+  text-transform: uppercase;
+}
+
+.current-find-result {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr);
+  width: 100%;
+  min-height: 30px;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px;
+  border: 0;
+  border-top: 1px solid color-mix(in oklch, var(--border) 65%, transparent);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  text-align: left;
+}
+
+.current-find-result:hover,
+.current-find-result:focus-visible {
+  background: var(--accent-weak);
+  color: var(--text);
+  outline: 0;
+}
+
+.current-find-result__path,
+.current-find-result__line {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.current-find-result__path {
+  color: var(--text);
+  font-family: ui-monospace, "SF Mono", monospace;
+  font-size: 11px;
+}
+
+.current-find-result__line,
+.current-find-results__empty {
+  font-size: 12px;
+}
+
+.current-find-results__empty {
+  padding: 6px 10px 9px;
+  color: var(--muted);
 }
 
 .editor-host,
@@ -584,6 +783,33 @@ button {
   color: var(--muted);
   font-size: 13px;
   line-height: 1.45;
+}
+
+.dialog-field {
+  display: grid;
+  gap: 7px;
+  margin-top: 12px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.dialog-field input {
+  width: 100%;
+  min-width: 0;
+  height: 34px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0 10px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 450;
+}
+
+.dialog-field input:focus {
+  border-color: var(--accent);
+  outline: 0;
 }
 
 .confirm-dialog__actions {

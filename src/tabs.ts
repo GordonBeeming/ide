@@ -2,6 +2,7 @@ export interface EditorTab {
   path: string;
   contents: string;
   dirty: boolean;
+  modifiedMs?: number;
   pinned: boolean;
 }
 
@@ -44,4 +45,20 @@ export function tabCloseRequiresConfirmation(
   path: string,
 ): boolean {
   return Boolean(tabs.find((tab) => tab.path === path)?.dirty);
+}
+
+export function dirtyTabSummary(tabs: EditorTab[]) {
+  const count = tabs.filter((tab) => tab.dirty).length;
+  return count === 1 ? "1 unsaved file" : `${count} unsaved files`;
+}
+
+export function adjacentTabPath(
+  tabs: EditorTab[],
+  activePath: string | undefined,
+  direction: 1 | -1,
+): string | undefined {
+  if (tabs.length === 0) return undefined;
+  const activeIndex = tabs.findIndex((tab) => tab.path === activePath);
+  const currentIndex = activeIndex >= 0 ? activeIndex : 0;
+  return tabs[(currentIndex + direction + tabs.length) % tabs.length]?.path;
 }

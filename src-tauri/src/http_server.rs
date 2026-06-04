@@ -16,7 +16,8 @@ use tokio::sync::RwLock;
 
 use crate::lsp::{LspManager, LspServerStatus};
 use crate::workspace::{
-    read_workspace_file, scan_workspace, search_workspace, write_workspace_file, FileEntry,
+    create_workspace_file, create_workspace_folder, delete_workspace_file, read_workspace_file,
+    rename_workspace_file, scan_workspace, search_workspace, write_workspace_file, FileEntry,
     SearchMatch,
 };
 use crate::AgentContext;
@@ -55,6 +56,26 @@ struct FileQuery {
 struct WriteFileRequest {
     path: String,
     contents: String,
+    expected_modified_ms: Option<u128>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DeleteFileRequest {
+    path: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CreateFolderRequest {
+    path: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RenameFileRequest {
+    from_path: String,
+    to_path: String,
 }
 
 pub async fn start_http_server(
@@ -78,7 +99,16 @@ pub async fn start_http_server(
         .route("/api/search", get(search))
         .route(
             "/api/file",
-            get(read_file).put(write_file).options(cors_preflight),
+            get(read_file)
+                .delete(delete_file)
+                .post(create_file)
+                .patch(rename_file)
+                .put(write_file)
+                .options(cors_preflight),
+        )
+        .route(
+            "/api/folder",
+            post(create_folder).options(cors_preflight),
         )
         .route(
             "/api/agent-context",
@@ -156,7 +186,7 @@ fn apply_loopback_cors(origin: Option<&HeaderValue>, mut response: Response) -> 
     headers.insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, origin);
     headers.insert(
         header::ACCESS_CONTROL_ALLOW_METHODS,
-        HeaderValue::from_static("GET, PUT, POST, OPTIONS"),
+        HeaderValue::from_static("GET, DELETE, PATCH, PUT, POST, OPTIONS"),
     );
     headers.insert(
         header::ACCESS_CONTROL_ALLOW_HEADERS,
@@ -211,10 +241,61 @@ async fn read_file(
 
 async fn write_file(
     State(state): State<HttpServerState>,
+    headers: HeaderMap,
     Json(request): Json<WriteFileRequest>,
 ) -> Result<StatusCode, ApiError> {
+    require_bearer_auth(&headers, &state.mcp_token)?;
     let workspace_root = state.workspace_root.read().await.clone();
-    write_workspace_file(&workspace_root, &request.path, &request.contents)?;
+    write_workspace_file(
+        &workspace_root,
+        &request.path,
+        &request.contents,
+        request.expected_modified_ms,
+    )?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn create_file(
+    State(state): State<HttpServerState>,
+    headers: HeaderMap,
+    Json(request): Json<WriteFileRequest>,
+) -> Result<StatusCode, ApiError> {
+    require_bearer_auth(&headers, &state.mcp_token)?;
+    let workspace_root = state.workspace_root.read().await.clone();
+    create_workspace_file(&workspace_root, &request.path)?;
+    Ok(StatusCode::CREATED)
+}
+
+async fn create_folder(
+    State(state): State<HttpServerState>,
+    headers: HeaderMap,
+    Json(request): Json<CreateFolderRequest>,
+) -> Result<StatusCode, ApiError> {
+    require_bearer_auth(&headers, &state.mcp_token)?;
+    let workspace_root = state.workspace_root.read().await.clone();
+    create_workspace_folder(&workspace_root, &request.path)?;
+    Ok(StatusCode::CREATED)
+}
+
+async fn rename_file(
+    State(state): State<HttpServerState>,
+    headers: HeaderMap,
+    Json(request): Json<RenameFileRequest>,
+) -> Result<StatusCode, ApiError> {
+    require_bearer_auth(&headers, &state.mcp_token)?;
+    let workspace_root = state.workspace_root.read().await.clone();
+    rename_workspace_file(&workspace_root, &request.from_path, &request.to_path)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn delete_file(
+    State(state): State<HttpServerState>,
+    headers: HeaderMap,
+    Json(request): Json<DeleteFileRequest>,
+) -> Result<StatusCode, ApiError> {
+    require_bearer_auth(&headers, &state.mcp_token)?;
+    let workspace_root = state.workspace_root.read().await.clone();
+    delete_workspace_file(&workspace_root, &request.path)?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -237,10 +318,12 @@ async fn get_agent_context(State(state): State<HttpServerState>) -> Json<AgentCo
 
 async fn put_agent_context(
     State(state): State<HttpServerState>,
+    headers: HeaderMap,
     Json(context): Json<AgentContext>,
-) -> StatusCode {
+) -> Result<StatusCode, ApiError> {
+    require_bearer_auth(&headers, &state.mcp_token)?;
     *state.agent_context.write().await = context;
-    StatusCode::NO_CONTENT
+    Ok(StatusCode::NO_CONTENT)
 }
 
 async fn lsp_servers(State(state): State<HttpServerState>) -> Json<Vec<LspServerStatus>> {
@@ -323,6 +406,7 @@ async fn handle_mcp_tool_call(state: &HttpServerState, id: Value, params: Option
         "get_open_editors" => open_editors(&workspace_root, &context),
         "get_workspace_folders" => workspace_folders(&workspace_root),
         "get_editor_context" => editor_context(&workspace_root, &context),
+        "get_diagnostics" => diagnostics(&workspace_root, &context),
         _ => {
             return mcp_error_response(id.into(), -32601, format!("Unknown tool: {name}"));
         }
@@ -337,6 +421,14 @@ fn is_authorized_bearer(headers: &HeaderMap, expected_token: &str) -> bool {
         .and_then(|value| value.to_str().ok())
         .and_then(|value| value.strip_prefix("Bearer "))
         .is_some_and(|token| token == expected_token)
+}
+
+fn require_bearer_auth(headers: &HeaderMap, expected_token: &str) -> Result<(), ApiError> {
+    if is_authorized_bearer(headers, expected_token) {
+        Ok(())
+    } else {
+        Err(ApiError::unauthorized("Unauthorized"))
+    }
 }
 
 fn mcp_tool_definitions() -> Value {
@@ -365,6 +457,11 @@ fn mcp_tool_definitions() -> Value {
             "name": "get_editor_context",
             "description": "Get the active file, open files, current selection, and workspace folder in one response.",
             "inputSchema": { "type": "object", "properties": {}, "additionalProperties": false }
+        },
+        {
+            "name": "get_diagnostics",
+            "description": "Get language diagnostics known to the IDE.",
+            "inputSchema": { "type": "object", "properties": {}, "additionalProperties": false }
         }
     ])
 }
@@ -374,7 +471,8 @@ fn editor_context(workspace_root: &Path, context: &AgentContext) -> Value {
         "workspace": workspace_folders(workspace_root),
         "openEditors": open_editors(workspace_root, context),
         "selection": current_selection(workspace_root, context),
-        "activeFile": context.active_file.as_ref().map(|path| absolute_path(workspace_root, path))
+        "activeFile": context.active_file.as_ref().map(|path| absolute_path(workspace_root, path)),
+        "diagnostics": diagnostics(workspace_root, context)
     })
 }
 
@@ -435,6 +533,37 @@ fn workspace_folders(workspace_root: &Path) -> Value {
         }],
         "rootPath": root_path
     })
+}
+
+fn diagnostics(workspace_root: &Path, context: &AgentContext) -> Value {
+    let items = context
+        .diagnostics
+        .iter()
+        .map(|diagnostic| {
+            let file_path = absolute_path(workspace_root, &diagnostic.file_path);
+            json!({
+                "filePath": file_path,
+                "fileUrl": file_url(&file_path),
+                "relativePath": diagnostic.file_path,
+                "message": diagnostic.message,
+                "severity": diagnostic.severity,
+                "source": diagnostic.source,
+                "code": diagnostic.code,
+                "range": {
+                    "start": {
+                        "line": diagnostic.start_line,
+                        "character": diagnostic.start_column
+                    },
+                    "end": {
+                        "line": diagnostic.end_line,
+                        "character": diagnostic.end_column
+                    }
+                }
+            })
+        })
+        .collect::<Vec<_>>();
+
+    json!({ "items": items })
 }
 
 fn mcp_tool_response(result: Value) -> Value {
@@ -576,17 +705,36 @@ fn language_id(path: &str) -> &'static str {
 }
 
 #[derive(Debug)]
-struct ApiError(String);
+struct ApiError {
+    status: StatusCode,
+    message: String,
+}
+
+impl ApiError {
+    fn unauthorized(message: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::UNAUTHORIZED,
+            message: message.into(),
+        }
+    }
+}
 
 impl From<crate::workspace::WorkspaceError> for ApiError {
     fn from(value: crate::workspace::WorkspaceError) -> Self {
-        Self(value.to_string())
+        let status = match value {
+            crate::workspace::WorkspaceError::FileModifiedExternally => StatusCode::CONFLICT,
+            _ => StatusCode::BAD_REQUEST,
+        };
+        Self {
+            status,
+            message: value.to_string(),
+        }
     }
 }
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
-        (StatusCode::BAD_REQUEST, self.0).into_response()
+        (self.status, self.message).into_response()
     }
 }
 
@@ -624,6 +772,376 @@ mod tests {
         assert!(is_authorized_bearer(&headers, "expected"));
         assert!(!is_authorized_bearer(&headers, "other"));
         assert!(!is_authorized_bearer(&HeaderMap::new(), "expected"));
+    }
+
+    #[tokio::test]
+    async fn write_file_requires_matching_bearer_token() {
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("note.txt");
+        std::fs::write(&file_path, "before").unwrap();
+        let state = HttpServerState {
+            workspace_root: Arc::new(RwLock::new(dir.path().to_path_buf())),
+            agent_context: Arc::new(RwLock::new(AgentContext::default())),
+            lsp_manager: LspManager::new(),
+            frontend_dist: dir.path().to_path_buf(),
+            mcp_token: "token".to_string(),
+        };
+
+        let result = write_file(
+            State(state),
+            HeaderMap::new(),
+            Json(WriteFileRequest {
+                path: "note.txt".to_string(),
+                contents: "after".to_string(),
+                expected_modified_ms: None,
+            }),
+        )
+        .await;
+
+        let response = result.unwrap_err().into_response();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(std::fs::read_to_string(file_path).unwrap(), "before");
+    }
+
+    #[tokio::test]
+    async fn write_file_accepts_matching_bearer_token() {
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("note.txt");
+        std::fs::write(&file_path, "before").unwrap();
+        let state = HttpServerState {
+            workspace_root: Arc::new(RwLock::new(dir.path().to_path_buf())),
+            agent_context: Arc::new(RwLock::new(AgentContext::default())),
+            lsp_manager: LspManager::new(),
+            frontend_dist: dir.path().to_path_buf(),
+            mcp_token: "token".to_string(),
+        };
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::AUTHORIZATION,
+            HeaderValue::from_static("Bearer token"),
+        );
+
+        let result = write_file(
+            State(state),
+            headers,
+            Json(WriteFileRequest {
+                path: "note.txt".to_string(),
+                contents: "after".to_string(),
+                expected_modified_ms: None,
+            }),
+        )
+        .await;
+
+        assert_eq!(result.unwrap(), StatusCode::NO_CONTENT);
+        assert_eq!(std::fs::read_to_string(file_path).unwrap(), "after");
+    }
+
+    #[tokio::test]
+    async fn write_file_returns_conflict_for_stale_modified_timestamps() {
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("note.txt");
+        std::fs::write(&file_path, "before").unwrap();
+        let state = HttpServerState {
+            workspace_root: Arc::new(RwLock::new(dir.path().to_path_buf())),
+            agent_context: Arc::new(RwLock::new(AgentContext::default())),
+            lsp_manager: LspManager::new(),
+            frontend_dist: dir.path().to_path_buf(),
+            mcp_token: "token".to_string(),
+        };
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::AUTHORIZATION,
+            HeaderValue::from_static("Bearer token"),
+        );
+
+        let result = write_file(
+            State(state),
+            headers,
+            Json(WriteFileRequest {
+                path: "note.txt".to_string(),
+                contents: "after".to_string(),
+                expected_modified_ms: Some(1),
+            }),
+        )
+        .await;
+
+        let response = result.unwrap_err().into_response();
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+        assert_eq!(std::fs::read_to_string(file_path).unwrap(), "before");
+    }
+
+    #[tokio::test]
+    async fn create_file_requires_matching_bearer_token() {
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("note.txt");
+        let state = HttpServerState {
+            workspace_root: Arc::new(RwLock::new(dir.path().to_path_buf())),
+            agent_context: Arc::new(RwLock::new(AgentContext::default())),
+            lsp_manager: LspManager::new(),
+            frontend_dist: dir.path().to_path_buf(),
+            mcp_token: "token".to_string(),
+        };
+
+        let result = create_file(
+            State(state),
+            HeaderMap::new(),
+            Json(WriteFileRequest {
+                path: "note.txt".to_string(),
+                contents: String::new(),
+                expected_modified_ms: None,
+            }),
+        )
+        .await;
+
+        let response = result.unwrap_err().into_response();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        assert!(!file_path.exists());
+    }
+
+    #[tokio::test]
+    async fn create_file_accepts_matching_bearer_token() {
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("note.txt");
+        let state = HttpServerState {
+            workspace_root: Arc::new(RwLock::new(dir.path().to_path_buf())),
+            agent_context: Arc::new(RwLock::new(AgentContext::default())),
+            lsp_manager: LspManager::new(),
+            frontend_dist: dir.path().to_path_buf(),
+            mcp_token: "token".to_string(),
+        };
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::AUTHORIZATION,
+            HeaderValue::from_static("Bearer token"),
+        );
+
+        let result = create_file(
+            State(state),
+            headers,
+            Json(WriteFileRequest {
+                path: "note.txt".to_string(),
+                contents: String::new(),
+                expected_modified_ms: None,
+            }),
+        )
+        .await;
+
+        assert_eq!(result.unwrap(), StatusCode::CREATED);
+        assert_eq!(std::fs::read_to_string(file_path).unwrap(), "");
+    }
+
+    #[tokio::test]
+    async fn create_folder_requires_matching_bearer_token() {
+        let dir = tempdir().unwrap();
+        let folder_path = dir.path().join("src");
+        let state = HttpServerState {
+            workspace_root: Arc::new(RwLock::new(dir.path().to_path_buf())),
+            agent_context: Arc::new(RwLock::new(AgentContext::default())),
+            lsp_manager: LspManager::new(),
+            frontend_dist: dir.path().to_path_buf(),
+            mcp_token: "token".to_string(),
+        };
+
+        let result = create_folder(
+            State(state),
+            HeaderMap::new(),
+            Json(CreateFolderRequest {
+                path: "src".to_string(),
+            }),
+        )
+        .await;
+
+        let response = result.unwrap_err().into_response();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        assert!(!folder_path.exists());
+    }
+
+    #[tokio::test]
+    async fn create_folder_accepts_matching_bearer_token() {
+        let dir = tempdir().unwrap();
+        let folder_path = dir.path().join("src");
+        let state = HttpServerState {
+            workspace_root: Arc::new(RwLock::new(dir.path().to_path_buf())),
+            agent_context: Arc::new(RwLock::new(AgentContext::default())),
+            lsp_manager: LspManager::new(),
+            frontend_dist: dir.path().to_path_buf(),
+            mcp_token: "token".to_string(),
+        };
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::AUTHORIZATION,
+            HeaderValue::from_static("Bearer token"),
+        );
+
+        let result = create_folder(
+            State(state),
+            headers,
+            Json(CreateFolderRequest {
+                path: "src".to_string(),
+            }),
+        )
+        .await;
+
+        assert_eq!(result.unwrap(), StatusCode::CREATED);
+        assert!(folder_path.is_dir());
+    }
+
+    #[tokio::test]
+    async fn rename_file_requires_matching_bearer_token() {
+        let dir = tempdir().unwrap();
+        let from_path = dir.path().join("note.txt");
+        let to_path = dir.path().join("renamed.txt");
+        std::fs::write(&from_path, "before").unwrap();
+        let state = HttpServerState {
+            workspace_root: Arc::new(RwLock::new(dir.path().to_path_buf())),
+            agent_context: Arc::new(RwLock::new(AgentContext::default())),
+            lsp_manager: LspManager::new(),
+            frontend_dist: dir.path().to_path_buf(),
+            mcp_token: "token".to_string(),
+        };
+
+        let result = rename_file(
+            State(state),
+            HeaderMap::new(),
+            Json(RenameFileRequest {
+                from_path: "note.txt".to_string(),
+                to_path: "renamed.txt".to_string(),
+            }),
+        )
+        .await;
+
+        let response = result.unwrap_err().into_response();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        assert!(from_path.exists());
+        assert!(!to_path.exists());
+    }
+
+    #[tokio::test]
+    async fn rename_file_accepts_matching_bearer_token() {
+        let dir = tempdir().unwrap();
+        let from_path = dir.path().join("note.txt");
+        let to_path = dir.path().join("renamed.txt");
+        std::fs::write(&from_path, "before").unwrap();
+        let state = HttpServerState {
+            workspace_root: Arc::new(RwLock::new(dir.path().to_path_buf())),
+            agent_context: Arc::new(RwLock::new(AgentContext::default())),
+            lsp_manager: LspManager::new(),
+            frontend_dist: dir.path().to_path_buf(),
+            mcp_token: "token".to_string(),
+        };
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::AUTHORIZATION,
+            HeaderValue::from_static("Bearer token"),
+        );
+
+        let result = rename_file(
+            State(state),
+            headers,
+            Json(RenameFileRequest {
+                from_path: "note.txt".to_string(),
+                to_path: "renamed.txt".to_string(),
+            }),
+        )
+        .await;
+
+        assert_eq!(result.unwrap(), StatusCode::NO_CONTENT);
+        assert!(!from_path.exists());
+        assert_eq!(std::fs::read_to_string(to_path).unwrap(), "before");
+    }
+
+    #[tokio::test]
+    async fn delete_file_requires_matching_bearer_token() {
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("note.txt");
+        std::fs::write(&file_path, "before").unwrap();
+        let state = HttpServerState {
+            workspace_root: Arc::new(RwLock::new(dir.path().to_path_buf())),
+            agent_context: Arc::new(RwLock::new(AgentContext::default())),
+            lsp_manager: LspManager::new(),
+            frontend_dist: dir.path().to_path_buf(),
+            mcp_token: "token".to_string(),
+        };
+
+        let result = delete_file(
+            State(state),
+            HeaderMap::new(),
+            Json(DeleteFileRequest {
+                path: "note.txt".to_string(),
+            }),
+        )
+        .await;
+
+        let response = result.unwrap_err().into_response();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(std::fs::read_to_string(file_path).unwrap(), "before");
+    }
+
+    #[tokio::test]
+    async fn delete_file_accepts_matching_bearer_token() {
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("note.txt");
+        std::fs::write(&file_path, "before").unwrap();
+        let state = HttpServerState {
+            workspace_root: Arc::new(RwLock::new(dir.path().to_path_buf())),
+            agent_context: Arc::new(RwLock::new(AgentContext::default())),
+            lsp_manager: LspManager::new(),
+            frontend_dist: dir.path().to_path_buf(),
+            mcp_token: "token".to_string(),
+        };
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::AUTHORIZATION,
+            HeaderValue::from_static("Bearer token"),
+        );
+
+        let result = delete_file(
+            State(state),
+            headers,
+            Json(DeleteFileRequest {
+                path: "note.txt".to_string(),
+            }),
+        )
+        .await;
+
+        assert_eq!(result.unwrap(), StatusCode::NO_CONTENT);
+        assert!(!file_path.exists());
+    }
+
+    #[tokio::test]
+    async fn put_agent_context_requires_matching_bearer_token() {
+        let dir = tempdir().unwrap();
+        let state = HttpServerState {
+            workspace_root: Arc::new(RwLock::new(dir.path().to_path_buf())),
+            agent_context: Arc::new(RwLock::new(AgentContext {
+                active_file: Some("before.rs".to_string()),
+                open_files: Vec::new(),
+                selection: None,
+                diagnostics: Vec::new(),
+            })),
+            lsp_manager: LspManager::new(),
+            frontend_dist: dir.path().to_path_buf(),
+            mcp_token: "token".to_string(),
+        };
+
+        let result = put_agent_context(
+            State(state.clone()),
+            HeaderMap::new(),
+            Json(AgentContext {
+                active_file: Some("after.rs".to_string()),
+                open_files: Vec::new(),
+                selection: None,
+                diagnostics: Vec::new(),
+            }),
+        )
+        .await;
+
+        let response = result.unwrap_err().into_response();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(
+            state.agent_context.read().await.active_file.as_deref(),
+            Some("before.rs")
+        );
     }
 
     #[test]
@@ -691,6 +1209,7 @@ mod tests {
             "get_current_selection"
         );
         assert_eq!(response["result"]["tools"][4]["name"], "get_editor_context");
+        assert_eq!(response["result"]["tools"][5]["name"], "get_diagnostics");
     }
 
     #[tokio::test]
@@ -702,6 +1221,7 @@ mod tests {
                 active_file: Some("src/main.rs".to_string()),
                 open_files: vec!["src/main.rs".to_string()],
                 selection: None,
+                diagnostics: Vec::new(),
             })),
             lsp_manager: LspManager::new(),
             frontend_dist: dir.path().to_path_buf(),
@@ -719,5 +1239,32 @@ mod tests {
             response["result"]["structuredContent"]["openEditors"]["tabs"][0]["isActive"],
             true
         );
+    }
+
+    #[test]
+    fn diagnostics_include_absolute_and_relative_paths() {
+        let dir = tempdir().unwrap();
+        let context = AgentContext {
+            active_file: None,
+            open_files: Vec::new(),
+            selection: None,
+            diagnostics: vec![crate::EditorDiagnostic {
+                file_path: "src/main.rs".to_string(),
+                message: "expected item".to_string(),
+                severity: Some(1),
+                source: Some("rust-analyzer".to_string()),
+                code: Some("E0001".to_string()),
+                start_line: 2,
+                start_column: 3,
+                end_line: 2,
+                end_column: 8,
+            }],
+        };
+
+        let result = diagnostics(dir.path(), &context);
+
+        assert_eq!(result["items"][0]["relativePath"], "src/main.rs");
+        assert_eq!(result["items"][0]["message"], "expected item");
+        assert_eq!(result["items"][0]["range"]["start"]["line"], 2);
     }
 }
