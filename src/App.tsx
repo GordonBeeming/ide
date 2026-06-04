@@ -44,6 +44,11 @@ interface TreeNode extends FileEntry {
   children: TreeNode[];
 }
 
+interface RevealTarget {
+  path: string;
+  lineNumber: number;
+}
+
 const skipOpenPattern = /\.(png|jpe?g|gif|webp|ico|pdf|zip|gz|dll|exe|dylib)$/i;
 
 export default function App() {
@@ -51,6 +56,7 @@ export default function App() {
   const [files, setFiles] = useState<FileEntry[]>([]);
   const [activePath, setActivePath] = useState<string>();
   const [selectedPath, setSelectedPath] = useState<string>();
+  const [revealTarget, setRevealTarget] = useState<RevealTarget>();
   const [openFiles, setOpenFiles] = useState<EditorTab[]>([]);
   const [filter, setFilter] = useState("");
   const [contentQuery, setContentQuery] = useState("");
@@ -64,6 +70,11 @@ export default function App() {
   const [claudeBridge, setClaudeBridge] = useState<ClaudeBridgeStatus>();
 
   const activeFile = openFiles.find((file) => file.path === activePath);
+  const cursorPosition = selection
+    ? `${selection.startLine}:${selection.startColumn}`
+    : revealTarget && revealTarget.path === activePath
+      ? `${revealTarget.lineNumber}:1`
+      : "";
   const tree = useMemo(() => buildTree(files), [files]);
   const filteredTree = useMemo(
     () => filterTree(tree, filter.trim().toLowerCase()),
@@ -137,8 +148,13 @@ export default function App() {
   }, [activePath, openFiles, selection]);
 
   const openPath = useCallback(
-    async (entry: FileEntry, pinned = false) => {
+    async (entry: FileEntry, pinned = false, lineNumber?: number) => {
       setSelectedPath(entry.path);
+      if (lineNumber) {
+        setRevealTarget({ path: entry.path, lineNumber });
+      } else {
+        setRevealTarget(undefined);
+      }
 
       if (entry.isDir || skipOpenPattern.test(entry.name)) return;
 
@@ -176,13 +192,13 @@ export default function App() {
   );
 
   const openPathByName = useCallback(
-    async (path: string, pinned = false) => {
+    async (path: string, pinned = false, lineNumber?: number) => {
       const entry = files.find((candidate) => candidate.path === path);
       if (!entry) {
         setError(`File is not in the current workspace: ${path}`);
         return;
       }
-      await openPath(entry, pinned);
+      await openPath(entry, pinned, lineNumber);
     },
     [files, openPath],
   );
@@ -236,6 +252,7 @@ export default function App() {
       setOpenFiles([]);
       setActivePath(undefined);
       setSelectedPath(undefined);
+      setRevealTarget(undefined);
       setSelection(undefined);
       setFilter("");
       setContentQuery("");
@@ -305,8 +322,8 @@ export default function App() {
               <button
                 className="search-result"
                 key={`${result.path}:${result.lineNumber}:${result.matchStart}`}
-                onClick={() => openPathByName(result.path, false)}
-                onDoubleClick={() => openPathByName(result.path, true)}
+                onClick={() => openPathByName(result.path, false, result.lineNumber)}
+                onDoubleClick={() => openPathByName(result.path, true, result.lineNumber)}
               >
                 <span className="search-result__path">
                   {result.path}:{result.lineNumber}
@@ -428,6 +445,9 @@ export default function App() {
               <EditorPane
                 contents={activeFile.contents}
                 path={activeFile.path}
+                revealLine={
+                  revealTarget?.path === activeFile.path ? revealTarget.lineNumber : undefined
+                }
                 onChange={updateContents}
                 onError={setError}
                 onSelection={setSelection}
@@ -444,7 +464,7 @@ export default function App() {
         <footer className="statusbar">
           <span>{status}</span>
           <span>{activePath ?? workspaceRoot}</span>
-          <span>{selection ? `${selection.startLine}:${selection.startColumn}` : ""}</span>
+          <span>{cursorPosition}</span>
         </footer>
       </section>
 

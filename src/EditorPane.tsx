@@ -19,10 +19,12 @@ import { oneDark } from "@codemirror/theme-one-dark";
 import { languageForPath } from "./language";
 import { lspExtensionsForPath } from "./lsp";
 import type { EditorSelection } from "./tauri";
+import { clampLineNumber } from "./editorNavigation";
 
 interface EditorPaneProps {
   path: string;
   contents: string;
+  revealLine?: number;
   onChange: (path: string, contents: string) => void;
   onError: (message: string) => void;
   onSelection: (selection: EditorSelection | undefined) => void;
@@ -31,6 +33,7 @@ interface EditorPaneProps {
 export default function EditorPane({
   path,
   contents,
+  revealLine,
   onChange,
   onError,
   onSelection,
@@ -100,6 +103,7 @@ export default function EditorPane({
       });
 
       viewRef.current = view;
+      revealLineInView(view, revealLine);
     }).catch((error) => {
       if (!cancelled) {
         onError(`Unable to initialize editor services for ${path}: ${String(error)}`);
@@ -113,7 +117,25 @@ export default function EditorPane({
     };
   }, [path]);
 
+  useEffect(() => {
+    if (viewRef.current) {
+      revealLineInView(viewRef.current, revealLine);
+    }
+  }, [revealLine]);
+
   return <div className="editor-host" ref={host} />;
+}
+
+function revealLineInView(view: EditorView, lineNumber: number | undefined) {
+  const line = clampLineNumber(lineNumber, view.state.doc.lines);
+  if (!line) return;
+
+  const position = view.state.doc.line(line).from;
+  view.dispatch({
+    selection: { anchor: position },
+    effects: EditorView.scrollIntoView(position, { y: "center" }),
+  });
+  view.focus();
 }
 
 const highContrastTheme = EditorView.theme({
