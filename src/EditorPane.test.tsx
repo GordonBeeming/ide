@@ -51,6 +51,7 @@ describe("EditorPane", () => {
 
   it("keeps the editor usable when LSP startup fails", async () => {
     const onError = vi.fn();
+    const onNotice = vi.fn();
     vi.mocked(lspExtensionsForPath).mockRejectedValueOnce(
       new Error("typescript-language-server was not found on PATH"),
     );
@@ -59,6 +60,7 @@ describe("EditorPane", () => {
         contents="export function App() {}"
         onChange={vi.fn()}
         onError={onError}
+        onNotice={onNotice}
         onSelection={vi.fn()}
         path="src/App.tsx"
       />,
@@ -67,9 +69,8 @@ describe("EditorPane", () => {
     await waitFor(() => {
       expect(editorText(container)).toContain("export function App() {}");
     });
-    expect(onError).toHaveBeenCalledWith(
-      "Language server unavailable for src/App.tsx: Error: typescript-language-server was not found on PATH",
-    );
+    expect(onError).not.toHaveBeenCalled();
+    expect(onNotice).toHaveBeenCalledWith("Language server unavailable for src/App.tsx");
   });
 });
 

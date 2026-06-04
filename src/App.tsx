@@ -1288,6 +1288,7 @@ export default function App() {
                 }
                 onChange={updateContents}
                 onError={setError}
+                onNotice={setStatus}
                 onSelection={setSelection}
               />
             </Suspense>

@@ -31,6 +31,7 @@ interface EditorPaneProps {
   revealLine?: number;
   onChange: (path: string, contents: string) => void;
   onError: (message: string) => void;
+  onNotice?: (message: string) => void;
   onSelection: (selection: EditorSelection | undefined) => void;
 }
 
@@ -40,6 +41,7 @@ export default function EditorPane({
   revealLine,
   onChange,
   onError,
+  onNotice,
   onSelection,
 }: EditorPaneProps) {
   const host = useRef<HTMLDivElement | null>(null);
@@ -69,7 +71,7 @@ export default function EditorPane({
       if (cancelled || !host.current) return;
 
       const lspExtensions = await lspExtensionsForPath(path).catch((error) => {
-        onError(`Language server unavailable for ${path}: ${String(error)}`);
+        onNotice?.(`Language server unavailable for ${path}`);
         return [];
       });
       if (cancelled || !host.current) return;
