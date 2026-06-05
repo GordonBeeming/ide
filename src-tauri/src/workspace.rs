@@ -96,6 +96,13 @@ pub fn scan_workspace(
     Ok(entries)
 }
 
+pub fn workspace_file_entry(root: &Path, relative: &str) -> Result<FileEntry, WorkspaceError> {
+    let path = resolve_existing_workspace_file_path(root, relative)?;
+    let metadata = fs::symlink_metadata(&path)?;
+    let relative_path = Path::new(relative);
+    file_entry_from_relative(relative_path, metadata)
+}
+
 fn push_scan_entry(
     root: &Path,
     entry: &DirEntry,
@@ -117,6 +124,15 @@ fn push_scan_entry(
         return Ok(());
     }
 
+    entries.push(file_entry_from_relative(relative, metadata)?);
+    Ok(())
+}
+
+fn file_entry_from_relative(
+    relative: &Path,
+    metadata: fs::Metadata,
+) -> Result<FileEntry, WorkspaceError> {
+    let relative_path = normalize_path(relative);
     let parent = relative
         .parent()
         .filter(|value| !value.as_os_str().is_empty())
@@ -128,17 +144,21 @@ fn push_scan_entry(
         .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
         .map(|duration| duration.as_millis());
 
-    entries.push(FileEntry {
+    let name = relative
+        .file_name()
+        .ok_or(WorkspaceError::InvalidPath)?
+        .to_string_lossy()
+        .to_string();
+
+    Ok(FileEntry {
         path: relative_path,
-        name: entry.file_name().to_string_lossy().to_string(),
+        name,
         parent,
         is_dir: metadata.is_dir(),
         depth,
         size: metadata.len(),
         modified_ms,
-    });
-
-    Ok(())
+    })
 }
 
 pub fn search_workspace(
@@ -849,6 +869,23 @@ mod tests {
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].path, "src/main.rs");
         assert_eq!(results[0].line_number, 2);
+    }
+
+    #[test]
+    fn workspace_file_entry_returns_single_file_metadata() {
+        let dir = tempdir().unwrap();
+        let src = dir.path().join("src");
+        fs::create_dir(&src).unwrap();
+        fs::write(src.join("main.rs"), "fn main() {}").unwrap();
+
+        let entry = workspace_file_entry(dir.path(), "src/main.rs").unwrap();
+
+        assert_eq!(entry.path, "src/main.rs");
+        assert_eq!(entry.name, "main.rs");
+        assert_eq!(entry.parent.as_deref(), Some("src"));
+        assert!(!entry.is_dir);
+        assert_eq!(entry.depth, 1);
+        assert!(entry.modified_ms.is_some());
     }
 
     #[test]

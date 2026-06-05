@@ -57,6 +57,7 @@ const tauriMocks = vi.hoisted(() => ({
   getInitialFile: vi.fn(),
   listFiles: vi.fn(),
   readFile: vi.fn(),
+  statFile: vi.fn(),
   writeFile: vi.fn(),
   createFile: vi.fn(),
   createFolder: vi.fn(),
@@ -64,6 +65,7 @@ const tauriMocks = vi.hoisted(() => ({
   deleteFile: vi.fn(),
   searchFiles: vi.fn(),
   pickWorkspaceFolder: vi.fn(),
+  setWorkspaceRootPath: vi.fn(),
   getUiState: vi.fn(),
   updateUiState: vi.fn(),
   updateAgentContext: vi.fn(),
@@ -98,6 +100,7 @@ vi.mock("./tauri", async () => {
     getInitialFile: tauriMocks.getInitialFile,
     listFiles: tauriMocks.listFiles,
     readFile: tauriMocks.readFile,
+    statFile: tauriMocks.statFile,
     writeFile: tauriMocks.writeFile,
     createFile: tauriMocks.createFile,
     createFolder: tauriMocks.createFolder,
@@ -105,6 +108,7 @@ vi.mock("./tauri", async () => {
     deleteFile: tauriMocks.deleteFile,
     searchFiles: tauriMocks.searchFiles,
     pickWorkspaceFolder: tauriMocks.pickWorkspaceFolder,
+    setWorkspaceRootPath: tauriMocks.setWorkspaceRootPath,
     getUiState: tauriMocks.getUiState,
     updateUiState: tauriMocks.updateUiState,
     updateAgentContext: tauriMocks.updateAgentContext,
@@ -186,6 +190,11 @@ describe("App shell interactions", () => {
     tauriMocks.getWorkspaceRoot.mockResolvedValue("/workspace");
     tauriMocks.getInitialFile.mockResolvedValue(undefined);
     tauriMocks.listFiles.mockResolvedValue(files);
+    tauriMocks.statFile.mockImplementation(async (path: string) => {
+      const entry = files.find((candidate) => candidate.path === path);
+      if (!entry) throw new Error(`missing ${path}`);
+      return entry;
+    });
     tauriMocks.readFile.mockImplementation(async (path: string) => {
       if (path === "README.md") return "readme";
       if (path === "src/App.tsx") return "export function App() {}";
@@ -197,6 +206,7 @@ describe("App shell interactions", () => {
     tauriMocks.renameFile.mockResolvedValue(undefined);
     tauriMocks.deleteFile.mockResolvedValue(undefined);
     tauriMocks.searchFiles.mockResolvedValue([]);
+    tauriMocks.setWorkspaceRootPath.mockResolvedValue("/workspace");
     tauriMocks.getUiState.mockResolvedValue({
       view: {
         showDotfiles: false,
@@ -259,6 +269,14 @@ describe("App shell interactions", () => {
 
   it("opens a launched file even when the workspace scan omitted it", async () => {
     tauriMocks.getInitialFile.mockResolvedValueOnce("LICENSE");
+    tauriMocks.statFile.mockResolvedValueOnce({
+      path: "LICENSE",
+      name: "LICENSE",
+      isDir: false,
+      depth: 0,
+      size: 12,
+      modifiedMs: 404,
+    });
     tauriMocks.readFile.mockImplementation(async (path: string) => {
       if (path === "LICENSE") return "license body";
       if (path === "README.md") return "readme";
@@ -269,9 +287,52 @@ describe("App shell interactions", () => {
     render(<App />);
 
     expect(await screen.findByLabelText("Editor LICENSE")).toHaveValue("license body");
+    expect(await treeButton("LICENSE")).toBeInTheDocument();
+    expect(screen.queryByText("src")).not.toBeInTheDocument();
+    expect(tauriMocks.listFiles).not.toHaveBeenCalled();
     expect(
       screen.queryByText(/Launch file is not in the current workspace/),
     ).not.toBeInTheDocument();
+  });
+
+  it("opens Finder file handoffs as single-file sessions", async () => {
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    tauriMocks.statFile.mockResolvedValueOnce({
+      path: "notes.md",
+      name: "notes.md",
+      isDir: false,
+      depth: 0,
+      size: 11,
+      modifiedMs: 505,
+    });
+    tauriMocks.readFile.mockImplementation(async (path: string) => {
+      if (path === "notes.md") return "# Notes";
+      if (path === "README.md") return "readme";
+      if (path === "src/App.tsx") return "export function App() {}";
+      return "";
+    });
+
+    render(<App />);
+
+    expect(await treeButton("README.md")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(eventMocks.listeners.has("menu://open-file")).toBe(true),
+    );
+
+    eventMocks.listeners.get("menu://open-file")?.({
+      payload: {
+        workspaceRoot: "/Users/gordonbeeming/Developer",
+        path: "notes.md",
+        singleFile: true,
+      },
+    });
+
+    expect(await screen.findByLabelText("Editor notes.md")).toHaveValue("# Notes");
+    expect(await treeButton("notes.md")).toBeInTheDocument();
+    expect(screen.queryByText("README.md")).not.toBeInTheDocument();
+    expect(tauriMocks.setWorkspaceRootPath).toHaveBeenCalledWith(
+      "/Users/gordonbeeming/Developer",
+    );
   });
 
   it("keeps first-level folders collapsed until the user opens them", async () => {
@@ -1187,7 +1248,8 @@ describe("App shell interactions", () => {
 });
 
 async function treeButton(name: string) {
-  const label = await screen.findByText(name);
+  const tree = await screen.findByLabelText("Workspace files");
+  const label = await within(tree).findByText(name);
   const button = label.closest("button");
   if (!button) throw new Error(`No tree button found for ${name}`);
   return button;

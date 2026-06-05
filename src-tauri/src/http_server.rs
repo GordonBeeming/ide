@@ -18,8 +18,8 @@ use tokio::sync::RwLock;
 use crate::lsp::{LspManager, LspServerStatus};
 use crate::workspace::{
     create_workspace_file, create_workspace_folder, delete_workspace_file, read_workspace_file,
-    rename_workspace_file, scan_workspace, search_workspace, write_workspace_file, FileEntry,
-    SearchMatch,
+    rename_workspace_file, scan_workspace, search_workspace, workspace_file_entry,
+    write_workspace_file, FileEntry, SearchMatch,
 };
 use crate::AgentContext;
 
@@ -95,6 +95,7 @@ struct OpenWorkspaceEvent {
 struct OpenFileEvent {
     workspace_root: String,
     path: String,
+    single_file: bool,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -141,6 +142,7 @@ pub async fn start_http_server(
                 .put(write_file)
                 .options(cors_preflight),
         )
+        .route("/api/file-metadata", get(stat_file))
         .route("/api/folder", post(create_folder).options(cors_preflight))
         .route(
             "/api/open-path",
@@ -290,6 +292,14 @@ async fn read_file(
     Ok(read_workspace_file(&workspace_root, &query.path)?)
 }
 
+async fn stat_file(
+    State(state): State<HttpServerState>,
+    Query(query): Query<FileQuery>,
+) -> Result<Json<FileEntry>, ApiError> {
+    let workspace_root = state.workspace_root.read().await.clone();
+    Ok(Json(workspace_file_entry(&workspace_root, &query.path)?))
+}
+
 async fn write_file(
     State(state): State<HttpServerState>,
     headers: HeaderMap,
@@ -370,6 +380,7 @@ fn open_path_event_for_path(path: PathBuf) -> Result<OpenPathEvent, std::io::Err
     Ok(OpenPathEvent::File(OpenFileEvent {
         workspace_root: workspace_root.to_string_lossy().to_string(),
         path: relative_path,
+        single_file: true,
     }))
 }
 
@@ -904,7 +915,8 @@ mod tests {
             open_path_event_for_path(file).unwrap(),
             OpenPathEvent::File(OpenFileEvent {
                 workspace_root: src.canonicalize().unwrap().to_string_lossy().to_string(),
-                path: "main.rs".to_string()
+                path: "main.rs".to_string(),
+                single_file: true
             })
         );
     }

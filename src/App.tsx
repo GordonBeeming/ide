@@ -63,6 +63,7 @@ import {
   renameFile,
   searchFiles,
   setWorkspaceRootPath,
+  statFile,
   updateAgentContext,
   updateUiState,
   writeFile,
@@ -117,6 +118,9 @@ export default function App() {
   const [workspaceLoading, setWorkspaceLoading] = useState(true);
   const [workspaceLoadFailed, setWorkspaceLoadFailed] = useState(false);
   const [initialFile, setInitialFile] = useState<string>();
+  const [launchTargetLoaded, setLaunchTargetLoaded] = useState(false);
+  const [singleFileMode, setSingleFileMode] = useState(false);
+  const [singleFilePath, setSingleFilePath] = useState<string>();
   const [files, setFiles] = useState<FileEntry[]>([]);
   const [activePath, setActivePath] = useState<string>();
   const [selectedPath, setSelectedPath] = useState<string>();
@@ -182,23 +186,30 @@ export default function App() {
   const dirtyFiles = openFiles.filter((file) => file.dirty);
   const activeFileIsDirty = Boolean(activeFile?.dirty);
   const hasDirtyFiles = dirtyFiles.length > 0;
-  const selectedEntry = selectedPath
-    ? files.find((file) => file.path === selectedPath)
-    : undefined;
   const activeSelection = selection?.filePath === activePath ? selection : undefined;
   const cursorPosition = activeSelection
     ? `${activeSelection.startLine}:${activeSelection.startColumn}`
     : revealTarget && revealTarget.path === activePath
       ? `${revealTarget.lineNumber}:1`
       : "";
-  const tree = useMemo(() => buildTree(files), [files]);
+  const sidebarFiles = useMemo(() => {
+    if (!singleFileMode || !singleFilePath) return files;
+    const entry =
+      files.find((candidate) => candidate.path === singleFilePath) ??
+      fileEntryForDirectOpen(singleFilePath);
+    return [entry];
+  }, [files, singleFileMode, singleFilePath]);
+  const selectedEntry = selectedPath
+    ? sidebarFiles.find((file) => file.path === selectedPath)
+    : undefined;
+  const tree = useMemo(() => buildTree(sidebarFiles), [sidebarFiles]);
   const filteredTree = useMemo(
     () => filterTree(tree, filter.trim().toLowerCase()),
     [filter, tree],
   );
   const quickOpenResults = useMemo(
-    () => quickOpenMatches(files, quickOpenQuery, 12),
-    [files, quickOpenQuery],
+    () => quickOpenMatches(sidebarFiles, quickOpenQuery, 12),
+    [quickOpenQuery, sidebarFiles],
   );
   const currentFindResults = useMemo(
     () =>
@@ -232,6 +243,9 @@ export default function App() {
     () => openFiles.map((file) => file.path).join("\0"),
     [openFiles],
   );
+  const workspaceTitle = singleFileMode && singleFilePath
+    ? lastSegment(singleFilePath)
+    : lastSegment(workspaceRoot);
 
   useEffect(() => {
     const media = window.matchMedia?.(darkSchemeQuery);
@@ -298,25 +312,43 @@ export default function App() {
     });
   }, []);
 
-  const refreshFiles = useCallback(async () => {
+  const refreshIntegrationStatus = useCallback(async () => {
+    try {
+      setLspServers(await getLspServers());
+      setHttpEndpoint(await getHttpEndpoint());
+      setCodexMcp(await getCodexMcpStatus());
+      setClaudeBridge(await getClaudeBridgeStatus());
+    } catch (reason) {
+      setError(`Unable to load local integration status: ${String(reason)}`);
+    }
+  }, []);
+
+  const refreshFiles = useCallback(async (options?: { singleFilePath?: string }) => {
+    const effectiveSingleFilePath =
+      options && "singleFilePath" in options ? options.singleFilePath : singleFilePath;
+    const effectiveSingleFileMode =
+      options && "singleFilePath" in options
+        ? Boolean(options.singleFilePath)
+        : singleFileMode;
+
     setWorkspaceLoading(true);
     try {
-      const [root, entries] = await Promise.all([
-        getWorkspaceRoot(),
-        listFiles(showDotfiles, showGeneratedInternal),
-      ]);
+      const root = await getWorkspaceRoot();
       setWorkspaceRoot(root);
       setLspRootUri(pathToFileUri(root));
+      if (effectiveSingleFileMode && effectiveSingleFilePath) {
+        const entry = await statFile(effectiveSingleFilePath);
+        setFiles([entry]);
+        setWorkspaceLoadFailed(false);
+        setWorkspaceUiRestored(true);
+        await refreshIntegrationStatus();
+        return [entry];
+      }
+
+      const entries = await listFiles(showDotfiles, showGeneratedInternal);
       setFiles(entries);
       setWorkspaceLoadFailed(false);
-      try {
-        setLspServers(await getLspServers());
-        setHttpEndpoint(await getHttpEndpoint());
-        setCodexMcp(await getCodexMcpStatus());
-        setClaudeBridge(await getClaudeBridgeStatus());
-      } catch (reason) {
-        setError(`Unable to load local integration status: ${String(reason)}`);
-      }
+      await refreshIntegrationStatus();
       return entries;
     } catch (reason) {
       setWorkspaceLoadFailed(true);
@@ -324,13 +356,28 @@ export default function App() {
     } finally {
       setWorkspaceLoading(false);
     }
-  }, [showDotfiles, showGeneratedInternal]);
+  }, [
+    refreshIntegrationStatus,
+    showDotfiles,
+    showGeneratedInternal,
+    singleFileMode,
+    singleFilePath,
+  ]);
 
   useEffect(() => {
     getInitialFile()
-      .then(setInitialFile)
+      .then((path) => {
+        setInitialFile(path);
+        if (path) {
+          setSingleFileMode(true);
+          setSingleFilePath(path);
+        }
+      })
       .catch((reason) => {
         setError(`Unable to read launch file: ${String(reason)}`);
+      })
+      .finally(() => {
+        setLaunchTargetLoaded(true);
       });
   }, []);
 
@@ -359,12 +406,12 @@ export default function App() {
   }, [loadPersistedUiState]);
 
   useEffect(() => {
-    if (!uiStateLoaded) return;
+    if (!uiStateLoaded || !launchTargetLoaded) return;
     refreshFiles().catch((reason) => {
       setError(String(reason));
       setStatus("Workspace load failed");
     });
-  }, [refreshFiles, uiStateLoaded]);
+  }, [launchTargetLoaded, refreshFiles, uiStateLoaded]);
 
   useEffect(() => {
     const query = contentQuery.trim();
@@ -377,7 +424,13 @@ export default function App() {
     setSearching(true);
     let cancelled = false;
     const timeout = window.setTimeout(() => {
-      searchFiles(query)
+      const searchPromise = singleFileMode && singleFilePath
+        ? readFile(singleFilePath).then((contents) =>
+            currentFileMatches(singleFilePath, contents, query),
+          )
+        : searchFiles(query);
+
+      searchPromise
         .then((results) => {
           if (cancelled) return;
           setSearchResults(results);
@@ -397,7 +450,7 @@ export default function App() {
       cancelled = true;
       window.clearTimeout(timeout);
     };
-  }, [contentQuery]);
+  }, [contentQuery, singleFileMode, singleFilePath]);
 
   useEffect(() => {
     setLspErrorHandler(setError);
@@ -498,6 +551,7 @@ export default function App() {
     if (
       !uiStateLoaded ||
       workspaceLoading ||
+      singleFileMode ||
       workspaceLoadFailed ||
       persistedFilesRestoredRef.current
     ) {
@@ -561,6 +615,7 @@ export default function App() {
     };
   }, [
     files,
+    singleFileMode,
     uiStateLoaded,
     workspaceLoadFailed,
     workspaceLoading,
@@ -568,6 +623,7 @@ export default function App() {
 
   useEffect(() => {
     if (!uiStateLoaded || !workspaceUiRestored) return;
+    if (singleFileMode) return;
 
     window.clearTimeout(uiPersistTimerRef.current);
     uiPersistTimerRef.current = window.setTimeout(() => {
@@ -595,6 +651,7 @@ export default function App() {
     selectedPath,
     showDotfiles,
     showGeneratedInternal,
+    singleFileMode,
     uiStateLoaded,
     workspaceUiRestored,
   ]);
@@ -912,9 +969,13 @@ export default function App() {
       setStatus("Opening folder");
       try {
         const selected = await setWorkspaceRootPath(path);
+        setSingleFileMode(false);
+        setSingleFilePath(undefined);
+        setInitialFile(undefined);
+        initialFileOpenedRef.current = false;
         clearWorkspaceUi();
         applyPersistedUiSnapshot(await getUiState());
-        await refreshFiles();
+        await refreshFiles({ singleFilePath: undefined });
         setStatus(`Opened ${lastSegment(selected) || selected}`);
       } catch (reason) {
         setError(String(reason));
@@ -925,8 +986,11 @@ export default function App() {
   );
 
   const openFileFromWorkspace = useCallback(
-    async (workspaceRootPath: string, path: string) => {
-      if (workspaceRootPath !== workspaceRoot && openFiles.some((file) => file.dirty)) {
+    async (workspaceRootPath: string, path: string, singleFile = false) => {
+      if (
+        (singleFile || workspaceRootPath !== workspaceRoot) &&
+        openFiles.some((file) => file.dirty)
+      ) {
         setError("Save or close modified files before switching workspace.");
         return;
       }
@@ -936,16 +1000,50 @@ export default function App() {
       try {
         let entries = files;
         if (workspaceRootPath !== workspaceRoot) {
-          await setWorkspaceRootPath(workspaceRootPath);
+          const selected = await setWorkspaceRootPath(workspaceRootPath);
+          setWorkspaceRoot(selected);
+          setLspRootUri(pathToFileUri(selected));
           clearWorkspaceUi();
-          const snapshot = await getUiState();
-          if (!snapshot.workspace.openFiles.includes(path)) {
-            snapshot.workspace.openFiles = [...snapshot.workspace.openFiles, path];
+          if (singleFile) {
+            setSingleFileMode(true);
+            setSingleFilePath(path);
+            setInitialFile(path);
+            initialFileOpenedRef.current = true;
+            const entry = await statFile(path);
+            setFiles([entry]);
+            setOpenFiles([]);
+            setActivePath(undefined);
+            setSelectedPath(path);
+            setWorkspaceLoadFailed(false);
+            setWorkspaceUiRestored(true);
+            entries = [entry];
+          } else {
+            setSingleFileMode(false);
+            setSingleFilePath(undefined);
+            setInitialFile(undefined);
+            initialFileOpenedRef.current = false;
+            const snapshot = await getUiState();
+            if (!snapshot.workspace.openFiles.includes(path)) {
+              snapshot.workspace.openFiles = [...snapshot.workspace.openFiles, path];
+            }
+            snapshot.workspace.activeFile = path;
+            snapshot.workspace.selectedPath = path;
+            applyPersistedUiSnapshot(snapshot);
+            entries = await refreshFiles({ singleFilePath: undefined });
           }
-          snapshot.workspace.activeFile = path;
-          snapshot.workspace.selectedPath = path;
-          applyPersistedUiSnapshot(snapshot);
-          entries = await refreshFiles();
+        } else if (singleFile) {
+          setSingleFileMode(true);
+          setSingleFilePath(path);
+          setInitialFile(path);
+          initialFileOpenedRef.current = true;
+          const entry = await statFile(path);
+          setFiles([entry]);
+          setOpenFiles([]);
+          setActivePath(undefined);
+          setSelectedPath(path);
+          setWorkspaceLoadFailed(false);
+          setWorkspaceUiRestored(true);
+          entries = [entry];
         }
 
         const entry =
@@ -981,8 +1079,12 @@ export default function App() {
       listen<{ path: string }>("menu://open-workspace", (event) => {
         void openWorkspacePath(event.payload.path);
       }),
-      listen<{ workspaceRoot: string; path: string }>("menu://open-file", (event) => {
-        void openFileFromWorkspace(event.payload.workspaceRoot, event.payload.path);
+      listen<{ workspaceRoot: string; path: string; singleFile?: boolean }>("menu://open-file", (event) => {
+        void openFileFromWorkspace(
+          event.payload.workspaceRoot,
+          event.payload.path,
+          Boolean(event.payload.singleFile),
+        );
       }),
       listen("menu://close-tab", () => {
         requestCloseActiveFile();
@@ -1376,7 +1478,7 @@ export default function App() {
           <div className="sidebar__title">
             <div className="eyebrow">Workspace</div>
             <strong>
-              {lastSegment(workspaceRoot) ||
+              {workspaceTitle ||
                 (workspaceLoadFailed ? "Workspace unavailable" : "Loading")}
             </strong>
           </div>

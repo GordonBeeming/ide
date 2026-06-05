@@ -13,7 +13,8 @@ use tauri_plugin_dialog::DialogExt;
 use tokio::sync::RwLock;
 use workspace::{
     create_workspace_file, create_workspace_folder, delete_workspace_file, read_workspace_file,
-    rename_workspace_file, scan_workspace, search_workspace, write_workspace_file, WorkspaceError,
+    rename_workspace_file, scan_workspace, search_workspace, workspace_file_entry,
+    write_workspace_file, WorkspaceError,
 };
 
 #[derive(Clone)]
@@ -217,6 +218,15 @@ async fn list_files(
 async fn read_file(state: State<'_, AppState>, path: String) -> Result<String, CommandError> {
     let workspace_root = state.workspace_root.read().await.clone();
     read_workspace_file(&workspace_root, &path).map_err(CommandError::from)
+}
+
+#[tauri::command]
+async fn stat_file(
+    state: State<'_, AppState>,
+    path: String,
+) -> Result<workspace::FileEntry, CommandError> {
+    let workspace_root = state.workspace_root.read().await.clone();
+    workspace_file_entry(&workspace_root, &path).map_err(CommandError::from)
 }
 
 #[tauri::command]
@@ -660,6 +670,7 @@ pub fn run() {
             get_initial_file,
             list_files,
             read_file,
+            stat_file,
             write_file,
             create_file,
             create_folder,

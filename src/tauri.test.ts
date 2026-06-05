@@ -234,6 +234,34 @@ describe("hosted Tauri API transport", () => {
     );
   });
 
+  it("reads hosted file metadata without scanning the workspace", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      jsonResponse({
+        path: "README.md",
+        name: "README.md",
+        isDir: false,
+        depth: 0,
+        size: 20,
+        modifiedMs: 123,
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const { statFile } = await import("./tauri");
+
+    await expect(statFile("README.md")).resolves.toEqual({
+      path: "README.md",
+      name: "README.md",
+      isDir: false,
+      depth: 0,
+      size: 20,
+      modifiedMs: 123,
+    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/file-metadata?path=README.md",
+      expect.objectContaining({ method: "GET" }),
+    );
+  });
+
   it("rejects hosted file listing responses that are not arrays", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response("<html></html>", {

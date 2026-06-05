@@ -161,6 +161,17 @@ export function readFile(path: string) {
   });
 }
 
+export function statFile(path: string) {
+  return callApi<FileEntry>(
+    "stat_file",
+    `/api/file-metadata?path=${encodeURIComponent(path)}`,
+    {
+      method: "GET",
+      invokeArgs: { path },
+    },
+  );
+}
+
 export function writeFile(path: string, contents: string, expectedModifiedMs?: number) {
   return callApi<void>("write_file", "/api/file", {
     method: "PUT",
