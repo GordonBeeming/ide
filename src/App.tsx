@@ -1,4 +1,13 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { listen } from "@tauri-apps/api/event";
 import {
   ChevronRight,
@@ -29,7 +38,7 @@ import {
 import { currentFileMatches } from "./currentFileSearch";
 import { iconForFile, isKnownBinaryFile } from "./fileTypes";
 import { codexMcpConfigSnippet } from "./integrations";
-import { appShellClass, sidebarToggleTitle } from "./layout";
+import { applyDocumentTheme, appShellClass, sidebarToggleTitle } from "./layout";
 import {
   clampQuickOpenSelection,
   moveQuickOpenSelection,
@@ -283,6 +292,10 @@ export default function App() {
     media.addEventListener("change", handleThemeChange);
     return () => media.removeEventListener("change", handleThemeChange);
   }, []);
+
+  useLayoutEffect(() => {
+    applyDocumentTheme(prefersDark);
+  }, [prefersDark]);
 
   useEffect(() => {
     if (activeSidebarSearch === "filter") {

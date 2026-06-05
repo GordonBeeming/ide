@@ -170,6 +170,7 @@ async function assertTheme(page, expectedScheme) {
     return {
       appShell: getComputedStyle(appShell).backgroundColor,
       appShellClasses: [...appShell.classList],
+      documentTheme: document.documentElement.dataset.ideTheme,
       sidebar: getComputedStyle(sidebar).backgroundColor,
       topbar: getComputedStyle(topbar).backgroundColor,
       editorRegion: getComputedStyle(editorRegion).backgroundColor,
@@ -180,6 +181,11 @@ async function assertTheme(page, expectedScheme) {
   if (!colors.appShellClasses.includes(`app-shell--${expectedScheme}`)) {
     throw new Error(
       `${expectedScheme} theme class missing: ${colors.appShellClasses.join(" ")}`,
+    );
+  }
+  if (colors.documentTheme !== expectedScheme) {
+    throw new Error(
+      `${expectedScheme} document theme mismatch: ${colors.documentTheme ?? "unset"}`,
     );
   }
   if (colors.appShell !== colors.editorRegion) {

@@ -4,6 +4,10 @@ export function appShellClass(sidebarCollapsed: boolean, prefersDark = false): s
   return classes.join(" ");
 }
 
+export function applyDocumentTheme(prefersDark: boolean, doc: Document = document): void {
+  doc.documentElement.dataset.ideTheme = prefersDark ? "dark" : "light";
+}
+
 export function sidebarToggleTitle(sidebarCollapsed: boolean): string {
   return sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar";
 }
