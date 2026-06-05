@@ -518,6 +518,7 @@ pub fn run() {
             let claude_bridge_error = http_state.claude_bridge_error.clone();
             let frontend_dist = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../dist");
             let mcp_token = uuid::Uuid::new_v4().to_string();
+            let app_handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 match http_server::start_http_server(
                     workspace_root,
@@ -525,6 +526,7 @@ pub fn run() {
                     lsp_manager,
                     frontend_dist,
                     mcp_token,
+                    app_handle,
                     http_error.clone(),
                 )
                 .await

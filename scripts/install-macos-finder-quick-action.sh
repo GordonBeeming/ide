@@ -28,6 +28,23 @@ fi
 
 LOG_DIR="\$HOME/Library/Logs/Ide"
 mkdir -p "\$LOG_DIR"
+
+API_BASE="http://127.0.0.1:17877"
+if STATUS="\$(curl -fsS --max-time 1 "\$API_BASE/api/codex-mcp" 2>/dev/null)"; then
+  TOKEN="\$(printf '%s' "\$STATUS" | sed -n 's/.*"bearerToken"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')"
+  if [ -n "\$TOKEN" ]; then
+    ESCAPED_TARGET="\$(printf '%s' "\$TARGET" | sed 's/\\\\/\\\\\\\\/g; s/"/\\\\"/g')"
+    if curl -fsS --max-time 2 \\
+      -H "Authorization: Bearer \$TOKEN" \\
+      -H "Content-Type: application/json" \\
+      -X POST \\
+      --data "{\\"path\\":\\"\$ESCAPED_TARGET\\"}" \\
+      "\$API_BASE/api/open-path" >/dev/null 2>&1; then
+      exit 0
+    fi
+  fi
+fi
+
 nohup "$RUN_SH" "\$TARGET" > "\$LOG_DIR/finder-open.log" 2>&1 &
 EOF
 chmod 755 "$RUNNER"

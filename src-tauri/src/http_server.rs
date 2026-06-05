@@ -11,6 +11,7 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use tauri::Emitter;
 use tokio::net::TcpListener;
 use tokio::sync::RwLock;
 
@@ -79,6 +80,30 @@ struct CreateFolderRequest {
 }
 
 #[derive(Debug, Deserialize)]
+struct OpenPathRequest {
+    path: String,
+}
+
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+struct OpenWorkspaceEvent {
+    path: String,
+}
+
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+struct OpenFileEvent {
+    workspace_root: String,
+    path: String,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum OpenPathEvent {
+    Workspace(OpenWorkspaceEvent),
+    File(OpenFileEvent),
+}
+
+#[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct RenameFileRequest {
     from_path: String,
@@ -91,6 +116,7 @@ pub async fn start_http_server(
     lsp_manager: LspManager,
     frontend_dist: PathBuf,
     mcp_token: String,
+    app_handle: tauri::AppHandle,
     server_error: Arc<RwLock<Option<String>>>,
 ) -> Result<HttpServerInfo, std::io::Error> {
     let state = HttpServerState {
@@ -100,6 +126,8 @@ pub async fn start_http_server(
         frontend_dist,
         mcp_token: mcp_token.clone(),
     };
+    let open_path_app = app_handle.clone();
+    let open_path_token = mcp_token.clone();
     let app = Router::new()
         .route("/api/workspace-root", get(workspace_root))
         .route("/api/files", get(files))
@@ -116,6 +144,17 @@ pub async fn start_http_server(
         .route(
             "/api/folder",
             post(create_folder).options(cors_preflight),
+        )
+        .route(
+            "/api/open-path",
+            post(
+                move |headers: HeaderMap, Json(request): Json<OpenPathRequest>| {
+                    let app = open_path_app.clone();
+                    let token = open_path_token.clone();
+                    async move { open_path(app, token, headers, request).await }
+                },
+            )
+            .options(cors_preflight),
         )
         .route(
             "/api/agent-context",
@@ -290,6 +329,51 @@ async fn create_folder(
     let workspace_root = state.workspace_root.read().await.clone();
     create_workspace_folder(&workspace_root, &request.path)?;
     Ok(StatusCode::CREATED)
+}
+
+async fn open_path(
+    app: tauri::AppHandle,
+    expected_token: String,
+    headers: HeaderMap,
+    request: OpenPathRequest,
+) -> Result<StatusCode, ApiError> {
+    require_bearer_auth(&headers, &expected_token)?;
+    match open_path_event_for_path(PathBuf::from(request.path))
+        .map_err(|error| ApiError::bad_request(error.to_string()))?
+    {
+        OpenPathEvent::Workspace(event) => app
+            .emit("menu://open-workspace", event)
+            .map_err(|error| ApiError::internal(error.to_string()))?,
+        OpenPathEvent::File(event) => app
+            .emit("menu://open-file", event)
+            .map_err(|error| ApiError::internal(error.to_string()))?,
+    }
+    Ok(StatusCode::ACCEPTED)
+}
+
+fn open_path_event_for_path(path: PathBuf) -> Result<OpenPathEvent, std::io::Error> {
+    let canonical = path.canonicalize()?;
+    if canonical.is_dir() {
+        return Ok(OpenPathEvent::Workspace(OpenWorkspaceEvent {
+            path: canonical.to_string_lossy().to_string(),
+        }));
+    }
+
+    let workspace_root = canonical
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| canonical.clone());
+    let relative_path = canonical
+        .strip_prefix(&workspace_root)
+        .ok()
+        .and_then(|path| path.to_str())
+        .map(|path| path.replace('\\', "/"))
+        .ok_or_else(|| io::Error::other("selected file path is invalid"))?;
+
+    Ok(OpenPathEvent::File(OpenFileEvent {
+        workspace_root: workspace_root.to_string_lossy().to_string(),
+        path: relative_path,
+    }))
 }
 
 async fn rename_file(
@@ -732,6 +816,20 @@ impl ApiError {
             message: message.into(),
         }
     }
+
+    fn bad_request(message: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::BAD_REQUEST,
+            message: message.into(),
+        }
+    }
+
+    fn internal(message: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            message: message.into(),
+        }
+    }
 }
 
 impl From<crate::workspace::WorkspaceError> for ApiError {
@@ -787,6 +885,31 @@ mod tests {
         assert!(is_authorized_bearer(&headers, "expected"));
         assert!(!is_authorized_bearer(&headers, "other"));
         assert!(!is_authorized_bearer(&HeaderMap::new(), "expected"));
+    }
+
+    #[test]
+    fn open_path_event_maps_folders_and_files_to_frontend_events() {
+        let dir = tempdir().unwrap();
+        let workspace = dir.path().join("workspace");
+        let src = workspace.join("src");
+        std::fs::create_dir_all(&src).unwrap();
+        let file = src.join("main.rs");
+        std::fs::write(&file, "fn main() {}").unwrap();
+        let canonical_workspace = workspace.canonicalize().unwrap();
+
+        assert_eq!(
+            open_path_event_for_path(workspace.clone()).unwrap(),
+            OpenPathEvent::Workspace(OpenWorkspaceEvent {
+                path: canonical_workspace.to_string_lossy().to_string()
+            })
+        );
+        assert_eq!(
+            open_path_event_for_path(file).unwrap(),
+            OpenPathEvent::File(OpenFileEvent {
+                workspace_root: src.canonicalize().unwrap().to_string_lossy().to_string(),
+                path: "main.rs".to_string()
+            })
+        );
     }
 
     #[tokio::test]

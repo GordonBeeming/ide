@@ -4,6 +4,11 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$ROOT_DIR"
 
+export PATH="$HOME/.local/bin:$HOME/Library/pnpm:$HOME/.cargo/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:${PATH:-}"
+if ! command -v npm >/dev/null 2>&1 && command -v fnm >/dev/null 2>&1; then
+  eval "$(fnm env --shell bash)"
+fi
+
 OPEN_PATH="${1:-}"
 if [ -n "$OPEN_PATH" ]; then
   if [ ! -e "$OPEN_PATH" ]; then
