@@ -291,6 +291,7 @@ describe("App shell interactions", () => {
     render(<App />);
 
     expect(await treeButton("README.md")).toBeInTheDocument();
+    expect(document.querySelector(".app-shell")).toHaveAttribute("data-ide-theme", "light");
     expect(screen.getByText("No file selected").closest(".editor-region")).toHaveClass(
       "editor-region--light",
     );
@@ -306,6 +307,7 @@ describe("App shell interactions", () => {
     render(<App />);
 
     expect(await treeButton("README.md")).toBeInTheDocument();
+    expect(document.querySelector(".app-shell")).toHaveAttribute("data-ide-theme", "dark");
     expect(screen.getByText("No file selected").closest(".editor-region")).toHaveClass(
       "editor-region--dark",
     );

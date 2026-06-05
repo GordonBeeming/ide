@@ -38,6 +38,7 @@
 
 .app-shell,
 .app-shell--light,
+.app-shell[data-ide-theme="light"],
 :root[data-ide-theme="light"] {
   color-scheme: light;
   --bg: oklch(96% 0.006 230);
@@ -55,6 +56,7 @@
 }
 
 .app-shell--dark,
+.app-shell[data-ide-theme="dark"],
 :root[data-ide-theme="dark"] {
   color-scheme: dark;
   --bg: oklch(15% 0.012 230);
@@ -511,6 +513,24 @@ button {
   overflow: hidden;
   grid-template-rows: 45px minmax(0, 1fr) 27px;
   background: var(--editor-bg);
+}
+
+.app-shell[data-ide-theme="light"] .workbench,
+.app-shell[data-ide-theme="light"] .editor-region,
+.app-shell[data-ide-theme="light"] .editor-host,
+.app-shell[data-ide-theme="light"] .editor-host .cm-editor,
+.app-shell[data-ide-theme="light"] .editor-host .cm-scroller {
+  background: oklch(96% 0.006 230);
+  color: oklch(18% 0.02 230);
+}
+
+.app-shell[data-ide-theme="dark"] .workbench,
+.app-shell[data-ide-theme="dark"] .editor-region,
+.app-shell[data-ide-theme="dark"] .editor-host,
+.app-shell[data-ide-theme="dark"] .editor-host .cm-editor,
+.app-shell[data-ide-theme="dark"] .editor-host .cm-scroller {
+  background: oklch(15% 0.012 230);
+  color: oklch(93% 0.01 230);
 }
 
 .topbar,

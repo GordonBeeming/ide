@@ -172,14 +172,33 @@ async function assertTheme(page, expectedScheme) {
     return {
       appShell: getComputedStyle(appShell).backgroundColor,
       appShellClasses: [...appShell.classList],
+      appShellTheme: appShell.dataset.ideTheme,
       documentTheme: document.documentElement.dataset.ideTheme,
       sidebar: getComputedStyle(sidebar).backgroundColor,
       topbar: getComputedStyle(topbar).backgroundColor,
       workbench: getComputedStyle(workbench).backgroundColor,
       editorRegion: getComputedStyle(editorRegion).backgroundColor,
       editorRegionClasses: [...editorRegion.classList],
+      editorPaintedCenter: editorPaintedCenterBackground(editorRegion),
       cmScroller: cmScroller ? getComputedStyle(cmScroller).backgroundColor : undefined,
     };
+
+    function editorPaintedCenterBackground(editorRegion) {
+      const rect = editorRegion.getBoundingClientRect();
+      let current = document.elementFromPoint(
+        rect.left + rect.width / 2,
+        rect.top + rect.height / 2,
+      );
+
+      while (current) {
+        const background = getComputedStyle(current).backgroundColor;
+        if (background !== "rgba(0, 0, 0, 0)") return background;
+        if (current === editorRegion) break;
+        current = current.parentElement;
+      }
+
+      return getComputedStyle(editorRegion).backgroundColor;
+    }
   });
 
   if (!colors.appShellClasses.includes(`app-shell--${expectedScheme}`)) {
@@ -190,6 +209,11 @@ async function assertTheme(page, expectedScheme) {
   if (colors.documentTheme !== expectedScheme) {
     throw new Error(
       `${expectedScheme} document theme mismatch: ${colors.documentTheme ?? "unset"}`,
+    );
+  }
+  if (colors.appShellTheme !== expectedScheme) {
+    throw new Error(
+      `${expectedScheme} shell theme mismatch: ${colors.appShellTheme ?? "unset"}`,
     );
   }
   if (!colors.editorRegionClasses.includes(`editor-region--${expectedScheme}`)) {
@@ -205,6 +229,11 @@ async function assertTheme(page, expectedScheme) {
   if (colors.workbench !== colors.editorRegion) {
     throw new Error(
       `${expectedScheme} workbench mismatch: workbench=${colors.workbench}, editor=${colors.editorRegion}`,
+    );
+  }
+  if (colors.editorPaintedCenter !== colors.editorRegion) {
+    throw new Error(
+      `${expectedScheme} visible editor mismatch: painted=${colors.editorPaintedCenter}, editor=${colors.editorRegion}`,
     );
   }
   if (colors.cmScroller && colors.cmScroller !== colors.editorRegion) {

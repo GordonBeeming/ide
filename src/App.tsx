@@ -2123,7 +2123,10 @@ export default function App() {
   const SidebarIcon = sidebarCollapsed ? PanelLeftOpen : PanelLeftClose;
 
   return (
-    <main className={appShellClass(sidebarCollapsed, prefersDark)}>
+    <main
+      className={appShellClass(sidebarCollapsed, prefersDark)}
+      data-ide-theme={prefersDark ? "dark" : "light"}
+    >
       <aside className="sidebar" aria-hidden={sidebarCollapsed}>
         <div className="sidebar__header">
           <div className="sidebar__title">
