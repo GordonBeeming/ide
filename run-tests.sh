@@ -20,6 +20,7 @@ fi
 
 npm test
 npm run build
+npm run budget
 npm run smoke
 npm audit --audit-level=moderate
 
