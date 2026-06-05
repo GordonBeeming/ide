@@ -72,6 +72,8 @@ On macOS, install the Finder Quick Action for direct file/folder opening:
 
 After installation, use Finder's right-click menu: Quick Actions > Open in Ide. Recent folders and files are stored in the OS app-data location and exposed through the native File menu, not as in-app sidebar content.
 
+The Finder Quick Action generator is covered by `npm run finder:check`, which installs into a temporary directory and validates the generated service, file/folder UTI coverage, and loopback handoff script without touching your real Finder services.
+
 ## Requirements
 
 - Node.js 24 or newer
@@ -107,7 +109,7 @@ The loopback browser API is read-friendly for local terminal/browser views. Muta
 
 `npm audit --audit-level=moderate` currently reports no known npm vulnerabilities.
 
-`run-tests.sh` runs the npm audit automatically. It also checks production bundle budgets for startup JavaScript, startup CSS, and the lazy editor chunk before running a browser smoke test against the real React/CSS app shell in light and dark mode. The smoke test uses local Chrome, Chromium, or Edge through `playwright-core`; set `IDE_SMOKE_BROWSER=/path/to/browser` if it cannot find a browser automatically.
+`run-tests.sh` runs the npm audit automatically. It also validates the Finder Quick Action generator, checks production bundle budgets for startup JavaScript, startup CSS, and the lazy editor chunk, then runs a browser smoke test against the real React/CSS app shell in light and dark mode. The smoke test uses local Chrome, Chromium, or Edge through `playwright-core`; set `IDE_SMOKE_BROWSER=/path/to/browser` if it cannot find a browser automatically.
 
 `run-tests.sh` also runs `cargo audit --deny warnings` when `cargo-audit` is installed and prints an explicit warning when that tool is missing. Current transitive Rust advisory warnings are reviewed in `src-tauri/.cargo/audit.toml`; new advisory warnings fail the local gate until reviewed.
 

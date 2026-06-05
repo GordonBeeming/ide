@@ -19,6 +19,7 @@ if [ ! -d node_modules ]; then
 fi
 
 npm test
+npm run finder:check
 npm run build
 npm run budget
 npm run smoke

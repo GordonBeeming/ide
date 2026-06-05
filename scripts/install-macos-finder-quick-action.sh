@@ -4,10 +4,11 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RUN_SH="$ROOT_DIR/run.sh"
 SERVICE_NAME="Open in Ide"
-SERVICE_ROOT="$HOME/Library/Services/$SERVICE_NAME.workflow"
+SERVICE_ROOT="${IDE_SERVICE_ROOT:-$HOME/Library/Services/$SERVICE_NAME.workflow}"
 SERVICE_DIR="$SERVICE_ROOT/Contents"
-SUPPORT_DIR="$HOME/Library/Application Support/Ide"
+SUPPORT_DIR="${IDE_SUPPORT_DIR:-$HOME/Library/Application Support/Ide}"
 RUNNER="$SUPPORT_DIR/open-from-finder.sh"
+SERVICES_DIR="$(dirname "$SERVICE_ROOT")"
 
 if [ ! -x "$RUN_SH" ]; then
   echo "run.sh must be executable before installing the Finder Quick Action." >&2
@@ -389,8 +390,10 @@ exit 1</string>
 EOF
 
 touch "$SERVICE_ROOT"
-touch "$HOME/Library/Services"
-/System/Library/CoreServices/pbs -flush >/dev/null 2>&1 || true
+if [ -z "${IDE_SKIP_SERVICE_REFRESH:-}" ]; then
+  touch "$SERVICES_DIR"
+  /System/Library/CoreServices/pbs -flush >/dev/null 2>&1 || true
+fi
 
 echo "Installed Finder Quick Action: $SERVICE_NAME"
 echo "Use Finder > right-click a file or folder > Quick Actions > $SERVICE_NAME."
