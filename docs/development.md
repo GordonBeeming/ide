@@ -21,6 +21,8 @@ Folder targets become the workspace root. File targets open their parent folder 
 
 When a file or folder target is supplied and an Ide instance is already reachable on the loopback API, `run.sh` authenticates with the per-run bearer token and hands the target to `/api/open-path` instead of starting another dev instance.
 
+When no target is supplied and an Ide instance is already reachable, `run.sh` tries to activate the existing macOS app and exits without starting a duplicate dev process. This avoids the Vite port and Cargo build-lock failures that happen when two dev instances are started from the same checkout.
+
 Install the macOS Finder Quick Action:
 
 ```bash

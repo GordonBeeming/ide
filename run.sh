@@ -49,7 +49,23 @@ handoff_to_running_app() {
   return 1
 }
 
+running_app_reachable() {
+  curl -fsS --max-time 1 "http://127.0.0.1:17877/api/codex-mcp" >/dev/null 2>&1
+}
+
+activate_running_app() {
+  if command -v osascript >/dev/null 2>&1; then
+    osascript -e 'tell application "Ide" to activate' >/dev/null 2>&1 || true
+  fi
+}
+
 if [ -n "$OPEN_PATH" ] && handoff_to_running_app "$OPEN_PATH"; then
+  exit 0
+fi
+
+if [ -z "$OPEN_PATH" ] && running_app_reachable; then
+  activate_running_app
+  echo "Ide is already running; not starting a duplicate dev instance."
   exit 0
 fi
 

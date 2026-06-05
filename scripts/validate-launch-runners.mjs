@@ -22,8 +22,13 @@ try {
   assertIncludes(runScript, "-X POST");
   assertIncludes(runScript, "$api_base/api/open-path");
   assertIncludes(runScript, 'if [ -n "$OPEN_PATH" ] && handoff_to_running_app "$OPEN_PATH"; then');
+  assertIncludes(runScript, "running_app_reachable()");
+  assertIncludes(runScript, "activate_running_app()");
+  assertIncludes(runScript, 'if [ -z "$OPEN_PATH" ] && running_app_reachable; then');
+  assertIncludes(runScript, "Ide is already running; not starting a duplicate dev instance.");
   assertIncludes(runScript, "ensure_dev_port_available");
   assertOrdered(runScript, "handoff_to_running_app \"$OPEN_PATH\"", "ensure_dev_port_available");
+  assertOrdered(runScript, "running_app_reachable", "ensure_dev_port_available");
 
   const serviceRoot = path.join(tempDir, "Services", "Open in Ide.workflow");
   const supportDir = path.join(tempDir, "Support", "Ide");
