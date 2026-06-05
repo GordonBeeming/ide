@@ -539,6 +539,37 @@ describe("App shell interactions", () => {
     );
   });
 
+  it("restores readable saved tabs when another saved tab fails", async () => {
+    tauriMocks.getUiState.mockResolvedValueOnce({
+      view: {
+        showDotfiles: false,
+        showGeneratedInternal: false,
+      },
+      workspace: {
+        expandedFolders: ["src"],
+        openFiles: ["README.md", "src/App.tsx"],
+        activeFile: "src/App.tsx",
+        selectedPath: "src/App.tsx",
+      },
+    });
+    tauriMocks.readFile.mockImplementation(async (path: string) => {
+      if (path === "README.md") throw new Error("readme went away");
+      if (path === "src/App.tsx") return "export function App() {}";
+      return "";
+    });
+
+    render(<App />);
+
+    expect(await screen.findByLabelText("Editor src/App.tsx")).toHaveValue(
+      "export function App() {}",
+    );
+    expect(await findTab("src/App.tsx")).not.toHaveClass("tab--temp");
+    expect(screen.queryByRole("tab", { name: /README\.md/ })).not.toBeInTheDocument();
+    expect(
+      screen.getByText("Unable to restore README.md: Error: readme went away"),
+    ).toBeInTheDocument();
+  });
+
   it("reloads the tree with dotfiles when the native menu toggle is used", async () => {
     (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
     tauriMocks.listFiles

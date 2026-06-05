@@ -722,17 +722,49 @@ export default function App() {
     Promise.all(
       restorePaths.map(async (path) => {
         const entry = entriesByPath.get(path)!;
-        return {
-          path,
-          contents: await readFile(path),
-          dirty: false,
-          modifiedMs: entry.modifiedMs,
-          pinned: true,
-        };
+        try {
+          return {
+            tab: {
+              path,
+              contents: await readFile(path),
+              dirty: false,
+              modifiedMs: entry.modifiedMs,
+              pinned: true,
+            },
+          };
+        } catch (reason) {
+          return {
+            failure: {
+              path,
+              reason: String(reason),
+            },
+          };
+        }
       }),
     )
-      .then((restoredTabs) => {
+      .then((restoreResults) => {
         if (disposed) return;
+        const restoredTabs: EditorTab[] = [];
+        const failures: OpenFailure[] = [];
+        for (const result of restoreResults) {
+          if (result.tab) restoredTabs.push(result.tab);
+          if (result.failure) failures.push(result.failure);
+        }
+
+        if (failures.length > 0) {
+          setError(
+            failures.length === 1
+              ? `Unable to restore ${failures[0].path}: ${failures[0].reason}`
+              : `Unable to restore ${failures.length} saved tabs: ${failures
+                  .map((failure) => failure.path)
+                  .join(", ")}`,
+          );
+        }
+
+        if (restoredTabs.length === 0) {
+          return;
+        }
+
         const restoredPaths = new Set(restoredTabs.map((tab) => tab.path));
         setOpenFiles((current) => {
           const currentPaths = new Set(current.map((tab) => tab.path));
