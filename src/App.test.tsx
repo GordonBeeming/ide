@@ -576,6 +576,66 @@ describe("App shell interactions", () => {
     expect(tauriMocks.writeFile).not.toHaveBeenCalled();
   });
 
+  it("saves and closes a dirty tab from the close confirmation", async () => {
+    render(<App />);
+
+    fireEvent.click(await treeButton("README.md"));
+    const tab = await findTab("README.md");
+    fireEvent.change(await screen.findByLabelText("Editor README.md"), {
+      target: { value: "changed readme" },
+    });
+
+    fireEvent(
+      tab,
+      new MouseEvent("auxclick", {
+        bubbles: true,
+        cancelable: true,
+        button: 1,
+      }),
+    );
+    fireEvent.click(await screen.findByText("Save"));
+
+    await waitFor(() =>
+      expect(tauriMocks.writeFile).toHaveBeenCalledWith(
+        "README.md",
+        "changed readme",
+        101,
+      ),
+    );
+    await waitFor(() => expect(tabButton("README.md")).toBeUndefined());
+    expect(
+      screen.queryByRole("alertdialog", { name: "Close modified file?" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("keeps the dirty close confirmation open when save fails", async () => {
+    tauriMocks.writeFile.mockRejectedValueOnce(new Error("disk full"));
+    render(<App />);
+
+    fireEvent.click(await treeButton("README.md"));
+    const tab = await findTab("README.md");
+    fireEvent.change(await screen.findByLabelText("Editor README.md"), {
+      target: { value: "changed readme" },
+    });
+
+    fireEvent(
+      tab,
+      new MouseEvent("auxclick", {
+        bubbles: true,
+        cancelable: true,
+        button: 1,
+      }),
+    );
+    fireEvent.click(await screen.findByText("Save"));
+
+    await screen.findByText("Error: disk full");
+    expect(tabButton("README.md")).toBeTruthy();
+    expect(
+      screen.getByRole("alertdialog", { name: "Close modified file?" }),
+    ).toBeInTheDocument();
+    expect(document.querySelectorAll(".dirty-dot")).toHaveLength(1);
+  });
+
   it("switches open tabs with numbered keyboard shortcuts", async () => {
     render(<App />);
 

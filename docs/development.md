@@ -69,7 +69,7 @@ The app is intentionally split into a small always-loaded shell and lazy-loaded 
 - `src/quickOpen.ts`: tested quick-open file matching, ranking, and keyboard selection rules.
 - `src/editorNavigation.ts`: tested line clamping for search-result reveal behavior.
 - `src/currentFileSearch.ts`: tested current-file search over loaded and unsaved editor contents.
-- `src/App.test.tsx`: rendered shell coverage for non-text file selection, collapsed search controls, preview-tab lifecycle, keyboard tab switching, current-file search, new-file/folder creation, file rename/delete, reload-from-disk behavior, stale-save handling, Save All success/failure behavior, active-file-safe agent selection context, and content search result/error behavior.
+- `src/App.test.tsx`: rendered shell coverage for non-text file selection, collapsed search controls, preview-tab lifecycle, dirty-tab save-and-close prompts, keyboard tab switching, current-file search, new-file/folder creation, file rename/delete, reload-from-disk behavior, stale-save handling, Save All success/failure behavior, active-file-safe agent selection context, and content search result/error behavior.
 - `src/tauri.test.ts`: hosted browser transport coverage for bearer-token file/folder creation, file rename/delete/writes, stale-save tokens, and loopback API base selection.
 - `scripts/bundle-budget.mjs`: production bundle budget coverage for startup assets and the lazy editor chunk.
 - `scripts/smoke-test.mjs`: browser smoke coverage for shell/editor theme alignment and core UI flows that are hard to trust from jsdom alone.
