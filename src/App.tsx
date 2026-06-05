@@ -107,6 +107,7 @@ import {
   setLspStatusHandler,
   workspacePathToFileUri,
 } from "./lsp";
+import { unlistenNativeCallbacks, type NativeUnlisten } from "./nativeEvents";
 import { darkSchemeQuery, systemPrefersDark } from "./systemTheme";
 import {
   addPreviewTab,
@@ -1427,7 +1428,10 @@ export default function App() {
     if (!isNativeTauri()) return;
 
     let disposed = false;
-    let unlistenCallbacks: Array<() => void> = [];
+    let unlistenCallbacks: NativeUnlisten[] = [];
+    const reportUnlistenError = (message: string) => {
+      console.warn(message);
+    };
     Promise.all([
       listen<{ path: string }>("menu://open-workspace", (event) => {
         handleOpenLaunchRequest({
@@ -1518,7 +1522,7 @@ export default function App() {
     ])
       .then((callbacks) => {
         if (disposed) {
-          callbacks.forEach((unlisten) => unlisten());
+          unlistenNativeCallbacks(callbacks, reportUnlistenError);
           return;
         }
         unlistenCallbacks = callbacks;
@@ -1537,7 +1541,7 @@ export default function App() {
 
     return () => {
       disposed = true;
-      unlistenCallbacks.forEach((unlisten) => unlisten());
+      unlistenNativeCallbacks(unlistenCallbacks, reportUnlistenError);
     };
   }, [
     handleOpenLaunchRequest,
