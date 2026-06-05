@@ -4,6 +4,7 @@ import {
   adjacentTabPath,
   dirtyTabSummary,
   nextActivePathAfterClose,
+  numberedTabPath,
   pinTab,
   tabCloseRequiresConfirmation,
   updateTabContents,
@@ -102,5 +103,30 @@ describe("tab state", () => {
       "b.ts",
     );
     expect(adjacentTabPath([], undefined, 1)).toBeUndefined();
+  });
+
+  it("maps numbered shortcuts to tabs and reserves 9 for the last tab", () => {
+    const tabs = [
+      tab("1.ts"),
+      tab("2.ts"),
+      tab("3.ts"),
+      tab("4.ts"),
+      tab("5.ts"),
+      tab("6.ts"),
+      tab("7.ts"),
+      tab("8.ts"),
+      tab("9.ts"),
+      tab("10.ts"),
+    ];
+
+    expect(numberedTabPath(tabs, "1")).toBe("1.ts");
+    expect(numberedTabPath(tabs, "8")).toBe("8.ts");
+    expect(numberedTabPath(tabs, "9")).toBe("10.ts");
+  });
+
+  it("ignores invalid numbered shortcut keys", () => {
+    expect(numberedTabPath([tab("a.ts")], "0")).toBeUndefined();
+    expect(numberedTabPath([tab("a.ts")], "a")).toBeUndefined();
+    expect(numberedTabPath([tab("a.ts")], "10")).toBeUndefined();
   });
 });

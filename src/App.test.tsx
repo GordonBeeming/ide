@@ -576,6 +576,31 @@ describe("App shell interactions", () => {
     expect(tauriMocks.writeFile).not.toHaveBeenCalled();
   });
 
+  it("switches open tabs with numbered keyboard shortcuts", async () => {
+    render(<App />);
+
+    fireEvent.doubleClick(await treeButton("README.md"));
+    await findTab("README.md");
+    fireEvent.click(await treeButton("src"));
+    fireEvent.doubleClick(await treeButton("App.tsx"));
+    await findTab("src/App.tsx");
+    expect(await screen.findByLabelText("Editor src/App.tsx")).toHaveValue(
+      "export function App() {}",
+    );
+
+    fireEvent.keyDown(window, { key: "1", metaKey: true });
+
+    expect(screen.getByLabelText("Editor README.md")).toHaveValue("readme");
+    expect(tabButton("README.md")).toHaveClass("tab--active");
+
+    fireEvent.keyDown(window, { key: "9", metaKey: true });
+
+    expect(screen.getByLabelText("Editor src/App.tsx")).toHaveValue(
+      "export function App() {}",
+    );
+    expect(tabButton("src/App.tsx")).toHaveClass("tab--active");
+  });
+
   it("saves every dirty tab and clears dirty indicators", async () => {
     render(<App />);
 

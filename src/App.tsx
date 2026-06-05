@@ -80,6 +80,7 @@ import {
   adjacentTabPath,
   dirtyTabSummary,
   nextActivePathAfterClose,
+  numberedTabPath,
   pinTab,
   tabCloseRequiresConfirmation,
   updateTabContents,
@@ -1194,7 +1195,16 @@ export default function App() {
 
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
+      const numberedPath =
+        (event.metaKey || event.ctrlKey) && !event.shiftKey
+          ? numberedTabPath(openFiles, event.key)
+          : undefined;
       if (
+        numberedPath
+      ) {
+        event.preventDefault();
+        setActivePath(numberedPath);
+      } else if (
         (event.metaKey || event.ctrlKey) &&
         event.shiftKey &&
         event.key.toLowerCase() === "s"
@@ -1276,6 +1286,7 @@ export default function App() {
     openRenameDialog,
     openNewFolderDialog,
     openNewFileDialog,
+    openFiles,
     pendingAppClose,
     pendingClosePath,
     pendingDeletePath,

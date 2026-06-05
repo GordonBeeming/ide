@@ -62,3 +62,13 @@ export function adjacentTabPath(
   const currentIndex = activeIndex >= 0 ? activeIndex : 0;
   return tabs[(currentIndex + direction + tabs.length) % tabs.length]?.path;
 }
+
+export function numberedTabPath(
+  tabs: EditorTab[],
+  key: string,
+): string | undefined {
+  if (!/^[1-9]$/.test(key)) return undefined;
+  const number = Number.parseInt(key, 10);
+  const index = number === 9 ? tabs.length - 1 : number - 1;
+  return tabs[index]?.path;
+}

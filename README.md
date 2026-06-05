@@ -20,7 +20,7 @@ Implemented:
 - Collapsed file-name filtering and bounded text search across the current workspace.
 - Collapsed current-file search over loaded and unsaved editor contents.
 - Keyboard quick-open palette for opening files by path, including arrow-key result selection.
-- Keyboard tab navigation and close commands.
+- Keyboard tab navigation, numbered tab selection, and close commands.
 - Dirty-file prompts before closing tabs or the native app window.
 - Reload active files from disk, with confirmation before discarding unsaved edits.
 - New-file creation inside the current workspace.
