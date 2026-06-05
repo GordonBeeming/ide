@@ -21,6 +21,7 @@ Implemented:
 - Collapsed current-file search over loaded and unsaved editor contents.
 - Keyboard quick-open palette for opening files by path, including arrow-key result selection.
 - Keyboard tab navigation, numbered tab selection, and close commands.
+- Native Search menu with Go to File, Find in File, and Find in Files actions.
 - Native Navigate menu actions for LSP-backed Go to Definition and Find References.
 - Dirty-file prompts before closing tabs or the native app window.
 - Reload active files from disk, with confirmation before discarding unsaved edits.

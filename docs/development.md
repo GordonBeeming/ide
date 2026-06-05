@@ -76,7 +76,7 @@ The app is intentionally split into a small always-loaded shell and lazy-loaded 
 - `src/quickOpen.ts`: tested quick-open file matching, ranking, and keyboard selection rules.
 - `src/editorNavigation.ts`: tested line clamping for search-result reveal behavior.
 - `src/currentFileSearch.ts`: tested current-file search over loaded and unsaved editor contents.
-- `src/App.test.tsx`: rendered shell coverage for non-text file selection, collapsed search controls, preview-tab lifecycle, dirty-tab save-and-close prompts, native Close Tab/Close All menu handling, keyboard tab switching, current-file search, new-file/folder creation, file/folder rename/delete, reload-from-disk behavior, stale-save handling, Save All success/failure behavior, active-file-safe agent selection context, and content search result/error behavior.
+- `src/App.test.tsx`: rendered shell coverage for non-text file selection, collapsed search controls, preview-tab lifecycle, dirty-tab save-and-close prompts, native Close Tab/Close All/Search menu handling, keyboard tab switching, current-file search, new-file/folder creation, file/folder rename/delete, reload-from-disk behavior, stale-save handling, Save All success/failure behavior, active-file-safe agent selection context, and content search result/error behavior.
 - `src/tauri.test.ts`: hosted browser transport coverage for bearer-token file/folder creation, file rename/delete/writes, stale-save tokens, and loopback API base selection.
 - `scripts/bundle-budget.mjs`: production bundle budget coverage for startup assets and the lazy editor chunk.
 - `scripts/validate-finder-quick-action.mjs`: non-installing QA for the macOS Finder Quick Action service and generated runner.
@@ -172,7 +172,13 @@ The File menu owns:
 - `Close Tab`
 - `Close All`
 
-Menu selections are delivered to the frontend through Tauri events. The frontend reuses the toolbar and keyboard workflow handlers, including dirty-file guards before closing or reloading files and stale-write checks before saving.
+The Search menu owns:
+
+- `Go to File...`
+- `Find in File`
+- `Find in Files`
+
+Menu selections are delivered to the frontend through Tauri events. The frontend reuses the toolbar and keyboard workflow handlers, including dirty-file guards before closing or reloading files, stale-write checks before saving, and collapsed search controls that open only when requested.
 
 ## Editor Workflow
 
@@ -184,6 +190,7 @@ Supported keyboard commands:
 - `Cmd/Ctrl+Shift+W`: close all tabs.
 - `Cmd/Ctrl+B`: toggle the sidebar.
 - `Cmd/Ctrl+F`: open and focus current-file search.
+- `Cmd/Ctrl+Shift+F`: open and focus workspace content search.
 - `Cmd/Ctrl+N`: create a new file.
 - `Cmd/Ctrl+P`: open the quick-open palette.
 - `F2`: rename the selected file or folder.

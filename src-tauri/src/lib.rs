@@ -701,6 +701,21 @@ pub fn run() {
                 return;
             }
 
+            if id == "quick_open" {
+                let _ = app.emit("menu://quick-open", ());
+                return;
+            }
+
+            if id == "find_in_file" {
+                let _ = app.emit("menu://find-in-file", ());
+                return;
+            }
+
+            if id == "find_in_files" {
+                let _ = app.emit("menu://find-in-files", ());
+                return;
+            }
+
             if let Some(index) = id.strip_prefix("recent_workspace:") {
                 let Ok(index) = index.parse::<usize>() else {
                     return;
@@ -980,9 +995,28 @@ fn rebuild_app_menu(app: &tauri::AppHandle, state: &AppState) -> Result<(), Comm
         .item(&find_references)
         .build()
         .map_err(|error| CommandError::Recent(error.to_string()))?;
+    let quick_open = MenuItemBuilder::with_id("quick_open", "Go to File...")
+        .accelerator("CmdOrCtrl+P")
+        .build(app)
+        .map_err(|error| CommandError::Recent(error.to_string()))?;
+    let find_in_file = MenuItemBuilder::with_id("find_in_file", "Find in File")
+        .accelerator("CmdOrCtrl+F")
+        .build(app)
+        .map_err(|error| CommandError::Recent(error.to_string()))?;
+    let find_in_files = MenuItemBuilder::with_id("find_in_files", "Find in Files")
+        .accelerator("CmdOrCtrl+Shift+F")
+        .build(app)
+        .map_err(|error| CommandError::Recent(error.to_string()))?;
+    let search_menu = SubmenuBuilder::new(app, "Search")
+        .item(&quick_open)
+        .item(&find_in_file)
+        .item(&find_in_files)
+        .build()
+        .map_err(|error| CommandError::Recent(error.to_string()))?;
     let menu = MenuBuilder::new(app)
         .item(&file_menu)
         .item(&edit_menu)
+        .item(&search_menu)
         .item(&navigate_menu)
         .item(&view_menu)
         .build()

@@ -950,6 +950,23 @@ export default function App() {
     [activeFile],
   );
 
+  const openQuickOpen = useCallback(() => {
+    setQuickOpenVisible(true);
+  }, []);
+
+  const openCurrentFileFind = useCallback(() => {
+    if (!activeFile) {
+      setStatus("Find in file requires an open file");
+      return;
+    }
+
+    setCurrentFindOpen(true);
+  }, [activeFile]);
+
+  const openWorkspaceSearch = useCallback(() => {
+    setActiveSidebarSearch("content");
+  }, []);
+
   const cancelReloadActiveFile = useCallback(() => {
     setPendingReloadPath(undefined);
   }, []);
@@ -1178,6 +1195,15 @@ export default function App() {
       listen("menu://find-references", () => {
         requestEditorCommand("findReferences");
       }),
+      listen("menu://quick-open", () => {
+        openQuickOpen();
+      }),
+      listen("menu://find-in-file", () => {
+        openCurrentFileFind();
+      }),
+      listen("menu://find-in-files", () => {
+        openWorkspaceSearch();
+      }),
       listen<string>("app://error", (event) => {
         setError(event.payload);
       }),
@@ -1224,7 +1250,10 @@ export default function App() {
     openFileFromWorkspace,
     openNewFileDialog,
     openNewFolderDialog,
+    openCurrentFileFind,
+    openQuickOpen,
     openRenameDialog,
+    openWorkspaceSearch,
     openWorkspacePath,
     requestCloseActiveFile,
     requestCloseAllFiles,
@@ -1540,12 +1569,17 @@ export default function App() {
         activateAdjacentTab(1);
       } else if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "p") {
         event.preventDefault();
-        setQuickOpenVisible(true);
+        openQuickOpen();
+      } else if (
+        (event.metaKey || event.ctrlKey) &&
+        event.shiftKey &&
+        event.key.toLowerCase() === "f"
+      ) {
+        event.preventDefault();
+        openWorkspaceSearch();
       } else if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "f") {
         event.preventDefault();
-        if (activeFile) {
-          setCurrentFindOpen(true);
-        }
+        openCurrentFileFind();
       } else if (event.key === "Escape" && newFileDialogOpen) {
         event.preventDefault();
         closeNewFileDialog();
@@ -1595,6 +1629,9 @@ export default function App() {
     openRenameDialog,
     openNewFolderDialog,
     openNewFileDialog,
+    openCurrentFileFind,
+    openQuickOpen,
+    openWorkspaceSearch,
     openFiles,
     pendingAppClose,
     pendingCloseAll,

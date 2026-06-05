@@ -548,6 +548,60 @@ describe("App shell interactions", () => {
     expect(await screen.findByPlaceholderText("Find in file")).toHaveFocus();
   });
 
+  it("opens quick open and search fields from the native Search menu", async () => {
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    render(<App />);
+
+    expect(await treeButton("README.md")).toBeInTheDocument();
+    await waitFor(() => expect(eventMocks.listeners.has("menu://quick-open")).toBe(true));
+    await waitFor(() =>
+      expect(eventMocks.listeners.has("menu://find-in-files")).toBe(true),
+    );
+
+    act(() => {
+      eventMocks.listeners.get("menu://quick-open")?.({ payload: undefined });
+    });
+    expect(screen.getByRole("dialog", { name: "Quick open" })).toBeInTheDocument();
+    fireEvent.keyDown(screen.getByPlaceholderText("Open file"), { key: "Escape" });
+
+    act(() => {
+      eventMocks.listeners.get("menu://find-in-files")?.({ payload: undefined });
+    });
+    expect(await screen.findByPlaceholderText("Search contents")).toHaveFocus();
+
+    fireEvent.click(await treeButton("README.md"));
+    await findTab("README.md");
+    await waitFor(() => expect(eventMocks.listeners.has("menu://find-in-file")).toBe(true));
+    act(() => {
+      eventMocks.listeners.get("menu://find-in-file")?.({ payload: undefined });
+    });
+    expect(await screen.findByPlaceholderText("Find in file")).toHaveFocus();
+  });
+
+  it("reports when native Find in File is used without an active file", async () => {
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    render(<App />);
+
+    expect(await treeButton("README.md")).toBeInTheDocument();
+    await waitFor(() => expect(eventMocks.listeners.has("menu://find-in-file")).toBe(true));
+
+    act(() => {
+      eventMocks.listeners.get("menu://find-in-file")?.({ payload: undefined });
+    });
+
+    expect(await screen.findByText("Find in file requires an open file")).toBeInTheDocument();
+  });
+
+  it("opens workspace content search from the keyboard", async () => {
+    render(<App />);
+
+    expect(await treeButton("README.md")).toBeInTheDocument();
+
+    fireEvent.keyDown(window, { key: "f", metaKey: true, shiftKey: true });
+
+    expect(await screen.findByPlaceholderText("Search contents")).toHaveFocus();
+  });
+
   it("disables save toolbar actions until there are unsaved edits", async () => {
     render(<App />);
 
