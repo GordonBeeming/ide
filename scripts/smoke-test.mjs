@@ -495,6 +495,26 @@ async function runScenario(browser, url, colorScheme) {
   await page.keyboard.press("Escape");
   await currentFindInput.waitFor({ state: "hidden" });
 
+  await page.getByRole("treeitem", { name: "image.png" }).click();
+  await page.getByText("Non-text file selected").waitFor();
+  await page.getByText("image.png selected").waitFor();
+  await page.getByText("image.png is selected but is not editable as text.").waitFor();
+  await page.getByText("Smoke workspace").waitFor({ state: "hidden" });
+
+  const imageSelected = await page
+    .getByRole("treeitem", { name: "image.png" })
+    .getAttribute("aria-selected");
+  if (imageSelected !== "true") {
+    throw new Error(`non-text tree item should stay selected, got ${imageSelected ?? "unset"}`);
+  }
+
+  const editorCountAfterNonTextSelection = await page.locator(".cm-content").count();
+  if (editorCountAfterNonTextSelection !== 0) {
+    throw new Error(
+      `non-text selection left ${editorCountAfterNonTextSelection} editor instance(s) mounted`,
+    );
+  }
+
   const saveDisabled = await page
     .locator('button[title="Save"]')
     .evaluate((button) => button.disabled);
