@@ -473,6 +473,38 @@ describe("App shell interactions", () => {
     expect(await screen.findByPlaceholderText("Find in file")).toHaveFocus();
   });
 
+  it("disables save toolbar actions until there are unsaved edits", async () => {
+    render(<App />);
+
+    expect(await treeButton("README.md")).toBeInTheDocument();
+    expect(screen.getByTitle("Save")).toBeDisabled();
+    expect(screen.getByTitle("Save all")).toBeDisabled();
+
+    fireEvent.click(await treeButton("README.md"));
+    await findTab("README.md");
+    expect(screen.getByTitle("Save")).toBeDisabled();
+    expect(screen.getByTitle("Save all")).toBeDisabled();
+
+    fireEvent.change(await screen.findByLabelText("Editor README.md"), {
+      target: { value: "changed readme" },
+    });
+
+    expect(screen.getByTitle("Save")).toBeEnabled();
+    expect(screen.getByTitle("Save all")).toBeEnabled();
+  });
+
+  it("does not write a clean active file when save is triggered from the keyboard", async () => {
+    render(<App />);
+
+    fireEvent.click(await treeButton("README.md"));
+    await findTab("README.md");
+
+    fireEvent.keyDown(window, { key: "s", metaKey: true });
+
+    expect(tauriMocks.writeFile).not.toHaveBeenCalled();
+    expect(await screen.findByText("No unsaved changes")).toBeInTheDocument();
+  });
+
   it("keeps preview tabs temporary until the file is edited", async () => {
     render(<App />);
 

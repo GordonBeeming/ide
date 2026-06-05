@@ -176,6 +176,8 @@ export default function App() {
   const pendingDeleteOpenFile = openFiles.find((file) => file.path === pendingDeletePath);
   const pendingReloadFile = openFiles.find((file) => file.path === pendingReloadPath);
   const dirtyFiles = openFiles.filter((file) => file.dirty);
+  const activeFileIsDirty = Boolean(activeFile?.dirty);
+  const hasDirtyFiles = dirtyFiles.length > 0;
   const selectedEntry = selectedPath
     ? files.find((file) => file.path === selectedPath)
     : undefined;
@@ -725,11 +727,15 @@ export default function App() {
 
   const saveActive = useCallback(async () => {
     if (!activeFile) return;
+    if (!activeFile.dirty) {
+      setStatus("No unsaved changes");
+      return;
+    }
     await saveFile(activeFile);
   }, [activeFile, saveFile]);
 
   const saveAll = useCallback(async () => {
-    if (dirtyFiles.length === 0) {
+    if (!hasDirtyFiles) {
       setStatus("No unsaved files");
       return true;
     }
@@ -740,7 +746,7 @@ export default function App() {
     }
     setStatus(`Saved ${dirtyTabSummary(dirtyFiles)}`);
     return true;
-  }, [dirtyFiles, saveFile]);
+  }, [dirtyFiles, hasDirtyFiles, saveFile]);
 
   const reloadFileFromDisk = useCallback(async (path: string) => {
     setError(undefined);
@@ -1555,10 +1561,20 @@ export default function App() {
                 <Search size={17} />
               </button>
             )}
-            <button className="icon-button" title="Save" onClick={saveActive}>
+            <button
+              className="icon-button"
+              title="Save"
+              onClick={saveActive}
+              disabled={!activeFileIsDirty}
+            >
               <Save size={17} />
             </button>
-            <button className="icon-button" title="Save all" onClick={saveAll}>
+            <button
+              className="icon-button"
+              title="Save all"
+              onClick={saveAll}
+              disabled={!hasDirtyFiles}
+            >
               <SaveAll size={17} />
             </button>
             <button
