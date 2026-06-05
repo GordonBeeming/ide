@@ -3,7 +3,9 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RUN_SH="$ROOT_DIR/run.sh"
-SERVICE_DIR="$HOME/Library/Services/Open in Ide.workflow/Contents"
+SERVICE_NAME="Open in Ide"
+SERVICE_ROOT="$HOME/Library/Services/$SERVICE_NAME.workflow"
+SERVICE_DIR="$SERVICE_ROOT/Contents"
 SUPPORT_DIR="$HOME/Library/Application Support/Ide"
 RUNNER="$SUPPORT_DIR/open-from-finder.sh"
 
@@ -30,6 +32,38 @@ nohup "$RUN_SH" "\$TARGET" > "\$LOG_DIR/finder-open.log" 2>&1 &
 EOF
 chmod 755 "$RUNNER"
 
+cat > "$SERVICE_DIR/Info.plist" <<'EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>NSServices</key>
+  <array>
+    <dict>
+      <key>NSBackgroundColorName</key>
+      <string>background</string>
+      <key>NSMenuItem</key>
+      <dict>
+        <key>default</key>
+        <string>Open in Ide</string>
+      </dict>
+      <key>NSMessage</key>
+      <string>runWorkflowAsService</string>
+      <key>NSRequiredContext</key>
+      <dict>
+        <key>NSApplicationIdentifier</key>
+        <string>com.apple.finder</string>
+      </dict>
+      <key>NSSendFileTypes</key>
+      <array>
+        <string>public.item</string>
+      </array>
+    </dict>
+  </array>
+</dict>
+</plist>
+EOF
+
 cat > "$SERVICE_DIR/document.wflow" <<'EOF'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -51,7 +85,7 @@ cat > "$SERVICE_DIR/document.wflow" <<'EOF'
           <key>Container</key>
           <string>List</string>
           <key>Optional</key>
-          <true/>
+          <false/>
           <key>Types</key>
           <array>
             <string>com.apple.cocoa.path</string>
@@ -61,7 +95,7 @@ cat > "$SERVICE_DIR/document.wflow" <<'EOF'
         <string>2.0.3</string>
         <key>AMApplication</key>
         <array>
-          <string>Automator</string>
+          <string>Finder</string>
         </array>
         <key>AMParameterProperties</key>
         <dict/>
@@ -99,12 +133,12 @@ done</string>
         <key>CFBundleVersion</key>
         <string>2.0.3</string>
         <key>CanShowSelectedItemsWhenRun</key>
-        <false/>
+        <true/>
         <key>CanShowWhenRun</key>
         <true/>
         <key>Category</key>
         <array>
-          <string>AMCategoryUtilities</string>
+          <string>AMCategoryFilesAndFolders</string>
         </array>
         <key>Class Name</key>
         <string>RunShellScriptAction</string>
@@ -124,7 +158,7 @@ done</string>
         <string>80C521D8-1FA7-46C1-937F-0C7D1EA43F08</string>
         <key>UnlocalizedApplications</key>
         <array>
-          <string>Automator</string>
+          <string>Finder</string>
         </array>
         <key>arguments</key>
         <dict>
@@ -168,10 +202,19 @@ done</string>
   <dict/>
   <key>workflowMetaData</key>
   <dict>
+    <key>applicationBundleID</key>
+    <string>com.apple.finder</string>
     <key>applicationBundleIDsByPath</key>
-    <dict/>
+    <dict>
+      <key>/System/Library/CoreServices/Finder.app</key>
+      <string>com.apple.finder</string>
+    </dict>
+    <key>applicationPath</key>
+    <string>/System/Library/CoreServices/Finder.app</string>
     <key>applicationPaths</key>
-    <array/>
+    <array>
+      <string>/System/Library/CoreServices/Finder.app</string>
+    </array>
     <key>inputTypeIdentifier</key>
     <string>com.apple.Automator.fileSystemObject</string>
     <key>outputTypeIdentifier</key>
@@ -179,8 +222,8 @@ done</string>
     <key>presentationMode</key>
     <integer>15</integer>
     <key>processesInput</key>
-    <integer>0</integer>
-    <key>serviceApplicationBundleIdentifier</key>
+    <false/>
+    <key>serviceApplicationBundleID</key>
     <string>com.apple.finder</string>
     <key>serviceApplicationPath</key>
     <string>/System/Library/CoreServices/Finder.app</string>
@@ -189,11 +232,19 @@ done</string>
     <key>serviceOutputTypeIdentifier</key>
     <string>com.apple.Automator.nothing</string>
     <key>serviceProcessesInput</key>
-    <integer>0</integer>
+    <false/>
+    <key>useAutomaticInputType</key>
+    <false/>
+    <key>workflowTypeIdentifier</key>
+    <string>com.apple.Automator.servicesMenu</string>
   </dict>
 </dict>
 </plist>
 EOF
 
-echo "Installed Finder Quick Action: Open in Ide"
-echo "Use Finder > right-click a file or folder > Quick Actions > Open in Ide."
+touch "$SERVICE_ROOT"
+touch "$HOME/Library/Services"
+/System/Library/CoreServices/pbs -flush >/dev/null 2>&1 || true
+
+echo "Installed Finder Quick Action: $SERVICE_NAME"
+echo "Use Finder > right-click a file or folder > Quick Actions > $SERVICE_NAME."
