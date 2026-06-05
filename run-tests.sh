@@ -20,6 +20,7 @@ fi
 
 npm test
 npm run finder:check
+npm run tauri:check
 npm run build
 npm run budget
 npm run smoke

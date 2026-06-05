@@ -47,6 +47,7 @@ npm run build
 npm run budget
 npm test
 npm run finder:check
+npm run tauri:check
 npm run smoke
 npm audit --audit-level=moderate
 cd src-tauri && cargo fmt --check
@@ -60,6 +61,8 @@ npm run tauri:dev
 `npm run budget` checks the production `dist/` output after `npm run build`. Current raw-size limits are 600 KB for startup JavaScript, 80 KB for startup CSS, and 90 KB for the lazy editor chunk. These are deliberately above the current app size, but low enough to catch accidental heavy runtime dependencies.
 
 `npm run finder:check` runs the macOS Finder Quick Action installer against temporary service/support directories, lints the generated workflow on macOS, and checks that the runner uses the authenticated loopback open-path handoff. It does not touch the real `~/Library/Services` directory.
+
+`npm run tauri:check` validates the Tauri bundle metadata that affects native daily-driver behavior. It checks the developer-tool category, file association shape, required common editor extensions, text-only MIME types, duplicate extensions, and rejects obvious binary/media/archive associations.
 
 `npm run smoke` starts Vite on a local ephemeral port, mocks the loopback API, and drives the real app shell through a local Chromium-family browser in light and dark mode. It covers collapsed search controls, command palette execution, workspace filtering, content search, opening a file, clean-save button state, and shell/editor theme alignment for both the empty editor canvas and the loaded CodeMirror canvas. The theme check asserts matching computed colors, expected light/dark luminance, and the actual painted editor center color, then temporarily forces the opposite editor-region theme class to prove the editor background still inherits from the shell. Set `IDE_SMOKE_BROWSER=/path/to/browser` if the script cannot find Chrome, Chromium, or Edge.
 
