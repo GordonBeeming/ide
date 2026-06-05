@@ -243,6 +243,23 @@ describe("App shell interactions", () => {
     expect(screen.queryByText("Workspace load failed")).not.toBeInTheDocument();
   });
 
+  it("opens a launched file even when the workspace scan omitted it", async () => {
+    tauriMocks.getInitialFile.mockResolvedValueOnce("LICENSE");
+    tauriMocks.readFile.mockImplementation(async (path: string) => {
+      if (path === "LICENSE") return "license body";
+      if (path === "README.md") return "readme";
+      if (path === "src/App.tsx") return "export function App() {}";
+      return "";
+    });
+
+    render(<App />);
+
+    expect(await screen.findByLabelText("Editor LICENSE")).toHaveValue("license body");
+    expect(
+      screen.queryByText(/Launch file is not in the current workspace/),
+    ).not.toBeInTheDocument();
+  });
+
   it("keeps first-level folders collapsed until the user opens them", async () => {
     render(<App />);
 

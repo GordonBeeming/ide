@@ -98,6 +98,17 @@ interface RevealTarget {
 
 const skipOpenPattern = /\.(png|jpe?g|gif|webp|ico|pdf|zip|gz|dll|exe|dylib)$/i;
 
+function fileEntryForDirectOpen(path: string): FileEntry {
+  const name = path.split("/").filter(Boolean).at(-1) ?? path;
+  return {
+    path,
+    name,
+    isDir: false,
+    depth: Math.max(0, path.split("/").length - 1),
+    size: 0,
+  };
+}
+
 export default function App() {
   const [workspaceRoot, setWorkspaceRoot] = useState("");
   const [workspaceLoading, setWorkspaceLoading] = useState(true);
@@ -426,13 +437,9 @@ export default function App() {
 
   useEffect(() => {
     if (initialFileOpenedRef.current || !initialFile || workspaceLoading) return;
-    const entry = files.find((candidate) => candidate.path === initialFile);
-    if (!entry) {
-      initialFileOpenedRef.current = true;
-      setError(`Launch file is not in the current workspace: ${initialFile}`);
-      return;
-    }
-
+    const entry =
+      files.find((candidate) => candidate.path === initialFile) ??
+      fileEntryForDirectOpen(initialFile);
     initialFileOpenedRef.current = true;
     openPath(entry, true);
   }, [files, initialFile, openPath, workspaceLoading]);
@@ -859,7 +866,9 @@ export default function App() {
           entries = await refreshFiles();
         }
 
-        const entry = entries.find((candidate) => candidate.path === path);
+        const entry =
+          entries.find((candidate) => candidate.path === path) ??
+          fileEntryForDirectOpen(path);
         if (!entry || entry.isDir) {
           throw new Error(`Recent file is not in the current workspace: ${path}`);
         }
