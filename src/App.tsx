@@ -1,4 +1,5 @@
 import {
+  type KeyboardEvent as ReactKeyboardEvent,
   lazy,
   Suspense,
   useCallback,
@@ -3140,6 +3141,40 @@ function TreeItem({
   const expanded = forceExpanded || expandedFolders.has(node.path);
   const Icon = iconForFile(node.name, node.isDir);
   const isActive = selectedPath === node.path;
+  const handleKeyDown = (event: ReactKeyboardEvent<HTMLButtonElement>) => {
+    const activatesRow =
+      event.key === "Enter" || event.key === " " || event.key === "Spacebar";
+
+    if (activatesRow) {
+      event.preventDefault();
+      onSelect(node.path);
+      if (node.isDir) {
+        onToggleFolder(node.path);
+      } else {
+        onOpen(node, false);
+      }
+      return;
+    }
+
+    if (!node.isDir) return;
+
+    if (event.key === "ArrowRight") {
+      event.preventDefault();
+      onSelect(node.path);
+      if (!expanded) {
+        onToggleFolder(node.path);
+      }
+      return;
+    }
+
+    if (event.key === "ArrowLeft") {
+      event.preventDefault();
+      onSelect(node.path);
+      if (expanded) {
+        onToggleFolder(node.path);
+      }
+    }
+  };
 
   return (
     <div>
@@ -3159,6 +3194,7 @@ function TreeItem({
             onOpen(node, true);
           }
         }}
+        onKeyDown={handleKeyDown}
       >
         {node.isDir ? (
           <ChevronRight

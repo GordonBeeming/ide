@@ -392,6 +392,41 @@ describe("App shell interactions", () => {
     expect(await treeButton("App.tsx")).toBeInTheDocument();
   });
 
+  it("opens files from the tree with Enter as preview tabs", async () => {
+    render(<App />);
+
+    const readmeRow = await treeButton("README.md");
+    fireEvent.keyDown(readmeRow, { key: "Enter" });
+
+    expect(readmeRow).toHaveClass("tree-row--active");
+    const tab = await findTab("README.md");
+    expect(tab).toHaveClass("tab--temp");
+    expect(await screen.findByLabelText("Editor README.md")).toHaveValue("readme");
+  });
+
+  it("toggles folders from the tree with keyboard commands", async () => {
+    render(<App />);
+
+    const tree = await screen.findByLabelText("Workspace files");
+    const srcRow = await treeButton("src");
+    expect(within(tree).queryByText("App.tsx")).not.toBeInTheDocument();
+
+    fireEvent.keyDown(srcRow, { key: "ArrowRight" });
+
+    expect(srcRow).toHaveClass("tree-row--active");
+    expect(await treeButton("App.tsx")).toBeInTheDocument();
+
+    fireEvent.keyDown(srcRow, { key: "ArrowLeft" });
+
+    await waitFor(() =>
+      expect(within(tree).queryByText("App.tsx")).not.toBeInTheDocument(),
+    );
+
+    fireEvent.keyDown(srcRow, { key: " " });
+
+    expect(await treeButton("App.tsx")).toBeInTheDocument();
+  });
+
   it("restores saved view settings, expanded folders, and open files", async () => {
     tauriMocks.getUiState.mockResolvedValueOnce({
       view: {

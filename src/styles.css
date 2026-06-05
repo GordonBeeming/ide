@@ -474,9 +474,15 @@ button {
 }
 
 .tree-row:hover,
+.tree-row:focus-visible,
 .tree-row--active {
   background: var(--accent-weak);
   color: var(--text);
+}
+
+.tree-row:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
 }
 
 .tree-row span:last-child {
