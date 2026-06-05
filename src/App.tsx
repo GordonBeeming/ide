@@ -37,7 +37,10 @@ import {
   diagnosticSeverityLabel,
   sortDiagnostics,
 } from "./diagnostics";
-import { currentFileMatches } from "./currentFileSearch";
+import {
+  currentFileMatches,
+  nextCurrentFileMatchIndex,
+} from "./currentFileSearch";
 import { iconForFile, isKnownBinaryFile } from "./fileTypes";
 import { codexMcpConfigSnippet } from "./integrations";
 import {
@@ -134,6 +137,7 @@ interface TreeNode extends FileEntry {
 interface RevealTarget {
   path: string;
   lineNumber: number;
+  preserveFocus?: boolean;
 }
 
 type SidebarSearchMode = "filter" | "content";
@@ -190,6 +194,7 @@ export default function App() {
   const [activeSidebarSearch, setActiveSidebarSearch] =
     useState<SidebarSearchMode>();
   const [currentFindOpen, setCurrentFindOpen] = useState(false);
+  const [currentFindIndex, setCurrentFindIndex] = useState(-1);
   const [editorCommand, setEditorCommand] = useState<EditorCommandRequest>();
   const [searchResults, setSearchResults] = useState<SearchMatch[]>([]);
   const [searching, setSearching] = useState(false);
@@ -351,6 +356,17 @@ export default function App() {
       setCurrentFindOpen(false);
     }
   }, [activeFile]);
+
+  useEffect(() => {
+    setCurrentFindIndex(-1);
+  }, [activePath, currentFileQuery]);
+
+  useEffect(() => {
+    setCurrentFindIndex((current) => {
+      if (currentFindResults.length === 0) return -1;
+      return current >= currentFindResults.length ? currentFindResults.length - 1 : current;
+    });
+  }, [currentFindResults.length]);
 
   const applyPersistedUiSnapshot = useCallback((snapshot: PersistedUiSnapshot) => {
     persistedWorkspaceRef.current = snapshot.workspace;
@@ -819,10 +835,41 @@ export default function App() {
     setOpenFiles((current) => updateTabContents(current, path, contents));
   }, []);
 
-  const revealCurrentFileMatch = useCallback((match: SearchMatch) => {
+  const revealCurrentFileMatch = useCallback((match: SearchMatch, index?: number) => {
+    if (index !== undefined) setCurrentFindIndex(index);
     setRevealTarget({ path: match.path, lineNumber: match.lineNumber });
     setStatus(`Found ${match.path}:${match.lineNumber}`);
   }, []);
+
+  const revealCurrentFindMatch = useCallback(
+    (direction: 1 | -1) => {
+      if (!activeFile) {
+        setStatus("Find in file requires an open file");
+        return;
+      }
+      if (currentFindResults.length === 0) {
+        setStatus("No matches in file");
+        return;
+      }
+
+      const nextIndex = nextCurrentFileMatchIndex(
+        currentFindIndex,
+        direction,
+        currentFindResults.length,
+      );
+      const match = currentFindResults[nextIndex];
+      setCurrentFindIndex(nextIndex);
+      setRevealTarget({
+        path: match.path,
+        lineNumber: match.lineNumber,
+        preserveFocus: true,
+      });
+      setStatus(
+        `Match ${nextIndex + 1} of ${currentFindResults.length} at ${match.path}:${match.lineNumber}`,
+      );
+    },
+    [activeFile, currentFindIndex, currentFindResults],
+  );
 
   const closeFile = useCallback((path: string) => {
     setOpenFiles((current) => {
@@ -2327,6 +2374,11 @@ export default function App() {
                     }
                   }}
                   onChange={(event) => setCurrentFileQuery(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key !== "Enter") return;
+                    event.preventDefault();
+                    revealCurrentFindMatch(event.shiftKey ? -1 : 1);
+                  }}
                   placeholder="Find in file"
                 />
                 <span>
@@ -2385,11 +2437,14 @@ export default function App() {
                 <span>Find in {activeFile.path}</span>
                 <span>{currentFindResults.length}</span>
               </div>
-              {currentFindResults.slice(0, 12).map((result) => (
+              {currentFindResults.slice(0, 12).map((result, index) => (
                 <button
-                  className="current-find-result"
+                  className={[
+                    "current-find-result",
+                    index === currentFindIndex ? "current-find-result--active" : "",
+                  ].join(" ")}
                   key={`${result.lineNumber}:${result.matchStart}:${result.matchEnd}`}
-                  onClick={() => revealCurrentFileMatch(result)}
+                  onClick={() => revealCurrentFileMatch(result, index)}
                 >
                   <span className="current-find-result__path">
                     line {result.lineNumber}
@@ -2411,6 +2466,11 @@ export default function App() {
                 prefersDark={prefersDark}
                 revealLine={
                   revealTarget?.path === activeFile.path ? revealTarget.lineNumber : undefined
+                }
+                focusOnReveal={
+                  revealTarget?.path === activeFile.path
+                    ? !revealTarget.preserveFocus
+                    : undefined
                 }
                 onChange={updateContents}
                 onCursor={setCursor}

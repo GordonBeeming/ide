@@ -19,7 +19,7 @@ Implemented:
 - Explicit workspace loading, empty, and load-failure retry states.
 - Collapsible sidebar for focused editing.
 - Collapsed file-name filtering and bounded text search across the current workspace.
-- Collapsed current-file search over loaded and unsaved editor contents.
+- Collapsed current-file search over loaded and unsaved editor contents, with Enter/Shift+Enter match navigation.
 - Lightweight command palette for discoverable editor and workspace commands, including native file/folder open actions in the desktop app.
 - Keyboard quick-open palette for opening files by path, including arrow-key result selection.
 - Keyboard tab navigation, numbered tab selection, and close commands.

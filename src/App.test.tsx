@@ -1462,6 +1462,37 @@ describe("App shell interactions", () => {
     );
   });
 
+  it("cycles current-file search results with Enter and Shift+Enter", async () => {
+    tauriMocks.readFile.mockImplementation(async (path: string) => {
+      if (path === "README.md") {
+        return "needle one\nplain line\nneedle two\nneedle three";
+      }
+      if (path === "src/App.tsx") return "export function App() {}";
+      return "";
+    });
+    render(<App />);
+
+    fireEvent.click(await treeButton("README.md"));
+    await findTab("README.md");
+    const input = await openCurrentFileFind();
+    fireEvent.change(input, { target: { value: "needle" } });
+
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(screen.getByText("Reveal line 1")).toBeInTheDocument();
+    expect(screen.getByText("Match 1 of 3 at README.md:1")).toBeInTheDocument();
+
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(screen.getByText("Reveal line 3")).toBeInTheDocument();
+    expect(screen.getByText("Match 2 of 3 at README.md:3")).toBeInTheDocument();
+
+    fireEvent.keyDown(input, { key: "Enter", shiftKey: true });
+    expect(screen.getByText("Reveal line 1")).toBeInTheDocument();
+    expect(screen.getByText("Match 1 of 3 at README.md:1")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /line 1\s*needle one/ }),
+    ).toHaveClass("current-find-result--active");
+  });
+
   it("opens content search results at the matched line", async () => {
     tauriMocks.searchFiles.mockResolvedValueOnce([
       {

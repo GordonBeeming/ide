@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { currentFileMatches } from "./currentFileSearch";
+import {
+  currentFileMatches,
+  nextCurrentFileMatchIndex,
+} from "./currentFileSearch";
 
 describe("current file search", () => {
   it("finds case-insensitive matches with line metadata", () => {
@@ -35,5 +38,15 @@ describe("current file search", () => {
     const matches = currentFileMatches("README.md", "a a a", "a", 2);
 
     expect(matches).toHaveLength(2);
+  });
+
+  it("cycles current-file match selection in both directions", () => {
+    expect(nextCurrentFileMatchIndex(-1, 1, 3)).toBe(0);
+    expect(nextCurrentFileMatchIndex(0, 1, 3)).toBe(1);
+    expect(nextCurrentFileMatchIndex(2, 1, 3)).toBe(0);
+    expect(nextCurrentFileMatchIndex(-1, -1, 3)).toBe(2);
+    expect(nextCurrentFileMatchIndex(0, -1, 3)).toBe(2);
+    expect(nextCurrentFileMatchIndex(99, 1, 3)).toBe(0);
+    expect(nextCurrentFileMatchIndex(0, 1, 0)).toBe(-1);
   });
 });

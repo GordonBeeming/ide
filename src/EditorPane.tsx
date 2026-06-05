@@ -32,6 +32,7 @@ interface EditorPaneProps {
   contents: string;
   prefersDark?: boolean;
   revealLine?: number;
+  focusOnReveal?: boolean;
   editorCommand?: EditorCommandRequest;
   onChange: (path: string, contents: string) => void;
   onError: (message: string) => void;
@@ -44,6 +45,7 @@ export default function EditorPane({
   path,
   contents,
   editorCommand,
+  focusOnReveal = true,
   prefersDark = false,
   revealLine,
   onChange,
@@ -113,7 +115,7 @@ export default function EditorPane({
 
       viewRef.current = view;
       emitCursorAndSelection(view, path, onCursor, onSelection);
-      revealLineInView(view, revealLine);
+      revealLineInView(view, revealLine, focusOnReveal);
     }).catch((error) => {
       if (!cancelled) {
         onError(`Unable to initialize editor for ${path}: ${String(error)}`);
@@ -146,9 +148,9 @@ export default function EditorPane({
 
   useEffect(() => {
     if (viewRef.current) {
-      revealLineInView(viewRef.current, revealLine);
+      revealLineInView(viewRef.current, revealLine, focusOnReveal);
     }
-  }, [revealLine]);
+  }, [focusOnReveal, revealLine]);
 
   useEffect(() => {
     const view = viewRef.current;
@@ -203,7 +205,11 @@ function emitCursorAndSelection(
   );
 }
 
-function revealLineInView(view: EditorView, lineNumber: number | undefined) {
+function revealLineInView(
+  view: EditorView,
+  lineNumber: number | undefined,
+  focus = true,
+) {
   const line = clampLineNumber(lineNumber, view.state.doc.lines);
   if (!line) return;
 
@@ -212,5 +218,5 @@ function revealLineInView(view: EditorView, lineNumber: number | undefined) {
     selection: { anchor: position },
     effects: EditorView.scrollIntoView(position, { y: "center" }),
   });
-  view.focus();
+  if (focus) view.focus();
 }

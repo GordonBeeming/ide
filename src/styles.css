@@ -677,7 +677,8 @@ button {
 }
 
 .current-find-result:hover,
-.current-find-result:focus-visible {
+.current-find-result:focus-visible,
+.current-find-result--active {
   background: var(--accent-weak);
   color: var(--text);
   outline: 0;

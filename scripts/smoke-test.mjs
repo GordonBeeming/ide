@@ -338,6 +338,13 @@ async function runScenario(browser, url, colorScheme) {
   await page.keyboard.press("Enter");
   await page.getByText("Moved to docs/README.md:2").waitFor();
 
+  await page.getByLabel("Find in file").click();
+  await page.locator('input[placeholder="Find in file"]').fill("smoke");
+  await page.keyboard.press("Enter");
+  await page.getByText("Match 1 of 2 at docs/README.md:1").waitFor();
+  await page.keyboard.press("Enter");
+  await page.getByText("Match 2 of 2 at docs/README.md:3").waitFor();
+
   const saveDisabled = await page
     .locator('button[title="Save"]')
     .evaluate((button) => button.disabled);

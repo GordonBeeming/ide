@@ -35,3 +35,19 @@ export function currentFileMatches(
 
   return matches;
 }
+
+export function nextCurrentFileMatchIndex(
+  currentIndex: number,
+  direction: 1 | -1,
+  totalMatches: number,
+) {
+  if (totalMatches <= 0) return -1;
+
+  const baseIndex =
+    currentIndex < 0 || currentIndex >= totalMatches
+      ? direction > 0
+        ? -1
+        : 0
+      : currentIndex;
+  return (baseIndex + direction + totalMatches) % totalMatches;
+}
