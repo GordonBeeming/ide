@@ -303,6 +303,13 @@ function relativeLuminance(cssColor) {
   return 0.2126 * red + 0.7152 * green + 0.0722 * blue;
 }
 
+async function assertInputValue(locator, expected, label) {
+  const value = await locator.inputValue();
+  if (value !== expected) {
+    throw new Error(`${label} should have value "${expected}", got "${value}"`);
+  }
+}
+
 async function runScenario(browser, url, colorScheme) {
   const context = await browser.newContext({
     colorScheme,
@@ -350,15 +357,31 @@ async function runScenario(browser, url, colorScheme) {
   await page.locator('input[placeholder="Search contents"]').waitFor();
 
   await page.getByLabel("Filter files").click();
-  await page.locator('input[placeholder="Filter files"]').fill("README");
+  const filterInput = page.locator('input[placeholder="Filter files"]');
+  await filterInput.fill("README");
   await page.getByText("README.md").waitFor();
   if (await page.getByText("package.json").isVisible()) {
     throw new Error("file filter did not hide unrelated files");
   }
 
-  await page.locator('input[placeholder="Filter files"]').fill("");
+  await page.keyboard.press("Escape");
+  await assertInputValue(filterInput, "", "file filter after first Escape");
+  await page.getByText("package.json").waitFor();
+  await page.keyboard.press("Escape");
+  await filterInput.waitFor({ state: "hidden" });
+
   await page.getByLabel("Search contents").click();
-  await page.locator('input[placeholder="Search contents"]').fill("smoke");
+  const contentSearchInput = page.locator('input[placeholder="Search contents"]');
+  await contentSearchInput.fill("smoke");
+  await page.getByText("docs/README.md:3").waitFor();
+  await page.keyboard.press("Escape");
+  await assertInputValue(contentSearchInput, "", "content search after first Escape");
+  await page.getByText("docs/README.md:3").waitFor({ state: "hidden" });
+  await page.keyboard.press("Escape");
+  await contentSearchInput.waitFor({ state: "hidden" });
+
+  await page.getByLabel("Search contents").click();
+  await contentSearchInput.fill("smoke");
   await page.getByText("docs/README.md:3").waitFor();
 
   await page.getByText("README.md").dblclick();
@@ -373,11 +396,16 @@ async function runScenario(browser, url, colorScheme) {
   await page.getByText("Moved to docs/README.md:2").waitFor();
 
   await page.getByLabel("Find in file").click();
-  await page.locator('input[placeholder="Find in file"]').fill("smoke");
+  const currentFindInput = page.locator('input[placeholder="Find in file"]');
+  await currentFindInput.fill("smoke");
   await page.keyboard.press("Enter");
   await page.getByText("Match 1 of 2 at docs/README.md:1").waitFor();
   await page.keyboard.press("Enter");
   await page.getByText("Match 2 of 2 at docs/README.md:3").waitFor();
+  await page.keyboard.press("Escape");
+  await assertInputValue(currentFindInput, "", "current-file search after first Escape");
+  await page.keyboard.press("Escape");
+  await currentFindInput.waitFor({ state: "hidden" });
 
   const saveDisabled = await page
     .locator('button[title="Save"]')
