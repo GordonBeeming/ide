@@ -590,7 +590,7 @@ button {
   grid-template-rows: auto minmax(0, 1fr);
   min-height: 0;
   overflow: hidden;
-  background: oklch(18% 0.014 230);
+  background: var(--bg);
 }
 
 .current-find-results {
