@@ -504,6 +504,7 @@ button {
   min-height: 0;
   overflow: hidden;
   grid-template-rows: 45px minmax(0, 1fr) 27px;
+  background: var(--editor-bg);
 }
 
 .topbar,

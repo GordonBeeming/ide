@@ -161,11 +161,13 @@ async function assertTheme(page, expectedScheme) {
     const appShell = document.querySelector(".app-shell");
     const sidebar = document.querySelector(".sidebar");
     const topbar = document.querySelector(".topbar");
+    const workbench = document.querySelector(".workbench");
     const editorRegion = document.querySelector(".editor-region");
     const cmScroller = document.querySelector(".cm-scroller");
     if (!appShell) throw new Error("app shell missing");
     if (!sidebar) throw new Error("sidebar missing");
     if (!topbar) throw new Error("topbar missing");
+    if (!workbench) throw new Error("workbench missing");
     if (!editorRegion) throw new Error("editor region missing");
     return {
       appShell: getComputedStyle(appShell).backgroundColor,
@@ -173,6 +175,7 @@ async function assertTheme(page, expectedScheme) {
       documentTheme: document.documentElement.dataset.ideTheme,
       sidebar: getComputedStyle(sidebar).backgroundColor,
       topbar: getComputedStyle(topbar).backgroundColor,
+      workbench: getComputedStyle(workbench).backgroundColor,
       editorRegion: getComputedStyle(editorRegion).backgroundColor,
       editorRegionClasses: [...editorRegion.classList],
       cmScroller: cmScroller ? getComputedStyle(cmScroller).backgroundColor : undefined,
@@ -199,6 +202,11 @@ async function assertTheme(page, expectedScheme) {
       `${expectedScheme} theme mismatch: shell=${colors.appShell}, editor=${colors.editorRegion}`,
     );
   }
+  if (colors.workbench !== colors.editorRegion) {
+    throw new Error(
+      `${expectedScheme} workbench mismatch: workbench=${colors.workbench}, editor=${colors.editorRegion}`,
+    );
+  }
   if (colors.cmScroller && colors.cmScroller !== colors.editorRegion) {
     throw new Error(
       `${expectedScheme} editor mismatch: region=${colors.editorRegion}, scroller=${colors.cmScroller}`,
@@ -210,6 +218,7 @@ async function assertTheme(page, expectedScheme) {
     appShell: colors.appShell,
     sidebar: colors.sidebar,
     topbar: colors.topbar,
+    workbench: colors.workbench,
     editorRegion: colors.editorRegion,
     ...(colors.cmScroller ? { cmScroller: colors.cmScroller } : {}),
   })) {
