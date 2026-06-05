@@ -191,6 +191,7 @@ Supported keyboard commands:
 
 - `Cmd/Ctrl+S`: save the active file.
 - `Cmd/Ctrl+Shift+S`: save all dirty files.
+- `Cmd/Ctrl+R`: reload the active file from disk.
 - `Cmd/Ctrl+W`: close the active tab.
 - `Cmd/Ctrl+Shift+W`: close all tabs.
 - `Cmd/Ctrl+B`: toggle the sidebar.

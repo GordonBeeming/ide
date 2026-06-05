@@ -1445,6 +1445,45 @@ describe("App shell interactions", () => {
     expect(screen.getByText("Reloaded README.md")).toBeInTheDocument();
   });
 
+  it("reloads a clean active file from the keyboard", async () => {
+    render(<App />);
+
+    fireEvent.click(await treeButton("README.md"));
+    expect(await screen.findByLabelText("Editor README.md")).toHaveValue("readme");
+
+    tauriMocks.readFile.mockResolvedValueOnce("keyboard disk readme");
+    tauriMocks.listFiles.mockResolvedValueOnce([
+      ...files.filter((file) => file.path !== "README.md"),
+      {
+        path: "README.md",
+        name: "README.md",
+        isDir: false,
+        depth: 0,
+        size: 33,
+        modifiedMs: 304,
+      },
+    ]);
+    fireEvent.keyDown(window, { key: "r", metaKey: true });
+
+    await waitFor(() =>
+      expect(screen.getByLabelText("Editor README.md")).toHaveValue(
+        "keyboard disk readme",
+      ),
+    );
+    expect(screen.getByText("Reloaded README.md")).toBeInTheDocument();
+  });
+
+  it("reports keyboard reload attempts without an active file", async () => {
+    render(<App />);
+
+    expect(await treeButton("README.md")).toBeInTheDocument();
+
+    fireEvent.keyDown(window, { key: "r", metaKey: true });
+
+    expect(screen.getByText("Reload from disk requires an open file")).toBeInTheDocument();
+    expect(tauriMocks.readFile).not.toHaveBeenCalled();
+  });
+
   it("confirms before reloading a dirty active file from disk", async () => {
     render(<App />);
 

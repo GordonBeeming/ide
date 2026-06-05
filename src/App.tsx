@@ -1013,7 +1013,10 @@ export default function App() {
   }, [refreshFiles]);
 
   const requestReloadActiveFile = useCallback(() => {
-    if (!activeFile) return;
+    if (!activeFile) {
+      setStatus("Reload from disk requires an open file");
+      return;
+    }
     if (activeFile.dirty) {
       setPendingReloadPath(activeFile.path);
       return;
@@ -1961,6 +1964,9 @@ export default function App() {
       } else if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "s") {
         event.preventDefault();
         saveActive();
+      } else if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "r") {
+        event.preventDefault();
+        requestReloadActiveFile();
       } else if (
         (event.metaKey || event.ctrlKey) &&
         event.shiftKey &&
