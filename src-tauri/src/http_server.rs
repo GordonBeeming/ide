@@ -141,10 +141,7 @@ pub async fn start_http_server(
                 .put(write_file)
                 .options(cors_preflight),
         )
-        .route(
-            "/api/folder",
-            post(create_folder).options(cors_preflight),
-        )
+        .route("/api/folder", post(create_folder).options(cors_preflight))
         .route(
             "/api/open-path",
             post(

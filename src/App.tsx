@@ -1408,6 +1408,12 @@ export default function App() {
                   ].join(" ")}
                   key={file.path}
                   onClick={() => setActivePath(file.path)}
+                  onAuxClick={(event) => {
+                    if (event.button !== 1) return;
+                    event.preventDefault();
+                    event.stopPropagation();
+                    requestCloseFile(file.path);
+                  }}
                   onDoubleClick={() =>
                     setOpenFiles((current) =>
                       pinTab(current, file.path),

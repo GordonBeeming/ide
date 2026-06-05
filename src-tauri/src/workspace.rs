@@ -1,9 +1,10 @@
+use std::collections::HashSet;
 use std::ffi::OsStr;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
-use ignore::WalkBuilder;
+use ignore::{DirEntry, WalkBuilder};
 use serde::Serialize;
 
 #[derive(Debug, Clone, Serialize)]
@@ -61,45 +62,27 @@ pub fn scan_workspace(
     show_generated_internal: bool,
 ) -> Result<Vec<FileEntry>, WorkspaceError> {
     let mut entries = Vec::new();
-    let walker = workspace_walker(root, show_dotfiles, show_generated_internal).build();
+    let mut seen_paths = HashSet::new();
 
+    let mut root_level_walker = workspace_walker(root, show_dotfiles, show_generated_internal);
+    root_level_walker.max_depth(Some(1));
+    for result in root_level_walker.build() {
+        if entries.len() >= max_entries {
+            break;
+        }
+
+        let entry = result?;
+        push_scan_entry(root, &entry, &mut entries, &mut seen_paths)?;
+    }
+
+    let walker = workspace_walker(root, show_dotfiles, show_generated_internal).build();
     for result in walker {
         if entries.len() >= max_entries {
             break;
         }
 
         let entry = result?;
-        let path = entry.path();
-        if path == root {
-            continue;
-        }
-
-        let metadata = entry.metadata()?;
-
-        let relative = path
-            .strip_prefix(root)
-            .map_err(|_| WorkspaceError::OutsideWorkspace)?;
-        let relative_path = normalize_path(relative);
-        let parent = relative
-            .parent()
-            .filter(|value| !value.as_os_str().is_empty())
-            .map(normalize_path);
-        let depth = relative.components().count().saturating_sub(1);
-        let modified_ms = metadata
-            .modified()
-            .ok()
-            .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
-            .map(|duration| duration.as_millis());
-
-        entries.push(FileEntry {
-            path: relative_path,
-            name: entry.file_name().to_string_lossy().to_string(),
-            parent,
-            is_dir: metadata.is_dir(),
-            depth,
-            size: metadata.len(),
-            modified_ms,
-        });
+        push_scan_entry(root, &entry, &mut entries, &mut seen_paths)?;
     }
 
     entries.sort_by(|a, b| {
@@ -109,6 +92,51 @@ pub fn scan_workspace(
             .then_with(|| a.path.cmp(&b.path))
     });
     Ok(entries)
+}
+
+fn push_scan_entry(
+    root: &Path,
+    entry: &DirEntry,
+    entries: &mut Vec<FileEntry>,
+    seen_paths: &mut HashSet<String>,
+) -> Result<(), WorkspaceError> {
+    let path = entry.path();
+    if path == root {
+        return Ok(());
+    }
+
+    let metadata = entry.metadata()?;
+
+    let relative = path
+        .strip_prefix(root)
+        .map_err(|_| WorkspaceError::OutsideWorkspace)?;
+    let relative_path = normalize_path(relative);
+    if !seen_paths.insert(relative_path.clone()) {
+        return Ok(());
+    }
+
+    let parent = relative
+        .parent()
+        .filter(|value| !value.as_os_str().is_empty())
+        .map(normalize_path);
+    let depth = relative.components().count().saturating_sub(1);
+    let modified_ms = metadata
+        .modified()
+        .ok()
+        .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+        .map(|duration| duration.as_millis());
+
+    entries.push(FileEntry {
+        path: relative_path,
+        name: entry.file_name().to_string_lossy().to_string(),
+        parent,
+        is_dir: metadata.is_dir(),
+        depth,
+        size: metadata.len(),
+        modified_ms,
+    });
+
+    Ok(())
 }
 
 pub fn search_workspace(
@@ -236,11 +264,7 @@ pub fn create_workspace_folder(root: &Path, relative: &str) -> Result<(), Worksp
     }
 }
 
-pub fn rename_workspace_file(
-    root: &Path,
-    from: &str,
-    to: &str,
-) -> Result<(), WorkspaceError> {
+pub fn rename_workspace_file(root: &Path, from: &str, to: &str) -> Result<(), WorkspaceError> {
     let from_path = resolve_workspace_path(root, from)?;
     let to_path = resolve_workspace_path(root, to)?;
     if !from_path.metadata()?.is_file() {
@@ -403,14 +427,12 @@ mod tests {
 
         fs::write(&path, "outside change").unwrap();
         let stale_modified_ms = modified_ms.saturating_sub(1);
-        let result = write_workspace_file(
-            dir.path(),
-            "note.txt",
-            "after",
-            Some(stale_modified_ms),
-        );
+        let result = write_workspace_file(dir.path(), "note.txt", "after", Some(stale_modified_ms));
 
-        assert!(matches!(result, Err(WorkspaceError::FileModifiedExternally)));
+        assert!(matches!(
+            result,
+            Err(WorkspaceError::FileModifiedExternally)
+        ));
         assert_eq!(fs::read_to_string(path).unwrap(), "outside change");
     }
 
@@ -421,7 +443,10 @@ mod tests {
 
         create_workspace_file(dir.path(), "src/new.rs").unwrap();
 
-        assert_eq!(fs::read_to_string(dir.path().join("src/new.rs")).unwrap(), "");
+        assert_eq!(
+            fs::read_to_string(dir.path().join("src/new.rs")).unwrap(),
+            ""
+        );
     }
 
     #[test]
@@ -432,7 +457,10 @@ mod tests {
         let result = create_workspace_file(dir.path(), "note.txt");
 
         assert!(matches!(result, Err(WorkspaceError::FileAlreadyExists)));
-        assert_eq!(fs::read_to_string(dir.path().join("note.txt")).unwrap(), "before");
+        assert_eq!(
+            fs::read_to_string(dir.path().join("note.txt")).unwrap(),
+            "before"
+        );
     }
 
     #[test]
@@ -497,8 +525,14 @@ mod tests {
         let result = rename_workspace_file(dir.path(), "note.txt", "existing.txt");
 
         assert!(matches!(result, Err(WorkspaceError::FileAlreadyExists)));
-        assert_eq!(fs::read_to_string(dir.path().join("note.txt")).unwrap(), "contents");
-        assert_eq!(fs::read_to_string(dir.path().join("existing.txt")).unwrap(), "other");
+        assert_eq!(
+            fs::read_to_string(dir.path().join("note.txt")).unwrap(),
+            "contents"
+        );
+        assert_eq!(
+            fs::read_to_string(dir.path().join("existing.txt")).unwrap(),
+            "other"
+        );
     }
 
     #[test]
@@ -648,6 +682,33 @@ mod tests {
         let entries = scan_workspace(dir.path(), 3, false, false).unwrap();
 
         assert_eq!(entries.len(), 3);
+    }
+
+    #[test]
+    fn scan_workspace_prioritizes_top_level_entries_before_deep_children() {
+        let dir = tempdir().unwrap();
+        fs::create_dir_all(dir.path().join("artifacts/deep")).unwrap();
+        fs::create_dir_all(dir.path().join("docs")).unwrap();
+        fs::write(dir.path().join("LICENSE"), "").unwrap();
+        fs::write(dir.path().join("README.md"), "").unwrap();
+        for index in 0..20 {
+            fs::write(
+                dir.path().join(format!("artifacts/deep/{index:02}.txt")),
+                "",
+            )
+            .unwrap();
+        }
+
+        let entries = scan_workspace(dir.path(), 5, false, false).unwrap();
+        let paths = entries
+            .iter()
+            .map(|entry| entry.path.as_str())
+            .collect::<Vec<_>>();
+
+        assert!(paths.contains(&"artifacts"));
+        assert!(paths.contains(&"docs"));
+        assert!(paths.contains(&"LICENSE"));
+        assert!(paths.contains(&"README.md"));
     }
 
     #[test]

@@ -462,6 +462,49 @@ describe("App shell interactions", () => {
     expect(tabButton("README.md")).toBeUndefined();
   });
 
+  it("closes a clean tab when it is middle-clicked", async () => {
+    render(<App />);
+
+    fireEvent.click(await treeButton("README.md"));
+    const tab = await findTab("README.md");
+
+    fireEvent(
+      tab,
+      new MouseEvent("auxclick", {
+        bubbles: true,
+        cancelable: true,
+        button: 1,
+      }),
+    );
+
+    await waitFor(() => expect(tabButton("README.md")).toBeUndefined());
+  });
+
+  it("prompts before middle-click closes a dirty tab", async () => {
+    render(<App />);
+
+    fireEvent.click(await treeButton("README.md"));
+    const tab = await findTab("README.md");
+    fireEvent.change(await screen.findByLabelText("Editor README.md"), {
+      target: { value: "changed readme" },
+    });
+
+    fireEvent(
+      tab,
+      new MouseEvent("auxclick", {
+        bubbles: true,
+        cancelable: true,
+        button: 1,
+      }),
+    );
+
+    expect(
+      await screen.findByRole("alertdialog", { name: "Close modified file?" }),
+    ).toHaveTextContent("README.md has edits that have not been saved.");
+    expect(tabButton("README.md")).toBeTruthy();
+    expect(tauriMocks.writeFile).not.toHaveBeenCalled();
+  });
+
   it("saves every dirty tab and clears dirty indicators", async () => {
     render(<App />);
 
