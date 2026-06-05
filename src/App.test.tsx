@@ -630,6 +630,76 @@ describe("App shell interactions", () => {
     expect(await screen.findByPlaceholderText("Search contents")).toHaveFocus();
   });
 
+  it("keeps native picker toolbar actions disabled in hosted browser mode", async () => {
+    render(<App />);
+
+    expect(await treeButton("README.md")).toBeInTheDocument();
+
+    expect(screen.getByTitle("Open folder")).toBeDisabled();
+    expect(screen.getByTitle("Open file")).toBeDisabled();
+  });
+
+  it("opens a native file picker result from the toolbar", async () => {
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    mockPickedNotesFile();
+
+    render(<App />);
+
+    expect(await treeButton("README.md")).toBeInTheDocument();
+    fireEvent.click(screen.getByTitle("Open file"));
+
+    expect(await screen.findByLabelText("Editor notes.md")).toHaveValue("# Notes");
+    expect(tauriMocks.pickOpenFile).toHaveBeenCalledTimes(1);
+    expect(tauriMocks.setWorkspaceRootPath).toHaveBeenCalledWith(
+      "/Users/gordonbeeming/Developer",
+    );
+    expect(tauriMocks.recordRecentFile).toHaveBeenCalledWith("notes.md", true);
+  });
+
+  it("opens a native file picker result from the keyboard", async () => {
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    mockPickedNotesFile();
+
+    render(<App />);
+
+    expect(await treeButton("README.md")).toBeInTheDocument();
+    fireEvent.keyDown(window, { key: "o", metaKey: true });
+
+    expect(await screen.findByLabelText("Editor notes.md")).toHaveValue("# Notes");
+    expect(tauriMocks.pickOpenFile).toHaveBeenCalledTimes(1);
+  });
+
+  it("opens a native workspace folder from the keyboard", async () => {
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    tauriMocks.getWorkspaceRoot.mockReset();
+    tauriMocks.getWorkspaceRoot
+      .mockResolvedValueOnce("/workspace")
+      .mockResolvedValue("/workspace-next");
+    tauriMocks.listFiles.mockReset();
+    tauriMocks.listFiles
+      .mockResolvedValueOnce(files)
+      .mockResolvedValueOnce([
+        {
+          path: "next.md",
+          name: "next.md",
+          isDir: false,
+          depth: 0,
+          size: 20,
+          modifiedMs: 909,
+        },
+      ]);
+    tauriMocks.pickWorkspaceFolder.mockResolvedValueOnce("/workspace-next");
+
+    render(<App />);
+
+    expect(await treeButton("README.md")).toBeInTheDocument();
+    fireEvent.keyDown(window, { key: "o", metaKey: true, shiftKey: true });
+
+    expect(await treeButton("next.md")).toBeInTheDocument();
+    expect(screen.getByText("workspace-next")).toBeInTheDocument();
+    expect(screen.getByText("Opened workspace-next")).toBeInTheDocument();
+  });
+
   it("opens the command palette from the keyboard and runs commands", async () => {
     render(<App />);
 
@@ -667,25 +737,7 @@ describe("App shell interactions", () => {
 
   it("opens a native file picker result from the command palette", async () => {
     (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
-    tauriMocks.pickOpenFile.mockResolvedValueOnce({
-      workspaceRoot: "/Users/gordonbeeming/Developer",
-      path: "notes.md",
-      singleFile: true,
-    });
-    tauriMocks.statFile.mockResolvedValueOnce({
-      path: "notes.md",
-      name: "notes.md",
-      isDir: false,
-      depth: 0,
-      size: 11,
-      modifiedMs: 505,
-    });
-    tauriMocks.readFile.mockImplementation(async (path: string) => {
-      if (path === "notes.md") return "# Notes";
-      if (path === "README.md") return "readme";
-      if (path === "src/App.tsx") return "export function App() {}";
-      return "";
-    });
+    mockPickedNotesFile();
 
     render(<App />);
 
@@ -1685,4 +1737,26 @@ async function openCurrentFileFind() {
 function latestAgentContext() {
   const calls = tauriMocks.updateAgentContext.mock.calls;
   return calls.at(-1)?.[0];
+}
+
+function mockPickedNotesFile() {
+  tauriMocks.pickOpenFile.mockResolvedValueOnce({
+    workspaceRoot: "/Users/gordonbeeming/Developer",
+    path: "notes.md",
+    singleFile: true,
+  });
+  tauriMocks.statFile.mockResolvedValueOnce({
+    path: "notes.md",
+    name: "notes.md",
+    isDir: false,
+    depth: 0,
+    size: 11,
+    modifiedMs: 505,
+  });
+  tauriMocks.readFile.mockImplementation(async (path: string) => {
+    if (path === "notes.md") return "# Notes";
+    if (path === "README.md") return "readme";
+    if (path === "src/App.tsx") return "export function App() {}";
+    return "";
+  });
 }

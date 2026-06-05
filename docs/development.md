@@ -193,6 +193,8 @@ Supported keyboard commands:
 - `Cmd/Ctrl+W`: close the active tab.
 - `Cmd/Ctrl+Shift+W`: close all tabs.
 - `Cmd/Ctrl+B`: toggle the sidebar.
+- `Cmd/Ctrl+O`: open a file with the native picker.
+- `Cmd/Ctrl+Shift+O`: open a workspace folder with the native picker.
 - `Cmd/Ctrl+Shift+P`: open the command palette.
 - `Cmd/Ctrl+F`: open and focus current-file search.
 - `Cmd/Ctrl+Shift+F`: open and focus workspace content search.

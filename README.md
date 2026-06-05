@@ -12,6 +12,7 @@ Implemented:
 - React frontend.
 - File tree with package-backed coloured file icons and folder fallbacks.
 - Native folder picker for switching workspaces.
+- Native toolbar buttons for opening files and folders in the desktop app.
 - Native File menu with New File, New Folder, Open File, Open Folder, Recents, Save, Reload, Rename/Delete, Close Tab, and Close All.
 - Native View menu toggles for showing dotfiles and generated/internal folders in the tree.
 - File/folder launch targets through the local runner and macOS Finder Quick Action.

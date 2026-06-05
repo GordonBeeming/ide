@@ -13,6 +13,7 @@ import {
   ChevronRight,
   Circle,
   Copy,
+  FileInput,
   FilePlus,
   FileCog,
   FolderOpen,
@@ -300,6 +301,7 @@ export default function App() {
   const workspaceTitle = singleFileMode && singleFilePath
     ? lastSegment(singleFilePath)
     : lastSegment(workspaceRoot);
+  const nativePickerAvailable = isNativeTauri();
 
   useEffect(() => {
     const media = window.matchMedia?.(darkSchemeQuery);
@@ -1405,7 +1407,7 @@ export default function App() {
         title: "Open Folder",
         detail: "Switch to another workspace folder",
         keywords: ["workspace"],
-        enabled: true,
+        enabled: nativePickerAvailable,
         run: () => {
           void openWorkspace();
         },
@@ -1415,7 +1417,7 @@ export default function App() {
         title: "Open File",
         detail: "Open a file with the native picker",
         keywords: ["file picker"],
-        enabled: isNativeTauri(),
+        enabled: nativePickerAvailable,
         run: () => {
           void openFileFromDialog();
         },
@@ -1857,6 +1859,21 @@ export default function App() {
       } else if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "n") {
         event.preventDefault();
         openNewFileDialog();
+      } else if (
+        nativePickerAvailable &&
+        (event.metaKey || event.ctrlKey) &&
+        event.shiftKey &&
+        event.key.toLowerCase() === "o"
+      ) {
+        event.preventDefault();
+        void openWorkspace();
+      } else if (
+        nativePickerAvailable &&
+        (event.metaKey || event.ctrlKey) &&
+        event.key.toLowerCase() === "o"
+      ) {
+        event.preventDefault();
+        void openFileFromDialog();
       } else if (event.key === "F2") {
         event.preventDefault();
         openRenameDialog();
@@ -1936,10 +1953,13 @@ export default function App() {
     newFileDialogOpen,
     newFolderDialogOpen,
     integrationsOpen,
+    nativePickerAvailable,
     commandPaletteVisible,
     openRenameDialog,
     openNewFolderDialog,
     openNewFileDialog,
+    openFileFromDialog,
+    openWorkspace,
     openCommandPalette,
     openCurrentFileFind,
     openQuickOpen,
@@ -1974,8 +1994,21 @@ export default function App() {
             </strong>
           </div>
           <div className="sidebar__actions">
-            <button className="icon-button" title="Open folder" onClick={openWorkspace}>
+            <button
+              className="icon-button"
+              title="Open folder"
+              onClick={openWorkspace}
+              disabled={!nativePickerAvailable}
+            >
               <FolderOpen size={17} />
+            </button>
+            <button
+              className="icon-button"
+              title="Open file"
+              onClick={openFileFromDialog}
+              disabled={!nativePickerAvailable}
+            >
+              <FileInput size={17} />
             </button>
             <button className="icon-button" title="New file" onClick={openNewFileDialog}>
               <FilePlus size={17} />

@@ -139,7 +139,7 @@ button {
 
 .sidebar__actions {
   display: grid;
-  grid-template-columns: repeat(3, 32px);
+  grid-template-columns: repeat(4, 32px);
   align-items: center;
   justify-content: end;
   gap: 6px;
