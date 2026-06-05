@@ -701,6 +701,11 @@ pub fn run() {
                 return;
             }
 
+            if id == "command_palette" {
+                let _ = app.emit("menu://command-palette", ());
+                return;
+            }
+
             if id == "quick_open" {
                 let _ = app.emit("menu://quick-open", ());
                 return;
@@ -995,6 +1000,10 @@ fn rebuild_app_menu(app: &tauri::AppHandle, state: &AppState) -> Result<(), Comm
         .item(&find_references)
         .build()
         .map_err(|error| CommandError::Recent(error.to_string()))?;
+    let command_palette = MenuItemBuilder::with_id("command_palette", "Command Palette...")
+        .accelerator("CmdOrCtrl+Shift+P")
+        .build(app)
+        .map_err(|error| CommandError::Recent(error.to_string()))?;
     let quick_open = MenuItemBuilder::with_id("quick_open", "Go to File...")
         .accelerator("CmdOrCtrl+P")
         .build(app)
@@ -1008,6 +1017,8 @@ fn rebuild_app_menu(app: &tauri::AppHandle, state: &AppState) -> Result<(), Comm
         .build(app)
         .map_err(|error| CommandError::Recent(error.to_string()))?;
     let search_menu = SubmenuBuilder::new(app, "Search")
+        .item(&command_palette)
+        .separator()
         .item(&quick_open)
         .item(&find_in_file)
         .item(&find_in_files)

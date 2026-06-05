@@ -823,10 +823,42 @@ button {
   outline: 0;
 }
 
+.quick-open__result--disabled,
+.quick-open__result:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
 .quick-open__result span {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.command-palette__result {
+  min-height: 46px;
+}
+
+.command-palette__text {
+  display: grid;
+  gap: 2px;
+}
+
+.command-palette__text strong,
+.command-palette__text small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.command-palette__text strong {
+  color: var(--text);
+  font-size: 13px;
+}
+
+.command-palette__text small {
+  color: var(--muted);
+  font-size: 11px;
 }
 
 .quick-open__empty {

@@ -44,6 +44,12 @@ import {
   moveQuickOpenSelection,
   quickOpenMatches,
 } from "./quickOpen";
+import {
+  clampCommandPaletteSelection,
+  commandPaletteMatches,
+  moveCommandPaletteSelection,
+  type CommandPaletteEntry,
+} from "./commandPalette";
 import { destroyNativeWindow, onNativeWindowCloseRequested } from "./appWindow";
 import {
   AgentContext,
@@ -106,6 +112,12 @@ import {
 
 const EditorPane = lazy(() => import("./EditorPane"));
 
+interface AppCommand extends CommandPaletteEntry {
+  detail: string;
+  enabled: boolean;
+  run: () => void;
+}
+
 interface TreeNode extends FileEntry {
   children: TreeNode[];
 }
@@ -164,6 +176,9 @@ export default function App() {
   const [quickOpenVisible, setQuickOpenVisible] = useState(false);
   const [quickOpenQuery, setQuickOpenQuery] = useState("");
   const [quickOpenIndex, setQuickOpenIndex] = useState(0);
+  const [commandPaletteVisible, setCommandPaletteVisible] = useState(false);
+  const [commandPaletteQuery, setCommandPaletteQuery] = useState("");
+  const [commandPaletteIndex, setCommandPaletteIndex] = useState(0);
   const [newFileDialogOpen, setNewFileDialogOpen] = useState(false);
   const [newFilePath, setNewFilePath] = useState("");
   const [newFolderDialogOpen, setNewFolderDialogOpen] = useState(false);
@@ -704,6 +719,12 @@ export default function App() {
     setQuickOpenIndex(0);
   }, []);
 
+  const closeCommandPalette = useCallback(() => {
+    setCommandPaletteVisible(false);
+    setCommandPaletteQuery("");
+    setCommandPaletteIndex(0);
+  }, []);
+
   const toggleSidebar = useCallback(() => {
     setSidebarCollapsed((current) => !current);
   }, []);
@@ -951,7 +972,19 @@ export default function App() {
   );
 
   const openQuickOpen = useCallback(() => {
+    setCommandPaletteVisible(false);
+    setCommandPaletteQuery("");
+    setCommandPaletteIndex(0);
     setQuickOpenVisible(true);
+  }, []);
+
+  const openCommandPalette = useCallback(() => {
+    setQuickOpenVisible(false);
+    setQuickOpenQuery("");
+    setQuickOpenIndex(0);
+    setCommandPaletteQuery("");
+    setCommandPaletteIndex(0);
+    setCommandPaletteVisible(true);
   }, []);
 
   const openCurrentFileFind = useCallback(() => {
@@ -1195,6 +1228,9 @@ export default function App() {
       listen("menu://find-references", () => {
         requestEditorCommand("findReferences");
       }),
+      listen("menu://command-palette", () => {
+        openCommandPalette();
+      }),
       listen("menu://quick-open", () => {
         openQuickOpen();
       }),
@@ -1250,6 +1286,7 @@ export default function App() {
     openFileFromWorkspace,
     openNewFileDialog,
     openNewFolderDialog,
+    openCommandPalette,
     openCurrentFileFind,
     openQuickOpen,
     openRenameDialog,
@@ -1288,6 +1325,225 @@ export default function App() {
       setStatus("Open folder failed");
     }
   }, [applyPersistedUiSnapshot, clearWorkspaceUi, openFiles, refreshFiles]);
+
+  const commandPaletteCommands = useMemo<AppCommand[]>(
+    () => [
+      {
+        id: "quick_open",
+        title: "Go to File",
+        detail: "Open a workspace file by path",
+        keywords: ["quick open", "open file", "search files"],
+        enabled: true,
+        run: openQuickOpen,
+      },
+      {
+        id: "find_in_files",
+        title: "Find in Files",
+        detail: "Search text across the current workspace",
+        keywords: ["workspace search", "content search", "grep"],
+        enabled: true,
+        run: openWorkspaceSearch,
+      },
+      {
+        id: "find_in_file",
+        title: "Find in File",
+        detail: "Search inside the active file",
+        keywords: ["current file search"],
+        enabled: Boolean(activeFile),
+        run: openCurrentFileFind,
+      },
+      {
+        id: "new_file",
+        title: "New File",
+        detail: "Create a file in the selected folder",
+        keywords: ["create file"],
+        enabled: true,
+        run: openNewFileDialog,
+      },
+      {
+        id: "new_folder",
+        title: "New Folder",
+        detail: "Create a folder in the selected folder",
+        keywords: ["create folder", "directory"],
+        enabled: true,
+        run: openNewFolderDialog,
+      },
+      {
+        id: "open_folder",
+        title: "Open Folder",
+        detail: "Switch to another workspace folder",
+        keywords: ["workspace"],
+        enabled: true,
+        run: () => {
+          void openWorkspace();
+        },
+      },
+      {
+        id: "save_file",
+        title: "Save",
+        detail: activeFile ? `Save ${activeFile.path}` : "Save the active file",
+        keywords: ["write file"],
+        enabled: Boolean(activeFile),
+        run: () => {
+          void saveActive();
+        },
+      },
+      {
+        id: "save_all",
+        title: "Save All",
+        detail: "Save all modified files",
+        keywords: ["write all files"],
+        enabled: hasDirtyFiles,
+        run: () => {
+          void saveAll();
+        },
+      },
+      {
+        id: "reload_file",
+        title: "Reload from Disk",
+        detail: "Refresh the active file from disk",
+        keywords: ["revert", "refresh"],
+        enabled: Boolean(activeFile),
+        run: requestReloadActiveFile,
+      },
+      {
+        id: "rename_selected",
+        title: "Rename Selected",
+        detail: selectedEntry
+          ? `Rename ${selectedEntry.path}`
+          : "Rename the selected file or folder",
+        keywords: ["move"],
+        enabled: Boolean(selectedEntry),
+        run: openRenameDialog,
+      },
+      {
+        id: "delete_selected",
+        title: "Delete Selected",
+        detail: selectedEntry
+          ? `Delete ${selectedEntry.path}`
+          : "Delete the selected file or folder",
+        keywords: ["remove"],
+        enabled: Boolean(selectedEntry),
+        run: requestDeleteSelectedFile,
+      },
+      {
+        id: "close_tab",
+        title: "Close Tab",
+        detail: "Close the active editor tab",
+        keywords: ["close file"],
+        enabled: Boolean(activeFile),
+        run: requestCloseActiveFile,
+      },
+      {
+        id: "close_all",
+        title: "Close All",
+        detail: "Close all editor tabs",
+        keywords: ["close files"],
+        enabled: openFiles.length > 0,
+        run: requestCloseAllFiles,
+      },
+      {
+        id: "go_to_definition",
+        title: "Go to Definition",
+        detail: "Ask the active language server for a definition jump",
+        keywords: ["lsp", "definition"],
+        enabled: Boolean(activeFile),
+        run: () => requestEditorCommand("goToDefinition"),
+      },
+      {
+        id: "find_references",
+        title: "Find References",
+        detail: "Ask the active language server for references",
+        keywords: ["lsp", "references"],
+        enabled: Boolean(activeFile),
+        run: () => requestEditorCommand("findReferences"),
+      },
+      {
+        id: "toggle_sidebar",
+        title: sidebarCollapsed ? "Expand Sidebar" : "Collapse Sidebar",
+        detail: "Toggle the file tree",
+        keywords: ["view", "files"],
+        enabled: true,
+        run: toggleSidebar,
+      },
+      {
+        id: "show_integrations",
+        title: "Show Integrations",
+        detail: "Show browser, Claude, Codex, and LSP integration details",
+        keywords: ["mcp", "claude", "codex", "lsp"],
+        enabled: true,
+        run: () => setIntegrationsOpen(true),
+      },
+      {
+        id: "toggle_dotfiles",
+        title: showDotfiles ? "Hide Dotfiles" : "Show Dotfiles",
+        detail: "Toggle dotfiles and dot folders in the tree",
+        keywords: ["hidden files", "view"],
+        enabled: true,
+        run: () => {
+          setShowDotfiles((current) => !current);
+        },
+      },
+      {
+        id: "toggle_generated_internal",
+        title: showGeneratedInternal
+          ? "Hide Generated/Internal Folders"
+          : "Show Generated/Internal Folders",
+        detail: "Toggle generated and internal folders in the tree",
+        keywords: ["node_modules", "target", "dist", "view"],
+        enabled: true,
+        run: () => {
+          setShowGeneratedInternal((current) => !current);
+        },
+      },
+    ],
+    [
+      activeFile,
+      hasDirtyFiles,
+      openCurrentFileFind,
+      openNewFileDialog,
+      openNewFolderDialog,
+      openQuickOpen,
+      openRenameDialog,
+      openWorkspace,
+      openWorkspaceSearch,
+      openFiles.length,
+      requestCloseActiveFile,
+      requestCloseAllFiles,
+      requestDeleteSelectedFile,
+      requestEditorCommand,
+      requestReloadActiveFile,
+      saveActive,
+      saveAll,
+      selectedEntry,
+      showDotfiles,
+      showGeneratedInternal,
+      sidebarCollapsed,
+      toggleSidebar,
+    ],
+  );
+  const commandPaletteResults = useMemo(
+    () => commandPaletteMatches(commandPaletteCommands, commandPaletteQuery, 18),
+    [commandPaletteCommands, commandPaletteQuery],
+  );
+  const runCommandPaletteCommand = useCallback(
+    (command: AppCommand) => {
+      if (!command.enabled) {
+        setStatus(`${command.title} is unavailable`);
+        return;
+      }
+
+      closeCommandPalette();
+      command.run();
+    },
+    [closeCommandPalette],
+  );
+
+  useEffect(() => {
+    setCommandPaletteIndex((current) =>
+      clampCommandPaletteSelection(current, commandPaletteResults.length),
+    );
+  }, [commandPaletteResults.length]);
 
   const createNewFile = useCallback(async () => {
     const path = newFilePath.trim();
@@ -1567,6 +1823,13 @@ export default function App() {
       } else if (event.ctrlKey && event.key === "Tab") {
         event.preventDefault();
         activateAdjacentTab(1);
+      } else if (
+        (event.metaKey || event.ctrlKey) &&
+        event.shiftKey &&
+        event.key.toLowerCase() === "p"
+      ) {
+        event.preventDefault();
+        openCommandPalette();
       } else if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "p") {
         event.preventDefault();
         openQuickOpen();
@@ -1610,6 +1873,9 @@ export default function App() {
       } else if (event.key === "Escape" && quickOpenVisible) {
         event.preventDefault();
         closeQuickOpen();
+      } else if (event.key === "Escape" && commandPaletteVisible) {
+        event.preventDefault();
+        closeCommandPalette();
       }
     };
     window.addEventListener("keydown", handler);
@@ -1617,6 +1883,7 @@ export default function App() {
   }, [
     activeFile,
     closeQuickOpen,
+    closeCommandPalette,
     closeNewFileDialog,
     closeNewFolderDialog,
     closeRenameDialog,
@@ -1626,9 +1893,11 @@ export default function App() {
     newFileDialogOpen,
     newFolderDialogOpen,
     integrationsOpen,
+    commandPaletteVisible,
     openRenameDialog,
     openNewFolderDialog,
     openNewFileDialog,
+    openCommandPalette,
     openCurrentFileFind,
     openQuickOpen,
     openWorkspaceSearch,
@@ -2064,6 +2333,80 @@ export default function App() {
               })}
               {quickOpenResults.length === 0 ? (
                 <div className="quick-open__empty">No matching files</div>
+              ) : null}
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {commandPaletteVisible ? (
+        <div className="quick-open command-palette" role="dialog" aria-label="Command palette">
+          <div className="quick-open__panel">
+            <label className="quick-open__input">
+              <Search size={16} />
+              <input
+                autoFocus
+                value={commandPaletteQuery}
+                onChange={(event) => {
+                  setCommandPaletteQuery(event.target.value);
+                  setCommandPaletteIndex(0);
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === "ArrowDown") {
+                    event.preventDefault();
+                    setCommandPaletteIndex((current) =>
+                      moveCommandPaletteSelection(
+                        current,
+                        1,
+                        commandPaletteResults.length,
+                      ),
+                    );
+                  } else if (event.key === "ArrowUp") {
+                    event.preventDefault();
+                    setCommandPaletteIndex((current) =>
+                      moveCommandPaletteSelection(
+                        current,
+                        -1,
+                        commandPaletteResults.length,
+                      ),
+                    );
+                  } else if (
+                    event.key === "Enter" &&
+                    commandPaletteResults[commandPaletteIndex]
+                  ) {
+                    event.preventDefault();
+                    runCommandPaletteCommand(commandPaletteResults[commandPaletteIndex]);
+                  } else if (event.key === "Escape") {
+                    event.preventDefault();
+                    closeCommandPalette();
+                  }
+                }}
+                placeholder="Run command"
+              />
+            </label>
+            <div className="quick-open__results">
+              {commandPaletteResults.map((command, index) => (
+                <button
+                  className={[
+                    "quick-open__result",
+                    "command-palette__result",
+                    index === commandPaletteIndex ? "quick-open__result--active" : "",
+                    !command.enabled ? "quick-open__result--disabled" : "",
+                  ].join(" ")}
+                  key={command.id}
+                  disabled={!command.enabled}
+                  onClick={() => runCommandPaletteCommand(command)}
+                  onMouseEnter={() => setCommandPaletteIndex(index)}
+                >
+                  <Circle size={8} />
+                  <span className="command-palette__text">
+                    <strong>{command.title}</strong>
+                    <small>{command.detail}</small>
+                  </span>
+                </button>
+              ))}
+              {commandPaletteResults.length === 0 ? (
+                <div className="quick-open__empty">No matching commands</div>
               ) : null}
             </div>
           </div>

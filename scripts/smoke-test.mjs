@@ -268,6 +268,13 @@ async function runScenario(browser, url, colorScheme) {
 
   await assertTheme(page, colorScheme);
 
+  const commandModifier = process.platform === "darwin" ? "Meta" : "Control";
+  await page.keyboard.press(`${commandModifier}+Shift+P`);
+  await page.getByRole("dialog", { name: "Command palette" }).waitFor();
+  await page.locator('input[placeholder="Run command"]').fill("workspace");
+  await page.keyboard.press("Enter");
+  await page.locator('input[placeholder="Search contents"]').waitFor();
+
   await page.getByLabel("Filter files").click();
   await page.locator('input[placeholder="Filter files"]').fill("README");
   await page.getByText("README.md").waitFor();

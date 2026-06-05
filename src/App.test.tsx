@@ -602,6 +602,58 @@ describe("App shell interactions", () => {
     expect(await screen.findByPlaceholderText("Search contents")).toHaveFocus();
   });
 
+  it("opens the command palette from the keyboard and runs commands", async () => {
+    render(<App />);
+
+    expect(await treeButton("README.md")).toBeInTheDocument();
+
+    fireEvent.keyDown(window, { key: "p", metaKey: true, shiftKey: true });
+
+    const palette = screen.getByRole("dialog", { name: "Command palette" });
+    const input = within(palette).getByPlaceholderText("Run command");
+    expect(input).toHaveFocus();
+
+    fireEvent.change(input, { target: { value: "workspace" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    expect(screen.queryByRole("dialog", { name: "Command palette" }))
+      .not.toBeInTheDocument();
+    expect(await screen.findByPlaceholderText("Search contents")).toHaveFocus();
+  });
+
+  it("opens the command palette from the native menu", async () => {
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    render(<App />);
+
+    expect(await treeButton("README.md")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(eventMocks.listeners.has("menu://command-palette")).toBe(true),
+    );
+
+    act(() => {
+      eventMocks.listeners.get("menu://command-palette")?.({ payload: undefined });
+    });
+
+    expect(screen.getByRole("dialog", { name: "Command palette" })).toBeInTheDocument();
+  });
+
+  it("keeps unavailable command palette actions disabled", async () => {
+    render(<App />);
+
+    expect(await treeButton("README.md")).toBeInTheDocument();
+    fireEvent.keyDown(window, { key: "p", metaKey: true, shiftKey: true });
+
+    const palette = screen.getByRole("dialog", { name: "Command palette" });
+    const input = within(palette).getByPlaceholderText("Run command");
+    fireEvent.change(input, { target: { value: "current file search" } });
+
+    expect(
+      within(palette).getByRole("button", {
+        name: /Find in File\s*Search inside the active file/,
+      }),
+    ).toBeDisabled();
+  });
+
   it("disables save toolbar actions until there are unsaved edits", async () => {
     render(<App />);
 

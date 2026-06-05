@@ -19,6 +19,7 @@ Implemented:
 - Collapsible sidebar for focused editing.
 - Collapsed file-name filtering and bounded text search across the current workspace.
 - Collapsed current-file search over loaded and unsaved editor contents.
+- Lightweight command palette for discoverable editor and workspace commands.
 - Keyboard quick-open palette for opening files by path, including arrow-key result selection.
 - Keyboard tab navigation, numbered tab selection, and close commands.
 - Native Search menu with Go to File, Find in File, and Find in Files actions.
