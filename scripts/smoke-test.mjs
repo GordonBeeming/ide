@@ -213,6 +213,31 @@ async function assertTheme(page, expectedScheme) {
     );
   }
 
+  const forcedRegionClass = await page.evaluate((scheme) => {
+    const appShell = document.querySelector(".app-shell");
+    const editorRegion = document.querySelector(".editor-region");
+    if (!appShell) throw new Error("app shell missing");
+    if (!editorRegion) throw new Error("editor region missing");
+
+    const originalClassName = editorRegion.className;
+    const oppositeScheme = scheme === "light" ? "dark" : "light";
+    editorRegion.classList.remove(`editor-region--${scheme}`);
+    editorRegion.classList.add(`editor-region--${oppositeScheme}`);
+
+    const result = {
+      appShell: getComputedStyle(appShell).backgroundColor,
+      editorRegion: getComputedStyle(editorRegion).backgroundColor,
+    };
+    editorRegion.className = originalClassName;
+    return result;
+  }, expectedScheme);
+
+  if (forcedRegionClass.appShell !== forcedRegionClass.editorRegion) {
+    throw new Error(
+      `${expectedScheme} editor region class can override shell theme: shell=${forcedRegionClass.appShell}, editor=${forcedRegionClass.editorRegion}`,
+    );
+  }
+
   const expectedLight = expectedScheme === "light";
   for (const [name, value] of Object.entries({
     appShell: colors.appShell,
