@@ -107,7 +107,7 @@ import {
   setLspStatusHandler,
   workspacePathToFileUri,
 } from "./lsp";
-import { darkSchemeQuery, systemPrefersDark } from "./editorTheme";
+import { darkSchemeQuery, systemPrefersDark } from "./systemTheme";
 import {
   addPreviewTab,
   adjacentTabPath,
@@ -2215,7 +2215,7 @@ export default function App() {
 
   return (
     <main
-      className={appShellClass(sidebarCollapsed, prefersDark)}
+      className={appShellClass(sidebarCollapsed)}
       data-ide-theme={prefersDark ? "dark" : "light"}
     >
       <aside className="sidebar" aria-hidden={sidebarCollapsed}>
@@ -2538,7 +2538,7 @@ export default function App() {
           </div>
         </header>
 
-        <div className={editorRegionClass(prefersDark)}>
+        <div className={editorRegionClass()}>
           {activeFile && currentFileQuery.trim() ? (
             <div className="current-find-results" aria-label="Current file search results">
               <div className="current-find-results__header">

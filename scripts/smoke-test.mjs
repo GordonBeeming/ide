@@ -174,6 +174,7 @@ async function assertTheme(page, expectedScheme) {
       appShellClasses: [...appShell.classList],
       appShellTheme: appShell.dataset.ideTheme,
       documentTheme: document.documentElement.dataset.ideTheme,
+      documentColorScheme: document.documentElement.style.colorScheme,
       sidebar: getComputedStyle(sidebar).backgroundColor,
       topbar: getComputedStyle(topbar).backgroundColor,
       workbench: getComputedStyle(workbench).backgroundColor,
@@ -201,24 +202,19 @@ async function assertTheme(page, expectedScheme) {
     }
   });
 
-  if (!colors.appShellClasses.includes(`app-shell--${expectedScheme}`)) {
-    throw new Error(
-      `${expectedScheme} theme class missing: ${colors.appShellClasses.join(" ")}`,
-    );
-  }
   if (colors.documentTheme !== expectedScheme) {
     throw new Error(
       `${expectedScheme} document theme mismatch: ${colors.documentTheme ?? "unset"}`,
     );
   }
+  if (colors.documentColorScheme !== expectedScheme) {
+    throw new Error(
+      `${expectedScheme} document color-scheme mismatch: ${colors.documentColorScheme ?? "unset"}`,
+    );
+  }
   if (colors.appShellTheme !== expectedScheme) {
     throw new Error(
       `${expectedScheme} shell theme mismatch: ${colors.appShellTheme ?? "unset"}`,
-    );
-  }
-  if (!colors.editorRegionClasses.includes(`editor-region--${expectedScheme}`)) {
-    throw new Error(
-      `${expectedScheme} editor theme class missing: ${colors.editorRegionClasses.join(" ")}`,
     );
   }
   if (colors.appShell !== colors.editorRegion) {
@@ -242,28 +238,38 @@ async function assertTheme(page, expectedScheme) {
     );
   }
 
-  const forcedRegionClass = await page.evaluate((scheme) => {
+  const forcedLocalThemeMarkers = await page.evaluate((scheme) => {
     const appShell = document.querySelector(".app-shell");
     const editorRegion = document.querySelector(".editor-region");
     if (!appShell) throw new Error("app shell missing");
     if (!editorRegion) throw new Error("editor region missing");
 
     const originalClassName = editorRegion.className;
+    const originalShellTheme = appShell.dataset.ideTheme;
     const oppositeScheme = scheme === "light" ? "dark" : "light";
-    editorRegion.classList.remove(`editor-region--${scheme}`);
+    appShell.dataset.ideTheme = oppositeScheme;
     editorRegion.classList.add(`editor-region--${oppositeScheme}`);
 
     const result = {
       appShell: getComputedStyle(appShell).backgroundColor,
       editorRegion: getComputedStyle(editorRegion).backgroundColor,
+      workbench: getComputedStyle(document.querySelector(".workbench")).backgroundColor,
     };
+    if (originalShellTheme === undefined) {
+      delete appShell.dataset.ideTheme;
+    } else {
+      appShell.dataset.ideTheme = originalShellTheme;
+    }
     editorRegion.className = originalClassName;
     return result;
   }, expectedScheme);
 
-  if (forcedRegionClass.appShell !== forcedRegionClass.editorRegion) {
+  if (
+    forcedLocalThemeMarkers.appShell !== forcedLocalThemeMarkers.editorRegion ||
+    forcedLocalThemeMarkers.workbench !== forcedLocalThemeMarkers.editorRegion
+  ) {
     throw new Error(
-      `${expectedScheme} editor region class can override shell theme: shell=${forcedRegionClass.appShell}, editor=${forcedRegionClass.editorRegion}`,
+      `${expectedScheme} local theme markers can override root theme: shell=${forcedLocalThemeMarkers.appShell}, workbench=${forcedLocalThemeMarkers.workbench}, editor=${forcedLocalThemeMarkers.editorRegion}`,
     );
   }
 
@@ -444,6 +450,24 @@ async function runScenario(browser, url, colorScheme) {
   }
 }
 
+async function runSystemThemeScenario(browser, url) {
+  const context = await browser.newContext({
+    viewport: { width: 1280, height: 820 },
+  });
+  await context.route("**/api/**", fulfillApi);
+
+  const page = await context.newPage();
+  await page.goto(url, { waitUntil: "networkidle" });
+  await page.getByText("Workspace", { exact: true }).waitFor();
+  await page.getByText("No file selected").waitFor();
+
+  const expectedScheme = await page.evaluate(() =>
+    window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light",
+  );
+  await assertTheme(page, expectedScheme);
+  await context.close();
+}
+
 async function main() {
   const browserExecutable = findBrowserExecutable();
   if (!browserExecutable) {
@@ -475,6 +499,7 @@ async function main() {
       executablePath: browserExecutable,
       headless: true,
     });
+    await runSystemThemeScenario(browser, url);
     await runScenario(browser, url, "light");
     await runScenario(browser, url, "dark");
     console.log("Smoke tests passed");

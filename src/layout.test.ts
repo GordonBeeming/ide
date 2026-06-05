@@ -8,20 +8,14 @@ import {
 
 describe("layout state", () => {
   it("adds the collapsed shell modifier only when the sidebar is collapsed", () => {
-    expect(appShellClass(false)).toBe("app-shell app-shell--light");
+    expect(appShellClass(false)).toBe("app-shell");
     expect(appShellClass(true)).toBe(
-      "app-shell app-shell--light app-shell--sidebar-collapsed",
+      "app-shell app-shell--sidebar-collapsed",
     );
   });
 
-  it("adds the active system theme class to the app shell", () => {
-    expect(appShellClass(false, false)).toBe("app-shell app-shell--light");
-    expect(appShellClass(false, true)).toBe("app-shell app-shell--dark");
-  });
-
-  it("adds the active system theme class to the editor region", () => {
-    expect(editorRegionClass(false)).toBe("editor-region editor-region--light");
-    expect(editorRegionClass(true)).toBe("editor-region editor-region--dark");
+  it("keeps the editor region theme-neutral so document tokens control it", () => {
+    expect(editorRegionClass()).toBe("editor-region");
   });
 
   it("uses action titles that describe the next sidebar state", () => {
@@ -34,8 +28,10 @@ describe("layout state", () => {
 
     applyDocumentTheme(false, doc);
     expect(doc.documentElement.dataset.ideTheme).toBe("light");
+    expect(doc.documentElement.style.colorScheme).toBe("light");
 
     applyDocumentTheme(true, doc);
     expect(doc.documentElement.dataset.ideTheme).toBe("dark");
+    expect(doc.documentElement.style.colorScheme).toBe("dark");
   });
 });

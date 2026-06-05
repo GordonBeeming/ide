@@ -8,6 +8,7 @@
     "build": "tsc && vite build",
     "budget": "node scripts/bundle-budget.mjs",
     "finder:check": "node scripts/validate-finder-quick-action.mjs",
+    "launch:check": "node scripts/validate-launch-runners.mjs",
     "menu:check": "node scripts/validate-native-menu-contract.mjs",
     "tauri:check": "node scripts/validate-tauri-config.mjs",
     "preview": "vite preview --host 127.0.0.1",

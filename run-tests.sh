@@ -20,6 +20,7 @@ fi
 
 npm test
 npm run finder:check
+npm run launch:check
 npm run menu:check
 npm run tauri:check
 npm run build

@@ -211,10 +211,12 @@ pub fn search_workspace(
                 break;
             }
 
-            let lower_line = line.to_lowercase();
-            let Some(match_start) = lower_line.find(&normalized_query) else {
+            let Some(match_start) = case_insensitive_match_start_byte(line, &normalized_query)
+            else {
                 continue;
             };
+            let match_start = utf16_offset_for_byte_index(line, match_start);
+            let match_end = match_start + utf16_len(query);
 
             let relative = path
                 .strip_prefix(root)
@@ -224,7 +226,7 @@ pub fn search_workspace(
                 line_number: index + 1,
                 line_text: line.trim_end().to_string(),
                 match_start,
-                match_end: match_start + query.len(),
+                match_end,
             });
         }
     }
@@ -265,7 +267,10 @@ pub fn write_workspace_file(
 }
 
 pub fn create_workspace_file(root: &Path, relative: &str) -> Result<(), WorkspaceError> {
-    let path = resolve_workspace_path(root, relative)?;
+    let path = resolve_new_workspace_file_path(root, relative)?;
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
     let file = fs::OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -281,8 +286,8 @@ pub fn create_workspace_file(root: &Path, relative: &str) -> Result<(), Workspac
 }
 
 pub fn create_workspace_folder(root: &Path, relative: &str) -> Result<(), WorkspaceError> {
-    let path = resolve_workspace_path(root, relative)?;
-    match fs::create_dir(path) {
+    let path = resolve_new_workspace_entry_path(root, relative)?;
+    match fs::create_dir_all(path) {
         Ok(_) => Ok(()),
         Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
             Err(WorkspaceError::FileAlreadyExists)
@@ -399,6 +404,39 @@ fn is_known_binary_path(path: &Path) -> bool {
     )
 }
 
+fn utf16_offset_for_byte_index(value: &str, byte_index: usize) -> usize {
+    value
+        .char_indices()
+        .take_while(|(index, _)| *index < byte_index)
+        .map(|(_, character)| character.len_utf16())
+        .sum()
+}
+
+fn utf16_len(value: &str) -> usize {
+    value.chars().map(char::len_utf16).sum()
+}
+
+fn case_insensitive_match_start_byte(line: &str, normalized_query: &str) -> Option<usize> {
+    if normalized_query.is_empty() {
+        return Some(0);
+    }
+
+    for byte_start in line
+        .char_indices()
+        .map(|(index, _)| index)
+        .chain(std::iter::once(line.len()))
+    {
+        if line[byte_start..]
+            .to_lowercase()
+            .starts_with(normalized_query)
+        {
+            return Some(byte_start);
+        }
+    }
+
+    None
+}
+
 fn resolve_workspace_path(root: &Path, relative: &str) -> Result<PathBuf, WorkspaceError> {
     let relative_path = Path::new(relative);
     if relative_path.is_absolute() {
@@ -426,6 +464,65 @@ fn resolve_workspace_path(root: &Path, relative: &str) -> Result<PathBuf, Worksp
     }
 
     Ok(candidate)
+}
+
+fn resolve_new_workspace_file_path(root: &Path, relative: &str) -> Result<PathBuf, WorkspaceError> {
+    resolve_new_workspace_entry_path(root, relative)
+}
+
+fn resolve_new_workspace_entry_path(
+    root: &Path,
+    relative: &str,
+) -> Result<PathBuf, WorkspaceError> {
+    let relative_path = Path::new(relative);
+    if relative_path.is_absolute() {
+        return Err(WorkspaceError::OutsideWorkspace);
+    }
+
+    if relative_path.components().any(|component| {
+        matches!(
+            component,
+            Component::ParentDir | Component::Prefix(_) | Component::RootDir
+        )
+    }) {
+        return Err(WorkspaceError::InvalidPath);
+    }
+
+    if relative_path.file_name().is_none() {
+        return Err(WorkspaceError::InvalidPath);
+    }
+
+    let root = root.canonicalize()?;
+    let candidate = root.join(relative_path);
+    let parent = candidate.parent().ok_or(WorkspaceError::InvalidPath)?;
+    let existing_ancestor = nearest_existing_ancestor(parent)?;
+    let ancestor_metadata = fs::symlink_metadata(&existing_ancestor)?;
+    if ancestor_metadata.file_type().is_symlink() {
+        return Err(WorkspaceError::SymlinkUnsupported);
+    }
+    if !ancestor_metadata.is_dir() {
+        return Err(WorkspaceError::NotAnEntry);
+    }
+    let canonical_ancestor = existing_ancestor.canonicalize()?;
+    if !canonical_ancestor.starts_with(&root) {
+        return Err(WorkspaceError::OutsideWorkspace);
+    }
+
+    if candidate.exists() {
+        return Err(WorkspaceError::FileAlreadyExists);
+    }
+
+    Ok(candidate)
+}
+
+fn nearest_existing_ancestor(path: &Path) -> Result<PathBuf, WorkspaceError> {
+    let mut current = path;
+    loop {
+        if current.exists() {
+            return Ok(current.to_path_buf());
+        }
+        current = current.parent().ok_or(WorkspaceError::InvalidPath)?;
+    }
 }
 
 fn resolve_existing_workspace_file_path(
@@ -586,6 +683,18 @@ mod tests {
     }
 
     #[test]
+    fn create_workspace_file_creates_missing_parent_directories() {
+        let dir = tempdir().unwrap();
+
+        create_workspace_file(dir.path(), "src/features/new.tsx").unwrap();
+
+        assert_eq!(
+            fs::read_to_string(dir.path().join("src/features/new.tsx")).unwrap(),
+            ""
+        );
+    }
+
+    #[test]
     fn create_workspace_file_rejects_existing_files() {
         let dir = tempdir().unwrap();
         fs::write(dir.path().join("note.txt"), "before").unwrap();
@@ -608,6 +717,19 @@ mod tests {
         assert!(matches!(result, Err(WorkspaceError::InvalidPath)));
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn create_workspace_file_rejects_symlink_parent_sources() {
+        let dir = tempdir().unwrap();
+        let outside = tempdir().unwrap();
+        symlink(outside.path(), dir.path().join("linked")).unwrap();
+
+        let result = create_workspace_file(dir.path(), "linked/new.txt");
+
+        assert!(matches!(result, Err(WorkspaceError::SymlinkUnsupported)));
+        assert!(!outside.path().join("new.txt").exists());
+    }
+
     #[test]
     fn create_workspace_folder_creates_directory_inside_root() {
         let dir = tempdir().unwrap();
@@ -615,6 +737,15 @@ mod tests {
         create_workspace_folder(dir.path(), "src").unwrap();
 
         assert!(dir.path().join("src").is_dir());
+    }
+
+    #[test]
+    fn create_workspace_folder_creates_missing_parent_directories() {
+        let dir = tempdir().unwrap();
+
+        create_workspace_folder(dir.path(), "src/features/editor").unwrap();
+
+        assert!(dir.path().join("src/features/editor").is_dir());
     }
 
     #[test]
@@ -635,6 +766,19 @@ mod tests {
         let result = create_workspace_folder(dir.path(), "../outside");
 
         assert!(matches!(result, Err(WorkspaceError::InvalidPath)));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn create_workspace_folder_rejects_symlink_parent_sources() {
+        let dir = tempdir().unwrap();
+        let outside = tempdir().unwrap();
+        symlink(outside.path(), dir.path().join("linked")).unwrap();
+
+        let result = create_workspace_folder(dir.path(), "linked/new-folder");
+
+        assert!(matches!(result, Err(WorkspaceError::SymlinkUnsupported)));
+        assert!(!outside.path().join("new-folder").exists());
     }
 
     #[test]
@@ -902,6 +1046,32 @@ mod tests {
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].path, "src/main.rs");
         assert_eq!(results[0].line_number, 2);
+    }
+
+    #[test]
+    fn search_workspace_returns_browser_string_offsets_for_unicode_lines() {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join("README.md"), "éé 😀 Needle\n").unwrap();
+
+        let results = search_workspace(dir.path(), "needle", 10).unwrap();
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].line_text, "éé 😀 Needle");
+        assert_eq!(results[0].match_start, 6);
+        assert_eq!(results[0].match_end, 12);
+    }
+
+    #[test]
+    fn search_workspace_offsets_survive_case_expanding_unicode_before_match() {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join("README.md"), "İ prefix Needle\n").unwrap();
+
+        let results = search_workspace(dir.path(), "needle", 10).unwrap();
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].line_text, "İ prefix Needle");
+        assert_eq!(results[0].match_start, 9);
+        assert_eq!(results[0].match_end, 15);
     }
 
     #[test]

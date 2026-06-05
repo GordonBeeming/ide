@@ -19,9 +19,6 @@
   color: var(--text);
 }
 
-.app-shell,
-.app-shell--light,
-.app-shell[data-ide-theme="light"],
 :root[data-ide-theme="light"] {
   color-scheme: light;
   --bg: oklch(96% 0.006 230);
@@ -38,8 +35,6 @@
   --shadow: 0 12px 36px oklch(20% 0.02 230 / 16%);
 }
 
-.app-shell--dark,
-.app-shell[data-ide-theme="dark"],
 :root[data-ide-theme="dark"] {
   color-scheme: dark;
   --bg: oklch(15% 0.012 230);
@@ -54,6 +49,24 @@
   --editor-text: oklch(93% 0.01 230);
   --editor-gutter-bg: oklch(19% 0.014 230);
   --shadow: 0 18px 40px oklch(6% 0.01 230 / 42%);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-ide-theme]) {
+    color-scheme: dark;
+    --bg: oklch(15% 0.012 230);
+    --panel: oklch(19% 0.014 230);
+    --panel-strong: oklch(24% 0.016 230);
+    --text: oklch(93% 0.01 230);
+    --muted: oklch(68% 0.018 230);
+    --border: oklch(34% 0.02 230);
+    --accent: oklch(70% 0.18 31);
+    --accent-weak: oklch(28% 0.07 31);
+    --editor-bg: oklch(15% 0.012 230);
+    --editor-text: oklch(93% 0.01 230);
+    --editor-gutter-bg: oklch(19% 0.014 230);
+    --shadow: 0 18px 40px oklch(6% 0.01 230 / 42%);
+  }
 }
 
 * {
@@ -86,6 +99,7 @@ button {
   max-height: 100dvh;
   overflow: hidden;
   background: var(--bg);
+  color-scheme: inherit;
 }
 
 .app-shell--sidebar-collapsed {
@@ -500,24 +514,6 @@ button {
   background: var(--editor-bg);
 }
 
-.app-shell[data-ide-theme="light"] .workbench,
-.app-shell[data-ide-theme="light"] .editor-region,
-.app-shell[data-ide-theme="light"] .editor-host,
-.app-shell[data-ide-theme="light"] .editor-host .cm-editor,
-.app-shell[data-ide-theme="light"] .editor-host .cm-scroller {
-  background: oklch(96% 0.006 230);
-  color: oklch(18% 0.02 230);
-}
-
-.app-shell[data-ide-theme="dark"] .workbench,
-.app-shell[data-ide-theme="dark"] .editor-region,
-.app-shell[data-ide-theme="dark"] .editor-host,
-.app-shell[data-ide-theme="dark"] .editor-host .cm-editor,
-.app-shell[data-ide-theme="dark"] .editor-host .cm-scroller {
-  background: oklch(15% 0.012 230);
-  color: oklch(93% 0.01 230);
-}
-
 .topbar,
 .statusbar {
   display: flex;
@@ -644,14 +640,6 @@ button {
   min-height: 0;
   overflow: hidden;
   background: var(--editor-bg);
-}
-
-.editor-region--light {
-  color-scheme: light;
-}
-
-.editor-region--dark {
-  color-scheme: dark;
 }
 
 .current-find-results {

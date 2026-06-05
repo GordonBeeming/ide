@@ -19,6 +19,8 @@ Pass a file or folder path to open that target as the launch workspace:
 
 Folder targets become the workspace root. File targets open their parent folder as the workspace and then open the file as a persistent tab.
 
+When a file or folder target is supplied and an Ide instance is already reachable on the loopback API, `run.sh` authenticates with the per-run bearer token and hands the target to `/api/open-path` instead of starting another dev instance.
+
 Install the macOS Finder Quick Action:
 
 ```bash
@@ -47,6 +49,7 @@ npm run build
 npm run budget
 npm test
 npm run finder:check
+npm run launch:check
 npm run menu:check
 npm run tauri:check
 npm run smoke
@@ -62,6 +65,8 @@ npm run tauri:dev
 `npm run budget` checks the production `dist/` output after `npm run build`. Current raw-size limits are 600 KB for startup JavaScript, 80 KB for startup CSS, and 90 KB for the lazy editor chunk. These are deliberately above the current app size, but low enough to catch accidental heavy runtime dependencies.
 
 `npm run finder:check` runs the macOS Finder Quick Action installer against temporary service/support directories, lints the generated workflow on macOS, and checks that the runner uses the authenticated loopback open-path handoff. It does not touch the real `~/Library/Services` directory.
+
+`npm run launch:check` validates the local launch runners. It checks that `run.sh` and the generated Finder runner both use the authenticated loopback open-path handoff before attempting to start or reuse a dev server.
 
 `npm run menu:check` validates the native menu contract. It checks that every declared Tauri menu item has a Rust route, every expected native event is emitted by Rust, and every emitted app/menu event has a React listener.
 
@@ -89,11 +94,12 @@ The app is intentionally split into a small always-loaded shell and lazy-loaded 
 - `src/tauri.test.ts`: hosted browser transport coverage for bearer-token file/folder creation, native-only file picking, file rename/delete/writes, stale-save tokens, and loopback API base selection.
 - `scripts/bundle-budget.mjs`: production bundle budget coverage for startup assets and the lazy editor chunk.
 - `scripts/validate-finder-quick-action.mjs`: non-installing QA for the macOS Finder Quick Action service and generated runner.
+- `scripts/validate-launch-runners.mjs`: contract coverage for `run.sh` and the Finder runner startup/handoff path.
 - `scripts/validate-native-menu-contract.mjs`: contract coverage that keeps Tauri menu items, Rust emitted events, and React native-event listeners aligned.
 - `scripts/smoke-test.mjs`: browser smoke coverage for empty-pane and loaded-editor theme alignment plus core UI flows that are hard to trust from jsdom alone.
 - `src/language.ts`: lazy language loaders for common code and config files, including Rust, TypeScript/JavaScript/React, JSON, Markdown, shell, HTML, CSS/SCSS/Sass, C#, C/C++, JVM languages, Python, Go, Ruby, SQL, XML/YAML/TOML, Dockerfiles, PowerShell, diffs, and .NET project files.
 - `src-tauri/src/workspace.rs`: Rust-native workspace scanning, guarded file/folder creation, guarded file/folder rename/delete, and guarded file IO.
-- `src-tauri/src/http_server.rs`: loopback HTTP API, static asset server, authenticated write routes, and authenticated read-only Codex MCP endpoint.
+- `src-tauri/src/http_server.rs`: loopback HTTP API, browser endpoint static asset server with SPA fallback and missing asset 404s, authenticated write routes, and authenticated read-only Codex MCP endpoint.
 - `src-tauri/src/claude_bridge.rs`: authenticated Claude Code IDE WebSocket bridge.
 - `src-tauri/src/lib.rs`: Tauri command registration and in-memory editor context state.
 
@@ -218,7 +224,7 @@ Supported keyboard commands:
 - `F2`: rename the selected file or folder.
 - `Ctrl+Tab` / `Ctrl+Shift+Tab`: move between open tabs.
 
-Sidebar file filtering, workspace content search, and current-file search stay collapsed until requested; they remain open while they contain query text. `Escape` clears a populated search field first, then collapses the empty field on the next press. Tree rows support keyboard use: `Enter` opens files as preview tabs or toggles folders, `Space` toggles folders, and `ArrowRight` / `ArrowLeft` expand or collapse folders. Quick open lists editor-supported files only, so common binary/media/font/archive files are selectable in the tree without being offered as editor targets. Current-file search runs against the active tab contents, including unsaved edits, can reveal a matched line in the editor, and cycles matches with `Enter` / `Shift+Enter`. The status bar reports the active editor caret position without publishing empty selections into agent context. Common binary, media, font, archive, and executable file types select in the tree without attempting text-editor reads. New-file and new-folder creation use the selected folder or selected file's parent as the default path and reject existing targets. New files open as persistent tabs with their first scanned `modifiedMs`, so their first save gets the same stale-write protection as opened files. File and folder rename reject existing destination paths; file rename refreshes the renamed tab's `modifiedMs`, while folder rename updates any open child tab paths, expanded folder state, diagnostics, reveal state, and selection context. File and folder deletion require confirmation; deleting a folder also closes any open tabs under the folder and removes related diagnostics/context. Reload from disk refreshes the active file contents and modification timestamp; dirty files require confirmation before unsaved edits are discarded. Saves send the file's last known `modifiedMs`; if the disk file changed since it was opened, the backend returns a conflict and the tab remains dirty. Save All walks dirty tabs in order and stops at the first failed write so the error remains visible to the user. Close All uses the same dirty-file confirmation and failed-save behavior before clearing tabs.
+Sidebar file filtering, workspace content search, and current-file search stay collapsed until requested; they remain open while they contain query text. `Escape` clears a populated search field first, then collapses the empty field on the next press. Tree rows support keyboard use: `Enter` opens files as preview tabs or toggles folders, `Space` toggles folders, and `ArrowRight` / `ArrowLeft` expand or collapse folders. Quick open lists editor-supported files only, so common binary/media/font/archive files are selectable in the tree without being offered as editor targets. Current-file search runs against the active tab contents, including unsaved edits, can reveal a matched line in the editor, and cycles matches with `Enter` / `Shift+Enter`. The status bar reports the active editor caret position without publishing empty selections into agent context. Common binary, media, font, archive, and executable file types select in the tree without attempting text-editor reads. New-file and new-folder creation use the selected folder or selected file's parent as the default path and reject existing targets. New-file and new-folder creation also creates missing parent directories for explicit nested paths such as `src/features/new.tsx` or `src/features/editor`. New files open as persistent tabs with their first scanned `modifiedMs`, so their first save gets the same stale-write protection as opened files. File and folder rename reject existing destination paths; file rename refreshes the renamed tab's `modifiedMs`, while folder rename updates any open child tab paths, expanded folder state, diagnostics, reveal state, and selection context. File and folder deletion require confirmation; deleting a folder also closes any open tabs under the folder and removes related diagnostics/context. Reload from disk refreshes the active file contents and modification timestamp; dirty files require confirmation before unsaved edits are discarded. Saves send the file's last known `modifiedMs`; if the disk file changed since it was opened, the backend returns a conflict and the tab remains dirty. Save All walks dirty tabs in order and stops at the first failed write so the error remains visible to the user. Close All uses the same dirty-file confirmation and failed-save behavior before clearing tabs.
 
 ## LSP Direction
 

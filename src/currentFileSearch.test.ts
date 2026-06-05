@@ -34,6 +34,20 @@ describe("current file search", () => {
     expect(currentFileMatches("README.md", "readme", "   ")).toEqual([]);
   });
 
+  it("uses browser string offsets for unicode lines", () => {
+    const matches = currentFileMatches("README.md", "éé 😀 Needle", "needle");
+
+    expect(matches).toEqual([
+      {
+        path: "README.md",
+        lineNumber: 1,
+        lineText: "éé 😀 Needle",
+        matchStart: 6,
+        matchEnd: 12,
+      },
+    ]);
+  });
+
   it("respects the configured match limit", () => {
     const matches = currentFileMatches("README.md", "a a a", "a", 2);
 

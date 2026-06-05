@@ -312,9 +312,11 @@ describe("App shell interactions", () => {
     render(<App />);
 
     expect(await treeButton("README.md")).toBeInTheDocument();
+    expect(document.documentElement).toHaveAttribute("data-ide-theme", "light");
     expect(document.querySelector(".app-shell")).toHaveAttribute("data-ide-theme", "light");
-    expect(screen.getByText("No file selected").closest(".editor-region")).toHaveClass(
-      "editor-region--light",
+    expect(screen.getByText("No file selected").closest(".editor-region")).toHaveClass("editor-region");
+    expect(screen.getByText("No file selected").closest(".editor-region")).not.toHaveClass(
+      "editor-region--dark",
     );
   });
 
@@ -328,9 +330,11 @@ describe("App shell interactions", () => {
     render(<App />);
 
     expect(await treeButton("README.md")).toBeInTheDocument();
+    expect(document.documentElement).toHaveAttribute("data-ide-theme", "dark");
     expect(document.querySelector(".app-shell")).toHaveAttribute("data-ide-theme", "dark");
-    expect(screen.getByText("No file selected").closest(".editor-region")).toHaveClass(
-      "editor-region--dark",
+    expect(screen.getByText("No file selected").closest(".editor-region")).toHaveClass("editor-region");
+    expect(screen.getByText("No file selected").closest(".editor-region")).not.toHaveClass(
+      "editor-region--light",
     );
   });
 
@@ -1873,7 +1877,7 @@ describe("App shell interactions", () => {
     expect(screen.getByText("Create file failed")).toBeInTheDocument();
   });
 
-  it("creates a new folder in the selected folder", async () => {
+  it("creates a nested new folder in the selected folder", async () => {
     render(<App />);
 
     fireEvent.click(await treeButton("src"));
@@ -1881,13 +1885,15 @@ describe("App shell interactions", () => {
     expect(screen.getByLabelText("Path")).toHaveValue("src/new-folder");
 
     fireEvent.change(screen.getByLabelText("Path"), {
-      target: { value: "src/features" },
+      target: { value: "src/features/editor" },
     });
     fireEvent.click(screen.getByText("Create"));
 
-    await waitFor(() => expect(tauriMocks.createFolder).toHaveBeenCalledWith("src/features"));
+    await waitFor(() =>
+      expect(tauriMocks.createFolder).toHaveBeenCalledWith("src/features/editor"),
+    );
     expect(screen.queryByRole("dialog", { name: "New folder" })).not.toBeInTheDocument();
-    expect(screen.getByText("Created folder src/features")).toBeInTheDocument();
+    expect(screen.getByText("Created folder src/features/editor")).toBeInTheDocument();
   });
 
   it("keeps the new-folder dialog open when creation fails", async () => {

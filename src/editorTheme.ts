@@ -2,14 +2,8 @@ import { oneDark } from "@codemirror/theme-one-dark";
 import { EditorView } from "@codemirror/view";
 import type { Extension } from "@codemirror/state";
 
-export const darkSchemeQuery = "(prefers-color-scheme: dark)";
-
 export function editorThemeExtensions(prefersDark: boolean): Extension[] {
   return prefersDark ? [oneDark, highContrastTheme] : [highContrastTheme];
-}
-
-export function systemPrefersDark(): boolean {
-  return Boolean(window.matchMedia?.(darkSchemeQuery).matches);
 }
 
 const highContrastTheme = EditorView.theme({

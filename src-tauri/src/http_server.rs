@@ -708,7 +708,18 @@ async fn static_file(
 }
 
 async fn serve_static_path(frontend_dist: &Path, requested: &str) -> Response {
-    let path = static_asset_path(frontend_dist, requested);
+    let target = static_asset_path(frontend_dist, requested);
+
+    let path = match target {
+        StaticAssetTarget::File(path) | StaticAssetTarget::SpaIndex(path) => path,
+        StaticAssetTarget::MissingAsset(path) => {
+            return (
+                StatusCode::NOT_FOUND,
+                format!("Static asset not found: {}", DisplayPath(&path)),
+            )
+                .into_response();
+        }
+    };
 
     match tokio::fs::read(&path).await {
         Ok(bytes) => {
@@ -727,6 +738,13 @@ async fn serve_static_path(frontend_dist: &Path, requested: &str) -> Response {
     }
 }
 
+#[derive(Debug, PartialEq, Eq)]
+enum StaticAssetTarget {
+    File(PathBuf),
+    SpaIndex(PathBuf),
+    MissingAsset(PathBuf),
+}
+
 struct DisplayPath<'a>(&'a Path);
 
 impl fmt::Display for DisplayPath<'_> {
@@ -740,7 +758,7 @@ impl fmt::Display for DisplayPath<'_> {
     }
 }
 
-fn static_asset_path(frontend_dist: &Path, requested: &str) -> PathBuf {
+fn static_asset_path(frontend_dist: &Path, requested: &str) -> StaticAssetTarget {
     let requested_path = Path::new(requested);
     let requested_has_invalid_component = requested_path.components().any(|component| {
         matches!(
@@ -750,15 +768,23 @@ fn static_asset_path(frontend_dist: &Path, requested: &str) -> PathBuf {
     });
 
     if requested.is_empty() || requested_has_invalid_component {
-        return frontend_dist.join("index.html");
+        return StaticAssetTarget::SpaIndex(frontend_dist.join("index.html"));
     }
 
     let candidate = frontend_dist.join(requested_path);
     if candidate.exists() && candidate.is_file() {
-        candidate
+        StaticAssetTarget::File(candidate)
+    } else if is_static_asset_request(requested_path) {
+        StaticAssetTarget::MissingAsset(candidate)
     } else {
-        frontend_dist.join("index.html")
+        StaticAssetTarget::SpaIndex(frontend_dist.join("index.html"))
     }
+}
+
+fn is_static_asset_request(path: &Path) -> bool {
+    path.components()
+        .next()
+        .is_some_and(|component| component.as_os_str() == "assets")
 }
 
 fn content_type_for(path: &Path) -> HeaderValue {
@@ -773,6 +799,7 @@ fn content_type_for(path: &Path) -> HeaderValue {
         "json" => HeaderValue::from_static("application/json; charset=utf-8"),
         "png" => HeaderValue::from_static("image/png"),
         "svg" => HeaderValue::from_static("image/svg+xml"),
+        "woff2" => HeaderValue::from_static("font/woff2"),
         _ => HeaderValue::from_static("application/octet-stream"),
     }
 }
@@ -869,7 +896,10 @@ mod tests {
         let dir = tempdir().unwrap();
         let selected = static_asset_path(dir.path(), "../secret.txt");
 
-        assert_eq!(selected, dir.path().join("index.html"));
+        assert_eq!(
+            selected,
+            StaticAssetTarget::SpaIndex(dir.path().join("index.html"))
+        );
     }
 
     #[test]
@@ -879,7 +909,37 @@ mod tests {
 
         let selected = static_asset_path(dir.path(), "app.js");
 
-        assert_eq!(selected, dir.path().join("app.js"));
+        assert_eq!(selected, StaticAssetTarget::File(dir.path().join("app.js")));
+    }
+
+    #[test]
+    fn static_asset_path_returns_spa_index_for_client_routes() {
+        let dir = tempdir().unwrap();
+        let selected = static_asset_path(dir.path(), "workspace/src/main.rs");
+
+        assert_eq!(
+            selected,
+            StaticAssetTarget::SpaIndex(dir.path().join("index.html"))
+        );
+    }
+
+    #[test]
+    fn static_asset_path_returns_missing_asset_for_asset_routes() {
+        let dir = tempdir().unwrap();
+        let selected = static_asset_path(dir.path(), "assets/index-stale.js");
+
+        assert_eq!(
+            selected,
+            StaticAssetTarget::MissingAsset(dir.path().join("assets/index-stale.js"))
+        );
+    }
+
+    #[test]
+    fn content_type_includes_fonts_for_packaged_assets() {
+        assert_eq!(
+            content_type_for(Path::new("file-icons.woff2")),
+            HeaderValue::from_static("font/woff2")
+        );
     }
 
     #[test]

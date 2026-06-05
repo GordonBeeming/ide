@@ -1,9 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import {
-  darkSchemeQuery,
-  editorThemeExtensions,
-  systemPrefersDark,
-} from "./editorTheme";
+import { editorThemeExtensions } from "./editorTheme";
+import { darkSchemeQuery, systemPrefersDark } from "./systemTheme";
 
 describe("editor theme", () => {
   it("uses the one dark extension only when the system prefers dark mode", () => {

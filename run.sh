@@ -18,6 +18,41 @@ if [ -n "$OPEN_PATH" ]; then
   export IDE_OPEN_PATH="$OPEN_PATH"
 fi
 
+json_escape() {
+  sed 's/\\/\\\\/g; s/"/\\"/g'
+}
+
+handoff_to_running_app() {
+  local target="$1"
+  local api_base="http://127.0.0.1:17877"
+  local status token escaped_target
+  if ! status="$(curl -fsS --max-time 1 "$api_base/api/codex-mcp" 2>/dev/null)"; then
+    return 1
+  fi
+
+  token="$(printf '%s' "$status" | sed -n 's/.*"bearerToken"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')"
+  if [ -z "$token" ]; then
+    return 1
+  fi
+
+  escaped_target="$(printf '%s' "$target" | json_escape)"
+  if curl -fsS --max-time 2 \
+    -H "Authorization: Bearer $token" \
+    -H "Content-Type: application/json" \
+    -X POST \
+    --data "{\"path\":\"$escaped_target\"}" \
+    "$api_base/api/open-path" >/dev/null; then
+    echo "Handed target to running Ide: $target"
+    return 0
+  fi
+
+  return 1
+}
+
+if [ -n "$OPEN_PATH" ] && handoff_to_running_app "$OPEN_PATH"; then
+  exit 0
+fi
+
 if ! command -v npm >/dev/null 2>&1; then
   echo "npm is required. Install Node.js 24 or newer." >&2
   exit 1
