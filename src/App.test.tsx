@@ -1,5 +1,5 @@
 import "@testing-library/jest-dom/vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
 import type { EditorSelection, FileEntry } from "./tauri";
@@ -632,6 +632,110 @@ describe("App shell interactions", () => {
     expect(tabButton("README.md")).toBeTruthy();
     expect(
       screen.getByRole("alertdialog", { name: "Close modified file?" }),
+    ).toBeInTheDocument();
+    expect(document.querySelectorAll(".dirty-dot")).toHaveLength(1);
+  });
+
+  it("closes the active tab from the native File menu", async () => {
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    render(<App />);
+
+    fireEvent.click(await treeButton("README.md"));
+    await findTab("README.md");
+    await waitFor(() => expect(eventMocks.listeners.has("menu://close-tab")).toBe(true));
+
+    eventMocks.listeners.get("menu://close-tab")?.({ payload: undefined });
+
+    await waitFor(() => expect(tabButton("README.md")).toBeUndefined());
+    expect(screen.getByText("Open a file from the tree")).toBeInTheDocument();
+  });
+
+  it("closes all clean tabs from the native File menu", async () => {
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    render(<App />);
+
+    fireEvent.doubleClick(await treeButton("README.md"));
+    await findTab("README.md");
+    fireEvent.click(await treeButton("src"));
+    fireEvent.doubleClick(await treeButton("App.tsx"));
+    await findTab("src/App.tsx");
+    await waitFor(() => expect(eventMocks.listeners.has("menu://close-all")).toBe(true));
+
+    eventMocks.listeners.get("menu://close-all")?.({ payload: undefined });
+
+    await waitFor(() => expect(tabButton("README.md")).toBeUndefined());
+    expect(tabButton("src/App.tsx")).toBeUndefined();
+    expect(screen.getByText("Closed all files")).toBeInTheDocument();
+    expect(screen.getByText("Open a file from the tree")).toBeInTheDocument();
+  });
+
+  it("prompts before closing all dirty tabs from the native File menu", async () => {
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    render(<App />);
+
+    fireEvent.click(await treeButton("README.md"));
+    await findTab("README.md");
+    fireEvent.change(await screen.findByLabelText("Editor README.md"), {
+      target: { value: "changed readme" },
+    });
+    await waitFor(() => expect(eventMocks.listeners.has("menu://close-all")).toBe(true));
+
+    eventMocks.listeners.get("menu://close-all")?.({ payload: undefined });
+
+    const dialog = await screen.findByRole("alertdialog", { name: "Close all files?" });
+    expect(dialog).toHaveTextContent("README.md has edits that have not been saved.");
+    expect(tabButton("README.md")).toBeTruthy();
+    expect(tauriMocks.writeFile).not.toHaveBeenCalled();
+  });
+
+  it("saves and closes every dirty tab from the close all confirmation", async () => {
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    render(<App />);
+
+    fireEvent.click(await treeButton("README.md"));
+    await findTab("README.md");
+    fireEvent.change(await screen.findByLabelText("Editor README.md"), {
+      target: { value: "changed readme" },
+    });
+    await waitFor(() => expect(eventMocks.listeners.has("menu://close-all")).toBe(true));
+
+    eventMocks.listeners.get("menu://close-all")?.({ payload: undefined });
+    const dialog = await screen.findByRole("alertdialog", { name: "Close all files?" });
+    fireEvent.click(within(dialog).getByText("Save All"));
+
+    await waitFor(() =>
+      expect(tauriMocks.writeFile).toHaveBeenCalledWith(
+        "README.md",
+        "changed readme",
+        101,
+      ),
+    );
+    await waitFor(() => expect(tabButton("README.md")).toBeUndefined());
+    expect(
+      screen.queryByRole("alertdialog", { name: "Close all files?" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("keeps the close all confirmation open when save fails", async () => {
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    tauriMocks.writeFile.mockRejectedValueOnce(new Error("disk full"));
+    render(<App />);
+
+    fireEvent.click(await treeButton("README.md"));
+    await findTab("README.md");
+    fireEvent.change(await screen.findByLabelText("Editor README.md"), {
+      target: { value: "changed readme" },
+    });
+    await waitFor(() => expect(eventMocks.listeners.has("menu://close-all")).toBe(true));
+
+    eventMocks.listeners.get("menu://close-all")?.({ payload: undefined });
+    const dialog = await screen.findByRole("alertdialog", { name: "Close all files?" });
+    fireEvent.click(within(dialog).getByText("Save All"));
+
+    await screen.findByText("Error: disk full");
+    expect(tabButton("README.md")).toBeTruthy();
+    expect(
+      screen.getByRole("alertdialog", { name: "Close all files?" }),
     ).toBeInTheDocument();
     expect(document.querySelectorAll(".dirty-dot")).toHaveLength(1);
   });

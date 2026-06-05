@@ -12,7 +12,7 @@ Implemented:
 - React frontend.
 - File tree with package-backed coloured file icons and folder fallbacks.
 - Native folder picker for switching workspaces.
-- Native File menu with Open Folder, Recent Folders, and Recent Files.
+- Native File menu with Open Folder, Recent Folders, Recent Files, Close Tab, and Close All.
 - Native View menu toggles for showing dotfiles and generated/internal folders in the tree.
 - File/folder launch targets through the local runner and macOS Finder Quick Action.
 - Explicit workspace loading, empty, and load-failure retry states.

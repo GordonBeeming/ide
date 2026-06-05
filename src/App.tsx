@@ -143,6 +143,7 @@ export default function App() {
   const [pendingReloadPath, setPendingReloadPath] = useState<string>();
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [pendingClosePath, setPendingClosePath] = useState<string>();
+  const [pendingCloseAll, setPendingCloseAll] = useState(false);
   const [pendingAppClose, setPendingAppClose] = useState(false);
   const [integrationsOpen, setIntegrationsOpen] = useState(false);
   const [showDotfiles, setShowDotfiles] = useState(false);
@@ -749,6 +750,34 @@ export default function App() {
     return true;
   }, [dirtyFiles, hasDirtyFiles, saveFile]);
 
+  const closeAllFiles = useCallback(() => {
+    setOpenFiles([]);
+    setActivePath(undefined);
+    setPendingClosePath(undefined);
+    setPendingCloseAll(false);
+    setRevealTarget(undefined);
+    setSelection(undefined);
+    setCurrentFileQuery("");
+    setCurrentFindOpen(false);
+    setStatus("Closed all files");
+  }, []);
+
+  const requestCloseAllFiles = useCallback(() => {
+    if (openFiles.length === 0) return;
+    if (openFiles.some((file) => file.dirty)) {
+      setPendingCloseAll(true);
+      return;
+    }
+
+    closeAllFiles();
+  }, [closeAllFiles, openFiles]);
+
+  const saveAllAndCloseFiles = useCallback(async () => {
+    const saved = await saveAll();
+    if (!saved) return;
+    closeAllFiles();
+  }, [closeAllFiles, saveAll]);
+
   const reloadFileFromDisk = useCallback(async (path: string) => {
     setError(undefined);
     setStatus(`Reloading ${path}`);
@@ -940,6 +969,12 @@ export default function App() {
       listen<{ workspaceRoot: string; path: string }>("menu://open-file", (event) => {
         void openFileFromWorkspace(event.payload.workspaceRoot, event.payload.path);
       }),
+      listen("menu://close-tab", () => {
+        requestCloseActiveFile();
+      }),
+      listen("menu://close-all", () => {
+        requestCloseAllFiles();
+      }),
       listen<string>("app://error", (event) => {
         setError(event.payload);
       }),
@@ -982,7 +1017,12 @@ export default function App() {
       disposed = true;
       unlistenCallbacks.forEach((unlisten) => unlisten());
     };
-  }, [openFileFromWorkspace, openWorkspacePath]);
+  }, [
+    openFileFromWorkspace,
+    openWorkspacePath,
+    requestCloseActiveFile,
+    requestCloseAllFiles,
+  ]);
 
   const openWorkspace = useCallback(async () => {
     if (openFiles.some((file) => file.dirty)) {
@@ -1214,6 +1254,13 @@ export default function App() {
       } else if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "s") {
         event.preventDefault();
         saveActive();
+      } else if (
+        (event.metaKey || event.ctrlKey) &&
+        event.shiftKey &&
+        event.key.toLowerCase() === "w"
+      ) {
+        event.preventDefault();
+        requestCloseAllFiles();
       } else if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "w") {
         event.preventDefault();
         requestCloseActiveFile();
@@ -1255,6 +1302,9 @@ export default function App() {
       } else if (event.key === "Escape" && pendingReloadPath) {
         event.preventDefault();
         cancelReloadActiveFile();
+      } else if (event.key === "Escape" && pendingCloseAll) {
+        event.preventDefault();
+        setPendingCloseAll(false);
       } else if (event.key === "Escape" && pendingAppClose) {
         event.preventDefault();
         setPendingAppClose(false);
@@ -1288,12 +1338,14 @@ export default function App() {
     openNewFileDialog,
     openFiles,
     pendingAppClose,
+    pendingCloseAll,
     pendingClosePath,
     pendingDeletePath,
     pendingReloadPath,
     quickOpenVisible,
     renameDialogOpen,
     requestCloseActiveFile,
+    requestCloseAllFiles,
     requestReloadActiveFile,
     saveActive,
     saveAll,
@@ -2027,6 +2079,49 @@ export default function App() {
               >
                 <Save size={15} />
                 Save
+              </button>
+            </div>
+          </section>
+        </div>
+      ) : null}
+
+      {pendingCloseAll ? (
+        <div className="dialog-backdrop" role="presentation">
+          <section
+            className="confirm-dialog"
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="dirty-close-all-title"
+          >
+            <div>
+              <div className="eyebrow">Unsaved changes</div>
+              <h2 id="dirty-close-all-title">Close all files?</h2>
+              <p>
+                {dirtyFiles.length === 1
+                  ? `${dirtyFiles[0].path} has edits that have not been saved.`
+                  : `${dirtyFiles.length} files have edits that have not been saved.`}
+              </p>
+            </div>
+            <div className="confirm-dialog__actions">
+              <button
+                className="command-button command-button--quiet"
+                onClick={() => setPendingCloseAll(false)}
+              >
+                Cancel
+              </button>
+              <button
+                className="command-button command-button--danger"
+                onClick={closeAllFiles}
+              >
+                <Trash2 size={15} />
+                Discard
+              </button>
+              <button
+                className="command-button command-button--primary"
+                onClick={saveAllAndCloseFiles}
+              >
+                <Save size={15} />
+                Save All
               </button>
             </div>
           </section>

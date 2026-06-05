@@ -589,6 +589,16 @@ pub fn run() {
                 return;
             }
 
+            if id == "close_tab" {
+                let _ = app.emit("menu://close-tab", ());
+                return;
+            }
+
+            if id == "close_all" {
+                let _ = app.emit("menu://close-all", ());
+                return;
+            }
+
             if let Some(index) = id.strip_prefix("recent_workspace:") {
                 let Ok(index) = index.parse::<usize>() else {
                     return;
@@ -711,6 +721,14 @@ fn rebuild_app_menu(app: &tauri::AppHandle, state: &AppState) -> Result<(), Comm
         .accelerator("CmdOrCtrl+O")
         .build(app)
         .map_err(|error| CommandError::Recent(error.to_string()))?;
+    let close_tab = MenuItemBuilder::with_id("close_tab", "Close Tab")
+        .accelerator("CmdOrCtrl+W")
+        .build(app)
+        .map_err(|error| CommandError::Recent(error.to_string()))?;
+    let close_all = MenuItemBuilder::with_id("close_all", "Close All")
+        .accelerator("CmdOrCtrl+Shift+W")
+        .build(app)
+        .map_err(|error| CommandError::Recent(error.to_string()))?;
 
     let mut recent_workspace_menu = SubmenuBuilder::new(app, "Recent Folders");
     if recent_items.workspaces.is_empty() {
@@ -760,6 +778,9 @@ fn rebuild_app_menu(app: &tauri::AppHandle, state: &AppState) -> Result<(), Comm
         .item(&open_folder)
         .item(&recent_workspace_menu)
         .item(&recent_file_menu)
+        .separator()
+        .item(&close_tab)
+        .item(&close_all)
         .separator()
         .quit()
         .build()

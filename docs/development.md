@@ -69,7 +69,7 @@ The app is intentionally split into a small always-loaded shell and lazy-loaded 
 - `src/quickOpen.ts`: tested quick-open file matching, ranking, and keyboard selection rules.
 - `src/editorNavigation.ts`: tested line clamping for search-result reveal behavior.
 - `src/currentFileSearch.ts`: tested current-file search over loaded and unsaved editor contents.
-- `src/App.test.tsx`: rendered shell coverage for non-text file selection, collapsed search controls, preview-tab lifecycle, dirty-tab save-and-close prompts, keyboard tab switching, current-file search, new-file/folder creation, file rename/delete, reload-from-disk behavior, stale-save handling, Save All success/failure behavior, active-file-safe agent selection context, and content search result/error behavior.
+- `src/App.test.tsx`: rendered shell coverage for non-text file selection, collapsed search controls, preview-tab lifecycle, dirty-tab save-and-close prompts, native Close Tab/Close All menu handling, keyboard tab switching, current-file search, new-file/folder creation, file rename/delete, reload-from-disk behavior, stale-save handling, Save All success/failure behavior, active-file-safe agent selection context, and content search result/error behavior.
 - `src/tauri.test.ts`: hosted browser transport coverage for bearer-token file/folder creation, file rename/delete/writes, stale-save tokens, and loopback API base selection.
 - `scripts/bundle-budget.mjs`: production bundle budget coverage for startup assets and the lazy editor chunk.
 - `scripts/smoke-test.mjs`: browser smoke coverage for shell/editor theme alignment and core UI flows that are hard to trust from jsdom alone.
@@ -153,6 +153,8 @@ The File menu owns:
 - `Open Folder...`
 - `Recent Folders`
 - `Recent Files`
+- `Close Tab`
+- `Close All`
 
 Menu selections are delivered to the frontend through Tauri events. The frontend applies the same dirty-file guard used by the sidebar folder picker before switching workspace roots.
 
@@ -163,6 +165,7 @@ Supported keyboard commands:
 - `Cmd/Ctrl+S`: save the active file.
 - `Cmd/Ctrl+Shift+S`: save all dirty files.
 - `Cmd/Ctrl+W`: close the active tab.
+- `Cmd/Ctrl+Shift+W`: close all tabs.
 - `Cmd/Ctrl+B`: toggle the sidebar.
 - `Cmd/Ctrl+F`: open and focus current-file search.
 - `Cmd/Ctrl+N`: create a new file.
@@ -170,7 +173,7 @@ Supported keyboard commands:
 - `F2`: rename the selected file.
 - `Ctrl+Tab` / `Ctrl+Shift+Tab`: move between open tabs.
 
-Sidebar file filtering, workspace content search, and current-file search stay collapsed until requested; they remain open while they contain query text. Current-file search runs against the active tab contents, including unsaved edits, and can reveal a matched line in the editor. Common binary, media, font, archive, and executable file types select in the tree without attempting text-editor reads. New-file and new-folder creation use the selected folder or selected file's parent as the default path and reject existing targets. New files open as persistent tabs with their first scanned `modifiedMs`, so their first save gets the same stale-write protection as opened files. File rename is file-only for now, rejects existing destination paths, and updates an open tab plus its refreshed `modifiedMs` when the renamed file is open. File deletion is file-only, requires confirmation, and closes the deleted file's open tab. Reload from disk refreshes the active file contents and modification timestamp; dirty files require confirmation before unsaved edits are discarded. Saves send the file's last known `modifiedMs`; if the disk file changed since it was opened, the backend returns a conflict and the tab remains dirty. Save All walks dirty tabs in order and stops at the first failed write so the error remains visible to the user.
+Sidebar file filtering, workspace content search, and current-file search stay collapsed until requested; they remain open while they contain query text. Current-file search runs against the active tab contents, including unsaved edits, and can reveal a matched line in the editor. Common binary, media, font, archive, and executable file types select in the tree without attempting text-editor reads. New-file and new-folder creation use the selected folder or selected file's parent as the default path and reject existing targets. New files open as persistent tabs with their first scanned `modifiedMs`, so their first save gets the same stale-write protection as opened files. File rename is file-only for now, rejects existing destination paths, and updates an open tab plus its refreshed `modifiedMs` when the renamed file is open. File deletion is file-only, requires confirmation, and closes the deleted file's open tab. Reload from disk refreshes the active file contents and modification timestamp; dirty files require confirmation before unsaved edits are discarded. Saves send the file's last known `modifiedMs`; if the disk file changed since it was opened, the backend returns a conflict and the tab remains dirty. Save All walks dirty tabs in order and stops at the first failed write so the error remains visible to the user. Close All uses the same dirty-file confirmation and failed-save behavior before clearing tabs.
 
 ## LSP Direction
 
