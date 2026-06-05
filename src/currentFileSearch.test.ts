@@ -48,6 +48,41 @@ describe("current file search", () => {
     ]);
   });
 
+  it("keeps offsets stable when case folding expands characters before the match", () => {
+    const matches = currentFileMatches("README.md", "İ prefix Needle", "needle");
+
+    expect(matches).toEqual([
+      {
+        path: "README.md",
+        lineNumber: 1,
+        lineText: "İ prefix Needle",
+        matchStart: 9,
+        matchEnd: 15,
+      },
+    ]);
+  });
+
+  it("treats punctuation in queries as literal text", () => {
+    const matches = currentFileMatches("README.md", "a.b axb a.b", "a.b");
+
+    expect(matches).toEqual([
+      {
+        path: "README.md",
+        lineNumber: 1,
+        lineText: "a.b axb a.b",
+        matchStart: 0,
+        matchEnd: 3,
+      },
+      {
+        path: "README.md",
+        lineNumber: 1,
+        lineText: "a.b axb a.b",
+        matchStart: 8,
+        matchEnd: 11,
+      },
+    ]);
+  });
+
   it("respects the configured match limit", () => {
     const matches = currentFileMatches("README.md", "a a a", "a", 2);
 
