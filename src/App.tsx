@@ -35,6 +35,7 @@ import {
 } from "lucide-react";
 import {
   diagnosticKey,
+  diagnosticLocationLabel,
   diagnosticSeverityLabel,
   sortDiagnostics,
 } from "./diagnostics";
@@ -2301,6 +2302,8 @@ export default function App() {
               <button
                 className="diagnostic-row"
                 key={diagnosticKey(diagnostic)}
+                aria-label={`${diagnosticSeverityLabel(diagnostic.severity)} at ${diagnosticLocationLabel(diagnostic)}: ${diagnostic.message}`}
+                title={`${diagnosticLocationLabel(diagnostic)} ${diagnostic.message}`}
                 onClick={() =>
                   openPathByName(diagnostic.filePath, false, diagnostic.startLine)
                 }
@@ -2311,7 +2314,7 @@ export default function App() {
                 <TriangleAlert size={14} />
                 <span className="diagnostic-row__main">
                   <span className="diagnostic-row__path">
-                    {diagnostic.filePath}:{diagnostic.startLine}
+                    {diagnosticLocationLabel(diagnostic)}
                   </span>
                   <span className="diagnostic-row__message">{diagnostic.message}</span>
                 </span>

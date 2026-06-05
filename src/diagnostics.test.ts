@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   diagnosticSeverityLabel,
+  diagnosticLocationLabel,
   diagnosticSummary,
   sortDiagnostics,
 } from "./diagnostics";
@@ -33,6 +34,10 @@ describe("diagnostics helpers", () => {
     expect(diagnosticSummary(0)).toBe("0 diagnostics");
     expect(diagnosticSummary(1)).toBe("1 diagnostic");
     expect(diagnosticSummary(4)).toBe("4 diagnostics");
+  });
+
+  it("formats diagnostic locations with line and column", () => {
+    expect(diagnosticLocationLabel(diagnostic("src/a.ts", 3))).toBe("src/a.ts:3:1");
   });
 
   it("sorts diagnostics by file and start position", () => {

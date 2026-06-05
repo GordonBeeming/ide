@@ -12,6 +12,10 @@ export function diagnosticSummary(count: number) {
   return count === 1 ? "1 diagnostic" : `${count} diagnostics`;
 }
 
+export function diagnosticLocationLabel(diagnostic: EditorDiagnostic) {
+  return `${diagnostic.filePath}:${diagnostic.startLine}:${diagnostic.startColumn}`;
+}
+
 export function sortDiagnostics(diagnostics: EditorDiagnostic[]) {
   return [...diagnostics].sort(
     (a, b) =>

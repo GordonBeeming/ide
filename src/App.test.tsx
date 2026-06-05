@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
 import type { EditorCommandRequest } from "./editorCommands";
 import type { EditorCursor } from "./editorCursor";
-import type { EditorSelection, FileEntry } from "./tauri";
+import type { EditorDiagnostic, EditorSelection, FileEntry } from "./tauri";
 
 const files: FileEntry[] = [
   {
@@ -92,6 +92,16 @@ const eventMocks = vi.hoisted(() => ({
   unlisten: vi.fn(),
 }));
 
+const lspMocks = vi.hoisted(() => ({
+  diagnosticsHandler: undefined as
+    | ((filePath: string, diagnostics: EditorDiagnostic[]) => void)
+    | undefined,
+  setLspDiagnosticsHandler: vi.fn(),
+  setLspErrorHandler: vi.fn(),
+  setLspRootUri: vi.fn(),
+  setLspStatusHandler: vi.fn(),
+}));
+
 vi.mock("@tauri-apps/api/event", () => ({
   listen: eventMocks.listen,
 }));
@@ -126,10 +136,10 @@ vi.mock("./tauri", async () => {
 });
 
 vi.mock("./lsp", () => ({
-  setLspDiagnosticsHandler: vi.fn(),
-  setLspErrorHandler: vi.fn(),
-  setLspRootUri: vi.fn(),
-  setLspStatusHandler: vi.fn(),
+  setLspDiagnosticsHandler: lspMocks.setLspDiagnosticsHandler,
+  setLspErrorHandler: lspMocks.setLspErrorHandler,
+  setLspRootUri: lspMocks.setLspRootUri,
+  setLspStatusHandler: lspMocks.setLspStatusHandler,
   workspacePathToFileUri: (path: string) => `file://${path}`,
 }));
 
@@ -204,6 +214,14 @@ describe("App shell interactions", () => {
       return eventMocks.unlisten;
     });
     eventMocks.unlisten.mockReset();
+    lspMocks.diagnosticsHandler = undefined;
+    lspMocks.setLspDiagnosticsHandler.mockReset();
+    lspMocks.setLspDiagnosticsHandler.mockImplementation((handler) => {
+      lspMocks.diagnosticsHandler = handler;
+    });
+    lspMocks.setLspErrorHandler.mockReset();
+    lspMocks.setLspRootUri.mockReset();
+    lspMocks.setLspStatusHandler.mockReset();
     tauriMocks.getWorkspaceRoot.mockResolvedValue("/workspace");
     tauriMocks.getInitialFile.mockResolvedValue(undefined);
     tauriMocks.listFiles.mockResolvedValue(files);
@@ -1576,6 +1594,54 @@ describe("App shell interactions", () => {
     );
   });
 
+  it("opens diagnostics at the precise reported location", async () => {
+    render(<App />);
+
+    expect(await treeButton("README.md")).toBeInTheDocument();
+    await waitFor(() => expect(lspMocks.diagnosticsHandler).toBeTypeOf("function"));
+
+    act(() => {
+      lspMocks.diagnosticsHandler?.("src/App.tsx", [
+        diagnostic("src/App.tsx", "Expected semicolon", 1, 7, 13),
+      ]);
+    });
+
+    const row = await screen.findByRole("button", {
+      name: "Error at src/App.tsx:7:13: Expected semicolon",
+    });
+    expect(row).toHaveTextContent("src/App.tsx:7:13");
+
+    fireEvent.click(row);
+
+    expect(await screen.findByLabelText("Editor src/App.tsx")).toHaveValue(
+      "export function App() {}",
+    );
+    expect(screen.getByText("Reveal line 7")).toBeInTheDocument();
+    expect(tabButton("src/App.tsx")).toHaveClass("tab--temp");
+  });
+
+  it("pins diagnostic tabs when opened with a double click", async () => {
+    render(<App />);
+
+    expect(await treeButton("README.md")).toBeInTheDocument();
+    await waitFor(() => expect(lspMocks.diagnosticsHandler).toBeTypeOf("function"));
+
+    act(() => {
+      lspMocks.diagnosticsHandler?.("src/App.tsx", [
+        diagnostic("src/App.tsx", "React component is unused", 2, 4, 1),
+      ]);
+    });
+
+    const row = await screen.findByRole("button", {
+      name: "Warning at src/App.tsx:4:1: React component is unused",
+    });
+    fireEvent.doubleClick(row);
+
+    expect(await screen.findByLabelText("Editor src/App.tsx")).toBeInTheDocument();
+    expect(screen.getByText("Reveal line 4")).toBeInTheDocument();
+    expect(tabButton("src/App.tsx")).not.toHaveClass("tab--temp");
+  });
+
   it("cycles current-file search results with Enter and Shift+Enter", async () => {
     tauriMocks.readFile.mockImplementation(async (path: string) => {
       if (path === "README.md") {
@@ -1970,6 +2036,24 @@ async function openCurrentFileFind() {
 function latestAgentContext() {
   const calls = tauriMocks.updateAgentContext.mock.calls;
   return calls.at(-1)?.[0];
+}
+
+function diagnostic(
+  filePath: string,
+  message: string,
+  severity: number,
+  startLine: number,
+  startColumn: number,
+): EditorDiagnostic {
+  return {
+    filePath,
+    message,
+    severity,
+    startLine,
+    startColumn,
+    endLine: startLine,
+    endColumn: startColumn + 1,
+  };
 }
 
 function mockPickedNotesFile() {
