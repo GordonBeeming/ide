@@ -1974,6 +1974,13 @@ export default function App() {
       } else if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "b") {
         event.preventDefault();
         toggleSidebar();
+      } else if (
+        (event.metaKey || event.ctrlKey) &&
+        event.shiftKey &&
+        event.key.toLowerCase() === "n"
+      ) {
+        event.preventDefault();
+        openNewFolderDialog();
       } else if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "n") {
         event.preventDefault();
         openNewFileDialog();

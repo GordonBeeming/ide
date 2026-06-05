@@ -696,6 +696,22 @@ describe("App shell interactions", () => {
     expect(await screen.findByPlaceholderText("Search contents")).toHaveFocus();
   });
 
+  it("opens new file and new folder dialogs from keyboard shortcuts", async () => {
+    render(<App />);
+
+    expect(await treeButton("README.md")).toBeInTheDocument();
+
+    fireEvent.keyDown(window, { key: "n", metaKey: true });
+
+    expect(screen.getByRole("dialog", { name: "New file" })).toBeInTheDocument();
+    fireEvent.keyDown(window, { key: "Escape" });
+
+    fireEvent.keyDown(window, { key: "n", metaKey: true, shiftKey: true });
+
+    expect(screen.getByRole("dialog", { name: "New folder" })).toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "New file" })).not.toBeInTheDocument();
+  });
+
   it("keeps native picker toolbar actions disabled in hosted browser mode", async () => {
     render(<App />);
 
