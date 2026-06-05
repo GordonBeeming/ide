@@ -646,15 +646,41 @@ describe("App shell interactions", () => {
     expect(screen.queryByPlaceholderText("Find in file")).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByTitle("Filter files"));
-    expect(await screen.findByPlaceholderText("Filter files")).toHaveFocus();
+    const filterInput = await screen.findByPlaceholderText("Filter files");
+    expect(filterInput).toHaveFocus();
+    fireEvent.change(filterInput, { target: { value: "App" } });
+    expect(await treeButton("App.tsx")).toBeInTheDocument();
+    fireEvent.keyDown(filterInput, { key: "Escape" });
+    await waitFor(() => expect(filterInput).toHaveValue(""));
+    expect(await treeButton("README.md")).toBeInTheDocument();
+    fireEvent.keyDown(filterInput, { key: "Escape" });
+    await waitFor(() =>
+      expect(screen.queryByPlaceholderText("Filter files")).not.toBeInTheDocument(),
+    );
 
     fireEvent.click(screen.getByTitle("Search contents"));
-    expect(await screen.findByPlaceholderText("Search contents")).toHaveFocus();
+    const contentInput = await screen.findByPlaceholderText("Search contents");
+    expect(contentInput).toHaveFocus();
+    fireEvent.change(contentInput, { target: { value: "readme" } });
+    fireEvent.keyDown(contentInput, { key: "Escape" });
+    await waitFor(() => expect(contentInput).toHaveValue(""));
+    fireEvent.keyDown(contentInput, { key: "Escape" });
+    await waitFor(() =>
+      expect(screen.queryByPlaceholderText("Search contents")).not.toBeInTheDocument(),
+    );
 
     fireEvent.click(await treeButton("README.md"));
     await findTab("README.md");
     fireEvent.click(screen.getByTitle("Find in file"));
-    expect(await screen.findByPlaceholderText("Find in file")).toHaveFocus();
+    const findInput = await screen.findByPlaceholderText("Find in file");
+    expect(findInput).toHaveFocus();
+    fireEvent.change(findInput, { target: { value: "read" } });
+    fireEvent.keyDown(findInput, { key: "Escape" });
+    await waitFor(() => expect(findInput).toHaveValue(""));
+    fireEvent.keyDown(findInput, { key: "Escape" });
+    await waitFor(() =>
+      expect(screen.queryByPlaceholderText("Find in file")).not.toBeInTheDocument(),
+    );
   });
 
   it("opens quick open and search fields from the native Search menu", async () => {

@@ -12,7 +12,7 @@ Claude Code IDE integration is based on a localhost MCP transport discovered thr
 
 - Official Claude Code docs describe VS Code integration as a `127.0.0.1` server with a fresh auth token written under `~/.claude/ide/` using `0600` file permissions in a `0700` directory.
 - Community implementations document the same discovery shape: `~/.claude/ide/<port>.lock`, `transport: "ws"`, `workspaceFolders`, and `authToken`.
-- The first implementation in this repo exposes read-only tools only: current selection, latest selection, open editors, workspace folders, and diagnostics placeholder.
+- The first implementation in this repo exposes read-only tools only: current selection, latest selection, open editors, workspace folders, and diagnostics.
 
 References:
 

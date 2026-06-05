@@ -1117,6 +1117,66 @@ export default function App() {
     setActiveSidebarSearch("content");
   }, []);
 
+  const handleFilterSearchKeyDown = useCallback(
+    (event: ReactKeyboardEvent<HTMLInputElement>) => {
+      if (event.key !== "Escape") return;
+
+      event.preventDefault();
+      event.stopPropagation();
+      if (filter.length > 0) {
+        setFilter("");
+        return;
+      }
+
+      setActiveSidebarSearch((current) =>
+        current === "filter" ? undefined : current,
+      );
+    },
+    [filter],
+  );
+
+  const handleContentSearchKeyDown = useCallback(
+    (event: ReactKeyboardEvent<HTMLInputElement>) => {
+      if (event.key !== "Escape") return;
+
+      event.preventDefault();
+      event.stopPropagation();
+      if (contentQuery.length > 0) {
+        setContentQuery("");
+        setSearchResults([]);
+        setSearching(false);
+        return;
+      }
+
+      setActiveSidebarSearch((current) =>
+        current === "content" ? undefined : current,
+      );
+    },
+    [contentQuery],
+  );
+
+  const handleCurrentFindKeyDown = useCallback(
+    (event: ReactKeyboardEvent<HTMLInputElement>) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        revealCurrentFindMatch(event.shiftKey ? -1 : 1);
+        return;
+      }
+
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      event.stopPropagation();
+      if (currentFileQuery.length > 0) {
+        setCurrentFileQuery("");
+        setCurrentFindIndex(-1);
+        return;
+      }
+
+      setCurrentFindOpen(false);
+    },
+    [currentFileQuery, revealCurrentFindMatch],
+  );
+
   const cancelReloadActiveFile = useCallback(() => {
     setPendingReloadPath(undefined);
   }, []);
@@ -2211,6 +2271,7 @@ export default function App() {
                 }
               }}
               onChange={(event) => setFilter(event.target.value)}
+              onKeyDown={handleFilterSearchKeyDown}
               placeholder="Filter files"
             />
           </label>
@@ -2230,6 +2291,7 @@ export default function App() {
                 }
               }}
               onChange={(event) => setContentQuery(event.target.value)}
+              onKeyDown={handleContentSearchKeyDown}
               placeholder="Search contents"
             />
           </label>
@@ -2394,11 +2456,7 @@ export default function App() {
                     }
                   }}
                   onChange={(event) => setCurrentFileQuery(event.target.value)}
-                  onKeyDown={(event) => {
-                    if (event.key !== "Enter") return;
-                    event.preventDefault();
-                    revealCurrentFindMatch(event.shiftKey ? -1 : 1);
-                  }}
+                  onKeyDown={handleCurrentFindKeyDown}
                   placeholder="Find in file"
                 />
                 <span>
