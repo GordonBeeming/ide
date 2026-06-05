@@ -174,6 +174,7 @@ async function assertTheme(page, expectedScheme) {
       sidebar: getComputedStyle(sidebar).backgroundColor,
       topbar: getComputedStyle(topbar).backgroundColor,
       editorRegion: getComputedStyle(editorRegion).backgroundColor,
+      editorRegionClasses: [...editorRegion.classList],
       cmScroller: cmScroller ? getComputedStyle(cmScroller).backgroundColor : undefined,
     };
   });
@@ -186,6 +187,11 @@ async function assertTheme(page, expectedScheme) {
   if (colors.documentTheme !== expectedScheme) {
     throw new Error(
       `${expectedScheme} document theme mismatch: ${colors.documentTheme ?? "unset"}`,
+    );
+  }
+  if (!colors.editorRegionClasses.includes(`editor-region--${expectedScheme}`)) {
+    throw new Error(
+      `${expectedScheme} editor theme class missing: ${colors.editorRegionClasses.join(" ")}`,
     );
   }
   if (colors.appShell !== colors.editorRegion) {

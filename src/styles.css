@@ -634,6 +634,20 @@ button {
   background: var(--editor-bg);
 }
 
+.editor-region--light {
+  color-scheme: light;
+  --editor-bg: oklch(96% 0.006 230);
+  --editor-text: oklch(18% 0.02 230);
+  --editor-gutter-bg: oklch(93% 0.008 230);
+}
+
+.editor-region--dark {
+  color-scheme: dark;
+  --editor-bg: oklch(15% 0.012 230);
+  --editor-text: oklch(93% 0.01 230);
+  --editor-gutter-bg: oklch(19% 0.014 230);
+}
+
 .current-find-results {
   max-height: 148px;
   overflow: auto;

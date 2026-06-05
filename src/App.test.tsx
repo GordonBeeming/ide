@@ -239,6 +239,7 @@ describe("App shell interactions", () => {
 
   afterEach(() => {
     delete (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
+    vi.unstubAllGlobals();
   });
 
   it("shows a loading workspace state before the initial scan completes", () => {
@@ -277,6 +278,30 @@ describe("App shell interactions", () => {
 
     expect(await screen.findByText("Empty workspace")).toBeInTheDocument();
     expect(screen.queryByText("Workspace load failed")).not.toBeInTheDocument();
+  });
+
+  it("keeps the empty editor pane on the active light theme", async () => {
+    render(<App />);
+
+    expect(await treeButton("README.md")).toBeInTheDocument();
+    expect(screen.getByText("No file selected").closest(".editor-region")).toHaveClass(
+      "editor-region--light",
+    );
+  });
+
+  it("keeps the empty editor pane on the active dark theme", async () => {
+    vi.stubGlobal("matchMedia", () => ({
+      matches: true,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    }));
+
+    render(<App />);
+
+    expect(await treeButton("README.md")).toBeInTheDocument();
+    expect(screen.getByText("No file selected").closest(".editor-region")).toHaveClass(
+      "editor-region--dark",
+    );
   });
 
   it("opens a launched file even when the workspace scan omitted it", async () => {

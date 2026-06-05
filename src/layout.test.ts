@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { applyDocumentTheme, appShellClass, sidebarToggleTitle } from "./layout";
+import {
+  applyDocumentTheme,
+  appShellClass,
+  editorRegionClass,
+  sidebarToggleTitle,
+} from "./layout";
 
 describe("layout state", () => {
   it("adds the collapsed shell modifier only when the sidebar is collapsed", () => {
@@ -12,6 +17,11 @@ describe("layout state", () => {
   it("adds the active system theme class to the app shell", () => {
     expect(appShellClass(false, false)).toBe("app-shell app-shell--light");
     expect(appShellClass(false, true)).toBe("app-shell app-shell--dark");
+  });
+
+  it("adds the active system theme class to the editor region", () => {
+    expect(editorRegionClass(false)).toBe("editor-region editor-region--light");
+    expect(editorRegionClass(true)).toBe("editor-region editor-region--dark");
   });
 
   it("uses action titles that describe the next sidebar state", () => {

@@ -4,6 +4,10 @@ export function appShellClass(sidebarCollapsed: boolean, prefersDark = false): s
   return classes.join(" ");
 }
 
+export function editorRegionClass(prefersDark = false): string {
+  return `editor-region editor-region--${prefersDark ? "dark" : "light"}`;
+}
+
 export function applyDocumentTheme(prefersDark: boolean, doc: Document = document): void {
   doc.documentElement.dataset.ideTheme = prefersDark ? "dark" : "light";
 }

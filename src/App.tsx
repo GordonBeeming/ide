@@ -38,7 +38,12 @@ import {
 import { currentFileMatches } from "./currentFileSearch";
 import { iconForFile, isKnownBinaryFile } from "./fileTypes";
 import { codexMcpConfigSnippet } from "./integrations";
-import { applyDocumentTheme, appShellClass, sidebarToggleTitle } from "./layout";
+import {
+  applyDocumentTheme,
+  appShellClass,
+  editorRegionClass,
+  sidebarToggleTitle,
+} from "./layout";
 import {
   clampQuickOpenSelection,
   moveQuickOpenSelection,
@@ -2223,7 +2228,7 @@ export default function App() {
           </div>
         </header>
 
-        <div className="editor-region">
+        <div className={editorRegionClass(prefersDark)}>
           {activeFile && currentFileQuery.trim() ? (
             <div className="current-find-results" aria-label="Current file search results">
               <div className="current-find-results__header">
