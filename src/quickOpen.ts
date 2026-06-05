@@ -1,4 +1,5 @@
 import type { FileEntry } from "./tauri";
+import { isKnownBinaryFile } from "./fileTypes";
 
 export function quickOpenMatches(
   files: FileEntry[],
@@ -6,7 +7,9 @@ export function quickOpenMatches(
   limit = 12,
 ): FileEntry[] {
   const normalizedQuery = query.trim().toLowerCase();
-  const candidates = files.filter((file) => !file.isDir);
+  const candidates = files.filter(
+    (file) => !file.isDir && !isKnownBinaryFile(file.name),
+  );
   if (!normalizedQuery) return candidates.slice(0, limit);
 
   return candidates

@@ -43,6 +43,15 @@ describe("quick open", () => {
     expect(matches.map((match) => match.path)).toEqual(["a.ts", "b.ts"]);
   });
 
+  it("excludes binary and media files that the editor cannot open", () => {
+    const matches = quickOpenMatches(
+      [file("README.md"), file("image.png"), file("video.mp4"), file("font.woff2")],
+      "",
+    );
+
+    expect(matches.map((match) => match.path)).toEqual(["README.md"]);
+  });
+
   it("wraps keyboard selection through available results", () => {
     expect(moveQuickOpenSelection(0, 1, 3)).toBe(1);
     expect(moveQuickOpenSelection(2, 1, 3)).toBe(0);
