@@ -674,6 +674,24 @@ describe("App shell interactions", () => {
     },
   );
 
+  it("shows a non-text selection instead of leaving the previous editor visible", async () => {
+    render(<App />);
+
+    fireEvent.click(await treeButton("README.md"));
+    const readmeTab = await findTab("README.md");
+    expect(await screen.findByLabelText("Editor README.md")).toHaveValue("readme");
+
+    const imageRow = await treeButton("image.png");
+    fireEvent.click(imageRow);
+
+    expect(imageRow).toHaveClass("tree-row--active");
+    expect(readmeTab).not.toHaveClass("tab--active");
+    expect(tabButton("README.md")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Editor README.md")).not.toBeInTheDocument();
+    expect(screen.getByText("Non-text file selected")).toBeInTheDocument();
+    expect(screen.getByText("image.png selected")).toBeInTheDocument();
+  });
+
   it("keeps invalid UTF-8 files selected while explaining why they did not open", async () => {
     tauriMocks.readFile.mockImplementation(async (path: string) => {
       if (path === "README.md") throw new Error("file is not valid UTF-8 text");
@@ -690,6 +708,33 @@ describe("App shell interactions", () => {
     expect(screen.getAllByText("Error: file is not valid UTF-8 text")).toHaveLength(2);
     expect(screen.getByText("Open failed")).toBeInTheDocument();
     expect(screen.queryByLabelText("Editor README.md")).not.toBeInTheDocument();
+  });
+
+  it("shows a failed-open selection instead of leaving the previous editor visible", async () => {
+    tauriMocks.readFile.mockImplementation(async (path: string) => {
+      if (path === "README.md") return "readme";
+      if (path === "src/App.tsx") throw new Error("file is not valid UTF-8 text");
+      return "";
+    });
+
+    render(<App />);
+
+    fireEvent.click(await treeButton("README.md"));
+    await findTab("README.md");
+    expect(await screen.findByLabelText("Editor README.md")).toHaveValue("readme");
+    fireEvent.click(await treeButton("src"));
+
+    const appRow = await treeButton("App.tsx");
+    fireEvent.click(appRow);
+
+    expect(await screen.findByText("File is not valid text")).toBeInTheDocument();
+    expect(appRow).toHaveClass("tree-row--active");
+    expect(tabButton("README.md")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(tabButton("README.md")).not.toHaveClass("tab--active"),
+    );
+    expect(screen.queryByLabelText("Editor README.md")).not.toBeInTheDocument();
+    expect(screen.getByText("Open failed")).toBeInTheDocument();
   });
 
   it("keeps integration details out of the default sidebar layout", async () => {

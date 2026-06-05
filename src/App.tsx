@@ -624,6 +624,7 @@ export default function App() {
 
       if (entry.isDir) return;
       if (isKnownBinaryFile(entry.name)) {
+        setActivePath(undefined);
         setStatus(`${entry.path} selected`);
         return;
       }
@@ -663,6 +664,7 @@ export default function App() {
       } catch (reason) {
         const message = String(reason);
         setOpenFailure({ path: entry.path, reason: message });
+        setActivePath(undefined);
         setError(message);
         setStatus("Open failed");
       }
