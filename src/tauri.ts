@@ -325,24 +325,39 @@ async function callApi<T>(
     return invoke<T>(command, options.invokeArgs);
   }
 
+  const authenticatedWrite = isAuthenticatedWrite(options.method);
+  const response = await fetchHostedApi(path, options, authenticatedWrite);
+  if (authenticatedWrite && (response.status === 401 || response.status === 403)) {
+    localBearerToken = undefined;
+    return readApiResponse<T>(
+      await fetchHostedApi(path, options, true),
+    );
+  }
+
+  return readApiResponse<T>(response);
+}
+
+async function fetchHostedApi(
+  path: string,
+  options: ApiOptions,
+  authenticatedWrite: boolean,
+) {
   const headers = new Headers();
   if (options.body) {
     headers.set("Content-Type", "application/json");
   }
-  if (
-    options.method === "DELETE" ||
-    options.method === "PATCH" ||
-    options.method === "POST" ||
-    options.method === "PUT"
-  ) {
+  if (authenticatedWrite) {
     headers.set("Authorization", `Bearer ${await localWriteToken()}`);
   }
 
-  const response = await fetch(`${httpBase()}${path}`, {
+  return fetch(`${httpBase()}${path}`, {
     method: options.method ?? "GET",
     headers,
     body: options.body ? JSON.stringify(options.body) : undefined,
   });
+}
+
+async function readApiResponse<T>(response: Response): Promise<T> {
 
   if (!response.ok) {
     throw new Error(await response.text());
@@ -358,6 +373,10 @@ async function callApi<T>(
   }
 
   return response.text() as Promise<T>;
+}
+
+function isAuthenticatedWrite(method: ApiOptions["method"]) {
+  return method === "DELETE" || method === "PATCH" || method === "POST" || method === "PUT";
 }
 
 function httpBase() {

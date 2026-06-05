@@ -48,6 +48,52 @@ describe("hosted Tauri API transport", () => {
     );
   });
 
+  it("refreshes the hosted write token once when the app restarts", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        jsonResponse({
+          endpoint: "http://127.0.0.1:17877/mcp",
+          bearerToken: "old-token",
+        }),
+      )
+      .mockResolvedValueOnce(new Response("stale token", { status: 401 }))
+      .mockResolvedValueOnce(
+        jsonResponse({
+          endpoint: "http://127.0.0.1:17877/mcp",
+          bearerToken: "new-token",
+        }),
+      )
+      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const { writeFile } = await import("./tauri");
+
+    await writeFile("README.md", "changed", 1234);
+
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(fetchMock.mock.calls[0][0]).toBe("/api/codex-mcp");
+    expect(fetchMock.mock.calls[1][0]).toBe("/api/file");
+    expect((fetchMock.mock.calls[1][1]?.headers as Headers).get("Authorization")).toBe(
+      "Bearer old-token",
+    );
+    expect(fetchMock.mock.calls[2][0]).toBe("/api/codex-mcp");
+    expect(fetchMock.mock.calls[3][0]).toBe("/api/file");
+    expect((fetchMock.mock.calls[3][1]?.headers as Headers).get("Authorization")).toBe(
+      "Bearer new-token",
+    );
+  });
+
+  it("does not fetch a write token to retry unauthenticated hosted reads", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(new Response("missing", { status: 401 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const { readFile } = await import("./tauri");
+
+    await expect(readFile("README.md")).rejects.toThrow("missing");
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0][0]).toBe("/api/file?path=README.md");
+  });
+
   it("adds the local bearer token to hosted create-file requests", async () => {
     const fetchMock = vi
       .fn()
