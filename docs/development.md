@@ -65,7 +65,7 @@ npm run tauri:dev
 
 The app is intentionally split into a small always-loaded shell and lazy-loaded editor pieces.
 
-- `src/App.tsx`: workspace shell, tree view, tabs, keyboard navigation, file/folder create, file delete/open/rename/save orchestration.
+- `src/App.tsx`: workspace shell, tree view, tabs, keyboard navigation, file/folder create, delete/open/rename/save orchestration.
 - `src/EditorPane.tsx`: CodeMirror editor. Loaded only after a file is opened.
 - `src/EditorPane.test.tsx`: real CodeMirror component coverage for programmatic content sync, including reload-from-disk updates that must not report a user edit and unavailable LSP navigation command handling.
 - `src/editorTheme.ts`: system-aware CodeMirror theme selection and high-contrast editor styling.
@@ -74,13 +74,13 @@ The app is intentionally split into a small always-loaded shell and lazy-loaded 
 - `src/quickOpen.ts`: tested quick-open file matching, ranking, and keyboard selection rules.
 - `src/editorNavigation.ts`: tested line clamping for search-result reveal behavior.
 - `src/currentFileSearch.ts`: tested current-file search over loaded and unsaved editor contents.
-- `src/App.test.tsx`: rendered shell coverage for non-text file selection, collapsed search controls, preview-tab lifecycle, dirty-tab save-and-close prompts, native Close Tab/Close All menu handling, keyboard tab switching, current-file search, new-file/folder creation, file rename/delete, reload-from-disk behavior, stale-save handling, Save All success/failure behavior, active-file-safe agent selection context, and content search result/error behavior.
+- `src/App.test.tsx`: rendered shell coverage for non-text file selection, collapsed search controls, preview-tab lifecycle, dirty-tab save-and-close prompts, native Close Tab/Close All menu handling, keyboard tab switching, current-file search, new-file/folder creation, file/folder rename/delete, reload-from-disk behavior, stale-save handling, Save All success/failure behavior, active-file-safe agent selection context, and content search result/error behavior.
 - `src/tauri.test.ts`: hosted browser transport coverage for bearer-token file/folder creation, file rename/delete/writes, stale-save tokens, and loopback API base selection.
 - `scripts/bundle-budget.mjs`: production bundle budget coverage for startup assets and the lazy editor chunk.
 - `scripts/validate-finder-quick-action.mjs`: non-installing QA for the macOS Finder Quick Action service and generated runner.
 - `scripts/smoke-test.mjs`: browser smoke coverage for empty-pane and loaded-editor theme alignment plus core UI flows that are hard to trust from jsdom alone.
 - `src/language.ts`: lazy language loaders for common code and config files, including Rust, TypeScript/JavaScript/React, JSON, Markdown, shell, HTML, CSS/SCSS/Sass, C#, C/C++, JVM languages, Python, Go, Ruby, SQL, XML/YAML/TOML, Dockerfiles, PowerShell, diffs, and .NET project files.
-- `src-tauri/src/workspace.rs`: Rust-native workspace scanning, guarded file/folder creation, guarded file rename/delete, and guarded file IO.
+- `src-tauri/src/workspace.rs`: Rust-native workspace scanning, guarded file/folder creation, guarded file/folder rename/delete, and guarded file IO.
 - `src-tauri/src/http_server.rs`: loopback HTTP API, static asset server, authenticated write routes, and authenticated read-only Codex MCP endpoint.
 - `src-tauri/src/claude_bridge.rs`: authenticated Claude Code IDE WebSocket bridge.
 - `src-tauri/src/lib.rs`: Tauri command registration and in-memory editor context state.
@@ -176,10 +176,10 @@ Supported keyboard commands:
 - `Cmd/Ctrl+F`: open and focus current-file search.
 - `Cmd/Ctrl+N`: create a new file.
 - `Cmd/Ctrl+P`: open the quick-open palette.
-- `F2`: rename the selected file.
+- `F2`: rename the selected file or folder.
 - `Ctrl+Tab` / `Ctrl+Shift+Tab`: move between open tabs.
 
-Sidebar file filtering, workspace content search, and current-file search stay collapsed until requested; they remain open while they contain query text. Current-file search runs against the active tab contents, including unsaved edits, and can reveal a matched line in the editor. Common binary, media, font, archive, and executable file types select in the tree without attempting text-editor reads. New-file and new-folder creation use the selected folder or selected file's parent as the default path and reject existing targets. New files open as persistent tabs with their first scanned `modifiedMs`, so their first save gets the same stale-write protection as opened files. File rename is file-only for now, rejects existing destination paths, and updates an open tab plus its refreshed `modifiedMs` when the renamed file is open. File deletion is file-only, requires confirmation, and closes the deleted file's open tab. Reload from disk refreshes the active file contents and modification timestamp; dirty files require confirmation before unsaved edits are discarded. Saves send the file's last known `modifiedMs`; if the disk file changed since it was opened, the backend returns a conflict and the tab remains dirty. Save All walks dirty tabs in order and stops at the first failed write so the error remains visible to the user. Close All uses the same dirty-file confirmation and failed-save behavior before clearing tabs.
+Sidebar file filtering, workspace content search, and current-file search stay collapsed until requested; they remain open while they contain query text. Current-file search runs against the active tab contents, including unsaved edits, and can reveal a matched line in the editor. Common binary, media, font, archive, and executable file types select in the tree without attempting text-editor reads. New-file and new-folder creation use the selected folder or selected file's parent as the default path and reject existing targets. New files open as persistent tabs with their first scanned `modifiedMs`, so their first save gets the same stale-write protection as opened files. File and folder rename reject existing destination paths; file rename refreshes the renamed tab's `modifiedMs`, while folder rename updates any open child tab paths, expanded folder state, diagnostics, reveal state, and selection context. File and folder deletion require confirmation; deleting a folder also closes any open tabs under that folder and removes related diagnostics/context. Reload from disk refreshes the active file contents and modification timestamp; dirty files require confirmation before unsaved edits are discarded. Saves send the file's last known `modifiedMs`; if the disk file changed since it was opened, the backend returns a conflict and the tab remains dirty. Save All walks dirty tabs in order and stops at the first failed write so the error remains visible to the user. Close All uses the same dirty-file confirmation and failed-save behavior before clearing tabs.
 
 ## LSP Direction
 

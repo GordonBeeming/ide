@@ -119,6 +119,17 @@ function fileEntryForDirectOpen(path: string): FileEntry {
   };
 }
 
+function pathIsAtOrInside(path: string, candidateRoot: string) {
+  return path === candidateRoot || path.startsWith(`${candidateRoot}/`);
+}
+
+function renamePathPrefix(path: string, fromPath: string, toPath: string) {
+  if (path === fromPath) return toPath;
+  return path.startsWith(`${fromPath}/`)
+    ? `${toPath}${path.slice(fromPath.length)}`
+    : path;
+}
+
 export default function App() {
   const [workspaceRoot, setWorkspaceRoot] = useState("");
   const [workspaceLoading, setWorkspaceLoading] = useState(true);
@@ -189,7 +200,9 @@ export default function App() {
   const activeFile = openFiles.find((file) => file.path === activePath);
   const pendingCloseFile = openFiles.find((file) => file.path === pendingClosePath);
   const pendingDeleteFile = files.find((file) => file.path === pendingDeletePath);
-  const pendingDeleteOpenFile = openFiles.find((file) => file.path === pendingDeletePath);
+  const pendingDeleteOpenFiles = pendingDeletePath
+    ? openFiles.filter((file) => pathIsAtOrInside(file.path, pendingDeletePath))
+    : [];
   const pendingReloadFile = openFiles.find((file) => file.path === pendingReloadPath);
   const dirtyFiles = openFiles.filter((file) => file.dirty);
   const activeFileIsDirty = Boolean(activeFile?.dirty);
@@ -209,6 +222,9 @@ export default function App() {
   }, [files, singleFileMode, singleFilePath]);
   const selectedEntry = selectedPath
     ? sidebarFiles.find((file) => file.path === selectedPath)
+    : undefined;
+  const renameSourceEntry = renameFromPath
+    ? sidebarFiles.find((file) => file.path === renameFromPath)
     : undefined;
   const tree = useMemo(() => buildTree(sidebarFiles), [sidebarFiles]);
   const filteredTree = useMemo(
@@ -702,9 +718,9 @@ export default function App() {
   }, []);
 
   const openRenameDialog = useCallback(() => {
-    if (!selectedEntry || selectedEntry.isDir) {
-      setError("Select a file to rename.");
-      setStatus("Rename file failed");
+    if (!selectedEntry) {
+      setError("Select a file or folder to rename.");
+      setStatus("Rename failed");
       return;
     }
 
@@ -721,9 +737,9 @@ export default function App() {
   }, []);
 
   const requestDeleteSelectedFile = useCallback(() => {
-    if (!selectedEntry || selectedEntry.isDir) {
-      setError("Select a file to delete.");
-      setStatus("Delete file failed");
+    if (!selectedEntry) {
+      setError("Select a file or folder to delete.");
+      setStatus("Delete failed");
       return;
     }
 
@@ -1258,7 +1274,7 @@ export default function App() {
     }
   }, [closeNewFolderDialog, newFolderPath, refreshFiles]);
 
-  const renameSelectedFile = useCallback(async () => {
+  const renameSelectedEntry = useCallback(async () => {
     const fromPath = renameFromPath.trim();
     const toPath = renameToPath.trim();
     if (!fromPath || !toPath) {
@@ -1279,64 +1295,112 @@ export default function App() {
       const modifiedMs = refreshedEntries.find((entry) => entry.path === toPath)?.modifiedMs;
       setOpenFiles((current) =>
         current.map((file) =>
-          file.path === fromPath ? { ...file, path: toPath, modifiedMs } : file,
+          pathIsAtOrInside(file.path, fromPath)
+            ? {
+                ...file,
+                path: renamePathPrefix(file.path, fromPath, toPath),
+                modifiedMs: file.path === fromPath ? modifiedMs : file.modifiedMs,
+              }
+            : file,
         ),
       );
-      setActivePath((current) => (current === fromPath ? toPath : current));
-      setSelectedPath(toPath);
+      setActivePath((current) =>
+        current && pathIsAtOrInside(current, fromPath)
+          ? renamePathPrefix(current, fromPath, toPath)
+          : current,
+      );
+      setSelectedPath((current) =>
+        current && pathIsAtOrInside(current, fromPath)
+          ? renamePathPrefix(current, fromPath, toPath)
+          : toPath,
+      );
+      setExpandedFolders((current) => {
+        const next = new Set<string>();
+        for (const path of current) {
+          next.add(
+            pathIsAtOrInside(path, fromPath)
+              ? renamePathPrefix(path, fromPath, toPath)
+              : path,
+          );
+        }
+        return next;
+      });
       setRevealTarget((current) =>
-        current?.path === fromPath ? { ...current, path: toPath } : current,
+        current && pathIsAtOrInside(current.path, fromPath)
+          ? { ...current, path: renamePathPrefix(current.path, fromPath, toPath) }
+          : current,
       );
       setSelection((current) =>
-        current?.filePath === fromPath ? { ...current, filePath: toPath } : current,
+        current && pathIsAtOrInside(current.filePath, fromPath)
+          ? { ...current, filePath: renamePathPrefix(current.filePath, fromPath, toPath) }
+          : current,
       );
       setDiagnosticsByPath((current) => {
-        if (!current[fromPath]) return current;
-        const { [fromPath]: renamedDiagnostics, ...rest } = current;
-        return {
-          ...rest,
-          [toPath]: renamedDiagnostics.map((diagnostic) => ({
+        const next: Record<string, EditorDiagnostic[]> = {};
+        for (const [path, diagnostics] of Object.entries(current)) {
+          const nextPath = pathIsAtOrInside(path, fromPath)
+            ? renamePathPrefix(path, fromPath, toPath)
+            : path;
+          next[nextPath] = diagnostics.map((diagnostic) => ({
             ...diagnostic,
-            filePath: toPath,
-          })),
-        };
+            filePath: pathIsAtOrInside(diagnostic.filePath, fromPath)
+              ? renamePathPrefix(diagnostic.filePath, fromPath, toPath)
+              : diagnostic.filePath,
+          }));
+        }
+        return next;
       });
       closeRenameDialog();
       setStatus(`Renamed ${fromPath} to ${toPath}`);
     } catch (reason) {
       setError(String(reason));
-      setStatus("Rename file failed");
+      setStatus("Rename failed");
     }
   }, [closeRenameDialog, refreshFiles, renameFromPath, renameToPath]);
 
-  const deleteSelectedFile = useCallback(async () => {
+  const deleteSelectedEntry = useCallback(async () => {
     if (!pendingDeletePath) return;
 
     setError(undefined);
     setStatus(`Deleting ${pendingDeletePath}`);
     try {
       await deleteFile(pendingDeletePath);
-      closeFile(pendingDeletePath);
+      setOpenFiles((current) => current.filter((file) => !pathIsAtOrInside(file.path, pendingDeletePath)));
+      setActivePath((current) => {
+        if (!current || !pathIsAtOrInside(current, pendingDeletePath)) return current;
+        return openFiles.find((file) => !pathIsAtOrInside(file.path, pendingDeletePath))?.path;
+      });
       setSelectedPath(undefined);
       setRevealTarget((current) =>
-        current?.path === pendingDeletePath ? undefined : current,
+        current && pathIsAtOrInside(current.path, pendingDeletePath) ? undefined : current,
       );
       setSelection((current) =>
-        current?.filePath === pendingDeletePath ? undefined : current,
+        current && pathIsAtOrInside(current.filePath, pendingDeletePath) ? undefined : current,
       );
       setDiagnosticsByPath((current) => {
-        if (!current[pendingDeletePath]) return current;
-        const { [pendingDeletePath]: _removed, ...rest } = current;
-        return rest;
+        const next: Record<string, EditorDiagnostic[]> = {};
+        for (const [path, diagnostics] of Object.entries(current)) {
+          if (!pathIsAtOrInside(path, pendingDeletePath)) {
+            next[path] = diagnostics;
+          }
+        }
+        return next;
+      });
+      setExpandedFolders((current) => {
+        const next = new Set<string>();
+        for (const path of current) {
+          if (!pathIsAtOrInside(path, pendingDeletePath)) next.add(path);
+        }
+        return next;
       });
       setPendingDeletePath(undefined);
       await refreshFiles();
       setStatus(`Deleted ${pendingDeletePath}`);
     } catch (reason) {
       setError(String(reason));
-      setStatus("Delete file failed");
+      setStatus("Delete failed");
     }
-  }, [closeFile, pendingDeletePath, refreshFiles]);
+  }, [openFiles, pendingDeletePath, refreshFiles]);
 
   const cancelDeleteSelectedFile = useCallback(() => {
     setPendingDeletePath(undefined);
@@ -1529,10 +1593,10 @@ export default function App() {
             <button className="icon-button" title="New folder" onClick={openNewFolderDialog}>
               <FolderPlus size={17} />
             </button>
-            <button className="icon-button" title="Rename file" onClick={openRenameDialog}>
+            <button className="icon-button" title="Rename selected item" onClick={openRenameDialog}>
               <Pencil size={16} />
             </button>
-            <button className="icon-button" title="Delete file" onClick={requestDeleteSelectedFile}>
+            <button className="icon-button" title="Delete selected item" onClick={requestDeleteSelectedFile}>
               <Trash2 size={16} />
             </button>
             <button className="icon-button" title="Refresh files" onClick={refreshWorkspace}>
@@ -2129,12 +2193,14 @@ export default function App() {
             aria-labelledby="rename-file-title"
             onSubmit={(event) => {
               event.preventDefault();
-              renameSelectedFile();
+              renameSelectedEntry();
             }}
           >
             <div>
               <div className="eyebrow">Workspace</div>
-              <h2 id="rename-file-title">Rename file</h2>
+              <h2 id="rename-file-title">
+                Rename {renameSourceEntry?.isDir ? "folder" : "file"}
+              </h2>
               <p>{renameFromPath}</p>
               <label className="dialog-field">
                 <span>New path</span>
@@ -2173,11 +2239,16 @@ export default function App() {
           >
             <div>
               <div className="eyebrow">Workspace</div>
-              <h2 id="delete-file-title">Delete file?</h2>
+              <h2 id="delete-file-title">
+                Delete {pendingDeleteFile.isDir ? "folder" : "file"}?
+              </h2>
               <p>
                 {pendingDeleteFile.path} will be permanently removed from the workspace.
-                {pendingDeleteOpenFile?.dirty
-                  ? " This file also has unsaved editor changes."
+                {pendingDeleteFile.isDir
+                  ? " Any files inside this folder will also be removed."
+                  : ""}
+                {pendingDeleteOpenFiles.some((file) => file.dirty)
+                  ? " This selection also has unsaved editor changes."
                   : ""}
               </p>
             </div>
@@ -2190,7 +2261,7 @@ export default function App() {
               </button>
               <button
                 className="command-button command-button--danger"
-                onClick={deleteSelectedFile}
+                onClick={deleteSelectedEntry}
               >
                 <Trash2 size={15} />
                 Delete

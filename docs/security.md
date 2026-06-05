@@ -4,9 +4,9 @@ Security is a core product constraint for this IDE. Changes should be reviewed w
 
 ## Current Guardrails
 
-- Workspace file/folder creation and file rename, deletion, reads, and writes are resolved relative to the workspace root.
+- Workspace file/folder creation, rename, deletion, file reads, and file writes are resolved relative to the workspace root.
 - Absolute paths and parent traversal are rejected.
-- Existing file operations reject symbolic links, and content search skips symbolic links, so a workspace cannot expose files outside its root through symlink targets.
+- Existing file and folder operations reject symbolic links, and content search skips symbolic links, so a workspace cannot expose files outside its root through symlink targets.
 - File opens are capped at 5 MiB.
 - Common generated folders and `.git` are skipped during tree scans.
 - Content search skips generated folders, skips binary-looking files, caps searched file size, caps query length, and caps result count.

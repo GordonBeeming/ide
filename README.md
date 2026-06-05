@@ -26,8 +26,8 @@ Implemented:
 - Reload active files from disk, with confirmation before discarding unsaved edits.
 - New-file creation inside the current workspace.
 - New-folder creation inside the current workspace.
-- File rename inside the current workspace.
-- Confirmed file deletion inside the current workspace.
+- File and folder rename inside the current workspace.
+- Confirmed file and folder deletion inside the current workspace.
 - Save active file and Save All commands.
 - Stale-save protection so externally modified files are not silently overwritten.
 - Guarded Rust-native workspace scanning, file/folder creation, rename, deletion, and file read/write commands.

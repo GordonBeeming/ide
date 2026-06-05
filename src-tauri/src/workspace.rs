@@ -41,6 +41,8 @@ pub enum WorkspaceError {
     FileAlreadyExists,
     #[error("path is not a file")]
     NotAFile,
+    #[error("path is not a file or directory")]
+    NotAnEntry,
     #[error("symbolic links are not supported for editor file operations")]
     SymlinkUnsupported,
     #[error("file changed on disk since it was opened")]
@@ -290,7 +292,7 @@ pub fn create_workspace_folder(root: &Path, relative: &str) -> Result<(), Worksp
 }
 
 pub fn rename_workspace_file(root: &Path, from: &str, to: &str) -> Result<(), WorkspaceError> {
-    let from_path = resolve_existing_workspace_file_path(root, from)?;
+    let from_path = resolve_existing_workspace_entry_path(root, from)?;
     let to_path = resolve_workspace_path(root, to)?;
     if to_path.exists() {
         return Err(WorkspaceError::FileAlreadyExists);
@@ -300,9 +302,13 @@ pub fn rename_workspace_file(root: &Path, from: &str, to: &str) -> Result<(), Wo
 }
 
 pub fn delete_workspace_file(root: &Path, relative: &str) -> Result<(), WorkspaceError> {
-    let path = resolve_existing_workspace_file_path(root, relative)?;
+    let path = resolve_existing_workspace_entry_path(root, relative)?;
 
-    fs::remove_file(path).map_err(WorkspaceError::from)
+    if path.is_dir() {
+        fs::remove_dir_all(path).map_err(WorkspaceError::from)
+    } else {
+        fs::remove_file(path).map_err(WorkspaceError::from)
+    }
 }
 
 fn workspace_walker(
@@ -433,6 +439,28 @@ fn resolve_existing_workspace_file_path(
     }
     if !metadata.is_file() {
         return Err(WorkspaceError::NotAFile);
+    }
+
+    let root = root.canonicalize()?;
+    let canonical = path.canonicalize()?;
+    if !canonical.starts_with(&root) {
+        return Err(WorkspaceError::OutsideWorkspace);
+    }
+
+    Ok(canonical)
+}
+
+fn resolve_existing_workspace_entry_path(
+    root: &Path,
+    relative: &str,
+) -> Result<PathBuf, WorkspaceError> {
+    let path = resolve_workspace_path(root, relative)?;
+    let metadata = fs::symlink_metadata(&path)?;
+    if metadata.file_type().is_symlink() {
+        return Err(WorkspaceError::SymlinkUnsupported);
+    }
+    if !metadata.is_file() && !metadata.is_dir() {
+        return Err(WorkspaceError::NotAnEntry);
     }
 
     let root = root.canonicalize()?;
@@ -644,13 +672,18 @@ mod tests {
     }
 
     #[test]
-    fn rename_workspace_file_rejects_directory_sources() {
+    fn rename_workspace_file_moves_directory_inside_root() {
         let dir = tempdir().unwrap();
-        fs::create_dir(dir.path().join("src")).unwrap();
+        fs::create_dir_all(dir.path().join("src/nested")).unwrap();
+        fs::write(dir.path().join("src/nested/file.txt"), "contents").unwrap();
 
-        let result = rename_workspace_file(dir.path(), "src", "renamed");
+        rename_workspace_file(dir.path(), "src", "renamed").unwrap();
 
-        assert!(matches!(result, Err(WorkspaceError::NotAFile)));
+        assert!(!dir.path().join("src").exists());
+        assert_eq!(
+            fs::read_to_string(dir.path().join("renamed/nested/file.txt")).unwrap(),
+            "contents"
+        );
     }
 
     #[test]
@@ -693,14 +726,14 @@ mod tests {
     }
 
     #[test]
-    fn delete_workspace_file_rejects_directory_sources() {
+    fn delete_workspace_file_removes_directory_inside_root() {
         let dir = tempdir().unwrap();
-        fs::create_dir(dir.path().join("src")).unwrap();
+        fs::create_dir_all(dir.path().join("src/nested")).unwrap();
+        fs::write(dir.path().join("src/nested/file.txt"), "contents").unwrap();
 
-        let result = delete_workspace_file(dir.path(), "src");
+        delete_workspace_file(dir.path(), "src").unwrap();
 
-        assert!(matches!(result, Err(WorkspaceError::NotAFile)));
-        assert!(dir.path().join("src").is_dir());
+        assert!(!dir.path().join("src").exists());
     }
 
     #[test]

@@ -1224,7 +1224,7 @@ describe("App shell interactions", () => {
 
     fireEvent.click(await treeButton("README.md"));
     await findTab("README.md");
-    fireEvent.click(screen.getByTitle("Rename file"));
+    fireEvent.click(screen.getByTitle("Rename selected item"));
     expect(screen.getByLabelText("New path")).toHaveValue("README.md");
 
     fireEvent.change(screen.getByLabelText("New path"), {
@@ -1268,12 +1268,55 @@ describe("App shell interactions", () => {
     );
   });
 
+  it("renames a selected folder and updates open files beneath it", async () => {
+    render(<App />);
+
+    fireEvent.click(await treeButton("src"));
+    fireEvent.click(await treeButton("App.tsx"));
+    await findTab("src/App.tsx");
+    fireEvent.click(await treeButton("src"));
+    fireEvent.click(screen.getByTitle("Rename selected item"));
+    expect(screen.getByRole("dialog", { name: "Rename folder" })).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("New path"), {
+      target: { value: "app" },
+    });
+    tauriMocks.listFiles.mockResolvedValueOnce([
+      {
+        path: "app",
+        name: "app",
+        isDir: true,
+        depth: 0,
+        size: 0,
+      },
+      {
+        path: "app/App.tsx",
+        name: "App.tsx",
+        parent: "app",
+        isDir: false,
+        depth: 1,
+        size: 12,
+        modifiedMs: 202,
+      },
+      ...files.filter((file) => !file.path.startsWith("src")),
+    ]);
+    fireEvent.click(screen.getByText("Rename"));
+
+    await waitFor(() => expect(tauriMocks.renameFile).toHaveBeenCalledWith("src", "app"));
+    expect(await findTab("app/App.tsx")).toHaveClass("tab--active");
+    expect(tabButton("src/App.tsx")).toBeUndefined();
+    expect(screen.getByLabelText("Editor app/App.tsx")).toHaveValue(
+      "export function App() {}",
+    );
+    expect(screen.getByText("Renamed src to app")).toBeInTheDocument();
+  });
+
   it("keeps the rename dialog open when renaming fails", async () => {
     tauriMocks.renameFile.mockRejectedValueOnce(new Error("file already exists"));
     render(<App />);
 
     fireEvent.click(await treeButton("README.md"));
-    fireEvent.click(screen.getByTitle("Rename file"));
+    fireEvent.click(screen.getByTitle("Rename selected item"));
     fireEvent.change(await screen.findByLabelText("New path"), {
       target: { value: "src/App.tsx" },
     });
@@ -1281,7 +1324,7 @@ describe("App shell interactions", () => {
 
     await screen.findByText("Error: file already exists");
     expect(screen.getByRole("dialog", { name: "Rename file" })).toBeInTheDocument();
-    expect(screen.getByText("Rename file failed")).toBeInTheDocument();
+    expect(screen.getByText("Rename failed")).toBeInTheDocument();
   });
 
   it("deletes the selected open file after confirmation and closes its tab", async () => {
@@ -1289,7 +1332,7 @@ describe("App shell interactions", () => {
 
     fireEvent.click(await treeButton("README.md"));
     await findTab("README.md");
-    fireEvent.click(screen.getByTitle("Delete file"));
+    fireEvent.click(screen.getByTitle("Delete selected item"));
     expect(screen.getByRole("alertdialog", { name: "Delete file?" })).toHaveTextContent(
       "README.md will be permanently removed from the workspace.",
     );
@@ -1301,17 +1344,42 @@ describe("App shell interactions", () => {
     expect(screen.getByText("Deleted README.md")).toBeInTheDocument();
   });
 
+  it("deletes a selected folder and closes open files beneath it", async () => {
+    render(<App />);
+
+    fireEvent.click(await treeButton("src"));
+    fireEvent.click(await treeButton("App.tsx"));
+    await findTab("src/App.tsx");
+    fireEvent.change(screen.getByLabelText("Editor src/App.tsx"), {
+      target: { value: "dirty app" },
+    });
+    fireEvent.click(await treeButton("src"));
+    fireEvent.click(screen.getByTitle("Delete selected item"));
+    expect(screen.getByRole("alertdialog", { name: "Delete folder?" })).toHaveTextContent(
+      "src will be permanently removed from the workspace. Any files inside this folder will also be removed. This selection also has unsaved editor changes.",
+    );
+
+    tauriMocks.listFiles.mockResolvedValueOnce(
+      files.filter((file) => !file.path.startsWith("src")),
+    );
+    fireEvent.click(screen.getByText("Delete"));
+
+    await waitFor(() => expect(tauriMocks.deleteFile).toHaveBeenCalledWith("src"));
+    await waitFor(() => expect(tabButton("src/App.tsx")).toBeUndefined());
+    expect(screen.getByText("Deleted src")).toBeInTheDocument();
+  });
+
   it("keeps the delete confirmation open when deletion fails", async () => {
     tauriMocks.deleteFile.mockRejectedValueOnce(new Error("permission denied"));
     render(<App />);
 
     fireEvent.click(await treeButton("README.md"));
-    fireEvent.click(screen.getByTitle("Delete file"));
+    fireEvent.click(screen.getByTitle("Delete selected item"));
     fireEvent.click(screen.getByText("Delete"));
 
     await screen.findByText("Error: permission denied");
     expect(screen.getByRole("alertdialog", { name: "Delete file?" })).toBeInTheDocument();
-    expect(screen.getByText("Delete file failed")).toBeInTheDocument();
+    expect(screen.getByText("Delete failed")).toBeInTheDocument();
   });
 });
 
