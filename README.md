@@ -30,8 +30,7 @@ Implemented:
 - Stale-save protection so externally modified files are not silently overwritten.
 - Guarded Rust-native workspace scanning, file/folder creation, rename, deletion, and file read/write commands.
 - CodeMirror 6 editor.
-- Syntax highlighting for Rust, TypeScript, JavaScript, React/TSX/JSX, HTML, CSS, and C#.
-- Markdown syntax highlighting.
+- Syntax highlighting for common code and config files, including Rust, TypeScript, JavaScript, React/TSX/JSX, JSON, Markdown, shell scripts, HTML, CSS/SCSS/Sass, C#, C/C++, Java/Kotlin/Scala, Python, Go, Ruby, SQL, XML/YAML/TOML, Dockerfiles, PowerShell, diffs, and .NET project files.
 - Lazy editor loading and lazy language loading for better startup performance.
 - System light/dark mode via `prefers-color-scheme` with a high-contrast bias, including the editor surface.
 - Active file, open file, and selection context stored in backend state.

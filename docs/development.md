@@ -64,7 +64,7 @@ The app is intentionally split into a small always-loaded shell and lazy-loaded 
 - `src/currentFileSearch.ts`: tested current-file search over loaded and unsaved editor contents.
 - `src/App.test.tsx`: rendered shell coverage for non-text file selection, preview-tab lifecycle, current-file search, new-file/folder creation, file rename/delete, reload-from-disk behavior, stale-save handling, Save All success/failure behavior, active-file-safe agent selection context, and content search result/error behavior.
 - `src/tauri.test.ts`: hosted browser transport coverage for bearer-token file/folder creation, file rename/delete/writes, stale-save tokens, and loopback API base selection.
-- `src/language.ts`: lazy language loaders for Rust, TypeScript/JavaScript/React, HTML, CSS, Markdown, and C#.
+- `src/language.ts`: lazy language loaders for common code and config files, including Rust, TypeScript/JavaScript/React, JSON, Markdown, shell, HTML, CSS/SCSS/Sass, C#, C/C++, JVM languages, Python, Go, Ruby, SQL, XML/YAML/TOML, Dockerfiles, PowerShell, diffs, and .NET project files.
 - `src-tauri/src/workspace.rs`: Rust-native workspace scanning, guarded file/folder creation, guarded file rename/delete, and guarded file IO.
 - `src-tauri/src/http_server.rs`: loopback HTTP API, static asset server, authenticated write routes, and authenticated read-only Codex MCP endpoint.
 - `src-tauri/src/claude_bridge.rs`: authenticated Claude Code IDE WebSocket bridge.
