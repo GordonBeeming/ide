@@ -177,6 +177,24 @@ export function listFiles(showDotfiles = false, showGeneratedInternal = false) {
   });
 }
 
+export function listDirectory(
+  path: string,
+  showDotfiles = false,
+  showGeneratedInternal = false,
+) {
+  const params = new URLSearchParams({ path });
+  if (showDotfiles) params.set("showDotfiles", "true");
+  if (showGeneratedInternal) params.set("showGeneratedInternal", "true");
+  return callApi<unknown>("list_directory", `/api/directory?${params.toString()}`, {
+    invokeArgs: { path, showDotfiles, showGeneratedInternal },
+  }).then((entries) => {
+    if (!Array.isArray(entries)) {
+      throw new Error("Workspace directory response was not valid JSON");
+    }
+    return entries as FileEntry[];
+  });
+}
+
 export function readFile(path: string) {
   return callApi<string>("read_file", `/api/file?path=${encodeURIComponent(path)}`, {
     method: "GET",

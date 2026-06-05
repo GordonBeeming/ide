@@ -41,6 +41,8 @@ pub enum WorkspaceError {
     FileAlreadyExists,
     #[error("path is not a file")]
     NotAFile,
+    #[error("path is not a directory")]
+    NotADirectory,
     #[error("path is not a file or directory")]
     NotAnEntry,
     #[error("symbolic links are not supported for editor file operations")]
@@ -69,35 +71,41 @@ pub fn scan_workspace(
 ) -> Result<Vec<FileEntry>, WorkspaceError> {
     let mut entries = Vec::new();
     let mut seen_paths = HashSet::new();
+    let mut max_depth = 1;
 
-    let mut root_level_walker = workspace_walker(root, show_dotfiles, show_generated_internal);
-    root_level_walker.max_depth(Some(1));
-    for result in root_level_walker.build() {
-        if entries.len() >= max_entries {
+    loop {
+        let previous_seen_count = seen_paths.len();
+        let mut walker = workspace_walker(root, show_dotfiles, show_generated_internal);
+        walker.max_depth(Some(max_depth));
+
+        for result in walker.build() {
+            if entries.len() >= max_entries {
+                sort_scan_entries(&mut entries);
+                return Ok(entries);
+            }
+
+            let entry = result?;
+            push_scan_entry(root, &entry, &mut entries, &mut seen_paths)?;
+        }
+
+        if seen_paths.len() == previous_seen_count {
             break;
         }
 
-        let entry = result?;
-        push_scan_entry(root, &entry, &mut entries, &mut seen_paths)?;
+        max_depth += 1;
     }
 
-    let walker = workspace_walker(root, show_dotfiles, show_generated_internal).build();
-    for result in walker {
-        if entries.len() >= max_entries {
-            break;
-        }
+    sort_scan_entries(&mut entries);
+    Ok(entries)
+}
 
-        let entry = result?;
-        push_scan_entry(root, &entry, &mut entries, &mut seen_paths)?;
-    }
-
+fn sort_scan_entries(entries: &mut [FileEntry]) {
     entries.sort_by(|a, b| {
         a.path
             .to_lowercase()
             .cmp(&b.path.to_lowercase())
             .then_with(|| a.path.cmp(&b.path))
     });
-    Ok(entries)
 }
 
 pub fn workspace_file_entry(root: &Path, relative: &str) -> Result<FileEntry, WorkspaceError> {
@@ -105,6 +113,40 @@ pub fn workspace_file_entry(root: &Path, relative: &str) -> Result<FileEntry, Wo
     let metadata = fs::symlink_metadata(&path)?;
     let relative_path = Path::new(relative);
     file_entry_from_relative(relative_path, metadata)
+}
+
+pub fn workspace_directory_entries(
+    root: &Path,
+    relative: &str,
+    show_dotfiles: bool,
+    show_generated_internal: bool,
+) -> Result<Vec<FileEntry>, WorkspaceError> {
+    let path = resolve_existing_workspace_entry_path(root, relative)?;
+    let metadata = fs::symlink_metadata(&path)?;
+    if !metadata.is_dir() {
+        return Err(WorkspaceError::NotADirectory);
+    }
+
+    let canonical_root = root.canonicalize()?;
+    let mut entries = Vec::new();
+    let mut walker = workspace_walker(&path, show_dotfiles, show_generated_internal);
+    walker.max_depth(Some(1));
+    for result in walker.build() {
+        let entry = result?;
+        let child_path = entry.path();
+        if child_path == path {
+            continue;
+        }
+
+        let metadata = fs::symlink_metadata(child_path)?;
+        let relative = child_path
+            .strip_prefix(&canonical_root)
+            .map_err(|_| WorkspaceError::OutsideWorkspace)?;
+        entries.push(file_entry_from_relative(relative, metadata)?);
+    }
+
+    sort_scan_entries(&mut entries);
+    Ok(entries)
 }
 
 fn push_scan_entry(
@@ -124,7 +166,7 @@ fn push_scan_entry(
         .strip_prefix(root)
         .map_err(|_| WorkspaceError::OutsideWorkspace)?;
     let relative_path = normalize_path(relative);
-    if !seen_paths.insert(relative_path.clone()) {
+    if !seen_paths.insert(relative_path) {
         return Ok(());
     }
 
@@ -1057,31 +1099,33 @@ mod tests {
     }
 
     #[test]
-    fn scan_workspace_respects_entry_limit() {
+    fn scan_workspace_returns_all_scoped_entries() {
         let dir = tempdir().unwrap();
         for index in 0..10 {
             fs::write(dir.path().join(format!("{index}.txt")), "").unwrap();
         }
 
-        let entries = scan_workspace(dir.path(), 3, false, false).unwrap();
+        let entries = scan_workspace(dir.path(), 100, false, false).unwrap();
+        let paths = entries
+            .iter()
+            .map(|entry| entry.path.as_str())
+            .collect::<Vec<_>>();
 
-        assert_eq!(entries.len(), 3);
+        assert_eq!(entries.len(), 10);
+        for index in 0..10 {
+            let expected = format!("{index}.txt");
+            assert!(paths.contains(&expected.as_str()));
+        }
     }
 
     #[test]
-    fn scan_workspace_prioritizes_top_level_entries_before_deep_children() {
+    fn scan_workspace_spends_entry_limit_by_layer() {
         let dir = tempdir().unwrap();
-        fs::create_dir_all(dir.path().join("artifacts/deep")).unwrap();
-        fs::create_dir_all(dir.path().join("docs")).unwrap();
-        fs::write(dir.path().join("LICENSE"), "").unwrap();
-        fs::write(dir.path().join("README.md"), "").unwrap();
-        for index in 0..20 {
-            fs::write(
-                dir.path().join(format!("artifacts/deep/{index:02}.txt")),
-                "",
-            )
-            .unwrap();
-        }
+        fs::create_dir_all(dir.path().join("a/one")).unwrap();
+        fs::create_dir_all(dir.path().join("b/two")).unwrap();
+        fs::write(dir.path().join("a/one/deep.txt"), "").unwrap();
+        fs::write(dir.path().join("b/two/deep.txt"), "").unwrap();
+        fs::write(dir.path().join("c.txt"), "").unwrap();
 
         let entries = scan_workspace(dir.path(), 5, false, false).unwrap();
         let paths = entries
@@ -1089,10 +1133,46 @@ mod tests {
             .map(|entry| entry.path.as_str())
             .collect::<Vec<_>>();
 
-        assert!(paths.contains(&"artifacts"));
-        assert!(paths.contains(&"docs"));
-        assert!(paths.contains(&"LICENSE"));
-        assert!(paths.contains(&"README.md"));
+        assert_eq!(entries.len(), 5);
+        assert!(paths.contains(&"a"));
+        assert!(paths.contains(&"b"));
+        assert!(paths.contains(&"c.txt"));
+        assert!(paths.contains(&"a/one"));
+        assert!(paths.contains(&"b/two"));
+        assert!(!paths.contains(&"a/one/deep.txt"));
+        assert!(!paths.contains(&"b/two/deep.txt"));
+    }
+
+    #[test]
+    fn workspace_directory_entries_returns_direct_children_with_filters() {
+        let dir = tempdir().unwrap();
+        fs::create_dir_all(dir.path().join("src/.cache")).unwrap();
+        fs::create_dir_all(dir.path().join("src/node_modules/pkg")).unwrap();
+        fs::write(dir.path().join("src/main.rs"), "").unwrap();
+        fs::write(dir.path().join("src/.env"), "").unwrap();
+        fs::write(dir.path().join("src/node_modules/pkg/index.js"), "").unwrap();
+
+        let entries = workspace_directory_entries(dir.path(), "src", false, false).unwrap();
+        let paths = entries
+            .iter()
+            .map(|entry| entry.path.as_str())
+            .collect::<Vec<_>>();
+
+        assert!(paths.contains(&"src/main.rs"));
+        assert!(!paths.contains(&"src/.cache"));
+        assert!(!paths.contains(&"src/.env"));
+        assert!(!paths.contains(&"src/node_modules"));
+
+        let entries = workspace_directory_entries(dir.path(), "src", true, true).unwrap();
+        let paths = entries
+            .iter()
+            .map(|entry| entry.path.as_str())
+            .collect::<Vec<_>>();
+
+        assert!(paths.contains(&"src/.cache"));
+        assert!(paths.contains(&"src/.env"));
+        assert!(paths.contains(&"src/node_modules"));
+        assert!(!paths.contains(&"src/node_modules/pkg"));
     }
 
     #[test]

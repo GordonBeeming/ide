@@ -59,6 +59,7 @@ const tauriMocks = vi.hoisted(() => ({
   getInitialFile: vi.fn(),
   takeOpenedLaunchTargets: vi.fn(),
   listFiles: vi.fn(),
+  listDirectory: vi.fn(),
   readFile: vi.fn(),
   statFile: vi.fn(),
   recordRecentFile: vi.fn(),
@@ -115,6 +116,7 @@ vi.mock("./tauri", async () => {
     getInitialFile: tauriMocks.getInitialFile,
     takeOpenedLaunchTargets: tauriMocks.takeOpenedLaunchTargets,
     listFiles: tauriMocks.listFiles,
+    listDirectory: tauriMocks.listDirectory,
     readFile: tauriMocks.readFile,
     statFile: tauriMocks.statFile,
     recordRecentFile: tauriMocks.recordRecentFile,
@@ -228,6 +230,9 @@ describe("App shell interactions", () => {
     tauriMocks.getInitialFile.mockResolvedValue(undefined);
     tauriMocks.takeOpenedLaunchTargets.mockResolvedValue([]);
     tauriMocks.listFiles.mockResolvedValue(files);
+    tauriMocks.listDirectory.mockImplementation(async (path: string) =>
+      files.filter((entry) => entry.parent === path),
+    );
     tauriMocks.statFile.mockImplementation(async (path: string) => {
       const entry = files.find((candidate) => candidate.path === path);
       if (!entry) throw new Error(`missing ${path}`);
@@ -487,6 +492,36 @@ describe("App shell interactions", () => {
 
     fireEvent.keyDown(srcRow, { key: " " });
 
+    expect(await treeButton("App.tsx")).toBeInTheDocument();
+  });
+
+  it("loads folder children on demand when expanding a partially indexed folder", async () => {
+    tauriMocks.listFiles.mockResolvedValueOnce([
+      {
+        path: "src",
+        name: "src",
+        isDir: true,
+        depth: 0,
+        size: 0,
+      },
+    ]);
+    tauriMocks.listDirectory.mockResolvedValueOnce([
+      {
+        path: "src/App.tsx",
+        name: "App.tsx",
+        parent: "src",
+        isDir: false,
+        depth: 1,
+        size: 12,
+        modifiedMs: 202,
+      },
+    ]);
+
+    render(<App />);
+
+    fireEvent.click(await treeButton("src"));
+
+    expect(tauriMocks.listDirectory).toHaveBeenCalledWith("src", false, false);
     expect(await treeButton("App.tsx")).toBeInTheDocument();
   });
 

@@ -83,6 +83,7 @@ import {
   getUiState,
   getWorkspaceRoot,
   isNativeTauri,
+  listDirectory,
   listFiles,
   pickOpenFile,
   pickWorkspaceFolder,
@@ -226,6 +227,7 @@ export default function App() {
   const [singleFileMode, setSingleFileMode] = useState(false);
   const [singleFilePath, setSingleFilePath] = useState<string>();
   const [files, setFiles] = useState<FileEntry[]>([]);
+  const [loadedFolders, setLoadedFolders] = useState<Set<string>>(() => new Set());
   const [activePath, setActivePath] = useState<string>();
   const [selectedPath, setSelectedPath] = useState<string>();
   const [revealTarget, setRevealTarget] = useState<RevealTarget>();
@@ -435,7 +437,24 @@ export default function App() {
     }
   }, [applyPersistedUiSnapshot]);
 
+  const loadFolderChildren = useCallback(
+    async (path: string) => {
+      if (singleFileMode || loadedFolders.has(path)) return;
+
+      try {
+        const entries = await listDirectory(path, showDotfiles, showGeneratedInternal);
+        setFiles((current) => mergeFileEntries(current, entries));
+        setLoadedFolders((current) => new Set(current).add(path));
+      } catch (reason) {
+        setError(`Unable to load folder ${path}: ${String(reason)}`);
+        setStatus("Folder load failed");
+      }
+    },
+    [loadedFolders, showDotfiles, showGeneratedInternal, singleFileMode],
+  );
+
   const toggleFolder = useCallback((path: string) => {
+    const shouldLoad = !expandedFolders.has(path);
     setExpandedFolders((current) => {
       const next = new Set(current);
       if (next.has(path)) {
@@ -445,7 +464,10 @@ export default function App() {
       }
       return next;
     });
-  }, []);
+    if (shouldLoad) {
+      void loadFolderChildren(path);
+    }
+  }, [expandedFolders, loadFolderChildren]);
 
   const refreshIntegrationStatus = useCallback(async () => {
     try {
@@ -474,6 +496,7 @@ export default function App() {
       if (effectiveSingleFileMode && effectiveSingleFilePath) {
         const entry = await statFile(effectiveSingleFilePath);
         setFiles([entry]);
+        setLoadedFolders(new Set());
         setWorkspaceLoadFailed(false);
         setWorkspaceUiRestored(true);
         await refreshIntegrationStatus();
@@ -482,6 +505,7 @@ export default function App() {
 
       const entries = await listFiles(showDotfiles, showGeneratedInternal);
       setFiles(entries);
+      setLoadedFolders(new Set());
       setWorkspaceLoadFailed(false);
       await refreshIntegrationStatus();
       return entries;
@@ -3453,6 +3477,14 @@ function buildTree(entries: FileEntry[]): TreeNode[] {
   };
   sortNodes(roots);
   return roots;
+}
+
+function mergeFileEntries(current: FileEntry[], nextEntries: FileEntry[]) {
+  const entriesByPath = new Map(current.map((entry) => [entry.path, entry]));
+  for (const entry of nextEntries) {
+    entriesByPath.set(entry.path, entry);
+  }
+  return [...entriesByPath.values()];
 }
 
 function filterTree(nodes: TreeNode[], filter: string): TreeNode[] {

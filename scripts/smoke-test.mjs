@@ -117,6 +117,12 @@ async function fulfillApi(route) {
     return;
   }
 
+  if (url.pathname === "/api/directory") {
+    const directoryPath = url.searchParams.get("path") ?? "";
+    await route.fulfill(json(files.filter((entry) => entry.parent === directoryPath)));
+    return;
+  }
+
   if (url.pathname === "/api/file") {
     const filePath = url.searchParams.get("path") ?? "";
     await route.fulfill(text(fileContents.get(filePath) ?? ""));

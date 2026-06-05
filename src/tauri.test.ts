@@ -359,6 +359,19 @@ describe("hosted Tauri API transport", () => {
     );
   });
 
+  it("passes visibility settings through hosted directory listing requests", async () => {
+    const fetchMock = vi.fn().mockImplementation(async () => jsonResponse([]));
+    vi.stubGlobal("fetch", fetchMock);
+    const { listDirectory } = await import("./tauri");
+
+    await listDirectory("src folder", true, true);
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/directory?path=src+folder&showDotfiles=true&showGeneratedInternal=true",
+      expect.objectContaining({ method: "GET" }),
+    );
+  });
+
   it("reads hosted file metadata without scanning the workspace", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       jsonResponse({
@@ -411,6 +424,21 @@ describe("hosted Tauri API transport", () => {
     await listFiles(true, true);
 
     expect(invoke).toHaveBeenCalledWith("list_files", {
+      showDotfiles: true,
+      showGeneratedInternal: true,
+    });
+  });
+
+  it("passes visibility settings through native directory listing commands", async () => {
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    const { invoke } = await import("@tauri-apps/api/core");
+    vi.mocked(invoke).mockResolvedValue([]);
+    const { listDirectory } = await import("./tauri");
+
+    await listDirectory("src", true, true);
+
+    expect(invoke).toHaveBeenCalledWith("list_directory", {
+      path: "src",
       showDotfiles: true,
       showGeneratedInternal: true,
     });

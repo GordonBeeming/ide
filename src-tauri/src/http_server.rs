@@ -18,8 +18,8 @@ use tokio::sync::RwLock;
 use crate::lsp::{LspManager, LspServerStatus};
 use crate::workspace::{
     create_workspace_file, create_workspace_folder, delete_workspace_file, read_workspace_file,
-    rename_workspace_file, scan_workspace, search_workspace, workspace_file_entry,
-    write_workspace_file, FileEntry, SearchMatch,
+    rename_workspace_file, scan_workspace, search_workspace, workspace_directory_entries,
+    workspace_file_entry, write_workspace_file, FileEntry, SearchMatch,
 };
 use crate::AgentContext;
 
@@ -48,8 +48,11 @@ struct CodexMcpStatus {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct FileQuery {
     path: String,
+    show_dotfiles: Option<bool>,
+    show_generated_internal: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -132,6 +135,7 @@ pub async fn start_http_server(
     let app = Router::new()
         .route("/api/workspace-root", get(workspace_root))
         .route("/api/files", get(files))
+        .route("/api/directory", get(directory))
         .route("/api/search", get(search))
         .route(
             "/api/file",
@@ -279,6 +283,19 @@ async fn files(
     Ok(Json(scan_workspace(
         &workspace_root,
         4_000,
+        query.show_dotfiles.unwrap_or(false),
+        query.show_generated_internal.unwrap_or(false),
+    )?))
+}
+
+async fn directory(
+    State(state): State<HttpServerState>,
+    Query(query): Query<FileQuery>,
+) -> Result<Json<Vec<FileEntry>>, ApiError> {
+    let workspace_root = state.workspace_root.read().await.clone();
+    Ok(Json(workspace_directory_entries(
+        &workspace_root,
+        &query.path,
         query.show_dotfiles.unwrap_or(false),
         query.show_generated_internal.unwrap_or(false),
     )?))
