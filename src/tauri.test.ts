@@ -175,6 +175,45 @@ describe("hosted Tauri API transport", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("treats malformed hosted Codex MCP status as unavailable", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({}));
+    vi.stubGlobal("fetch", fetchMock);
+    const { getCodexMcpStatus } = await import("./tauri");
+
+    await expect(getCodexMcpStatus()).resolves.toBeUndefined();
+  });
+
+  it("returns default UI state and does not persist it from hosted browser mode", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const { getUiState, updateUiState } = await import("./tauri");
+
+    await expect(getUiState()).resolves.toEqual({
+      view: {
+        showDotfiles: false,
+        showGeneratedInternal: false,
+      },
+      workspace: {
+        expandedFolders: [],
+        openFiles: [],
+      },
+    });
+    await updateUiState(
+      {
+        showDotfiles: true,
+        showGeneratedInternal: true,
+      },
+      {
+        expandedFolders: ["src"],
+        openFiles: ["README.md"],
+        activeFile: "README.md",
+        selectedPath: "README.md",
+      },
+    );
+
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("passes dotfile visibility through hosted file listing requests", async () => {
     const fetchMock = vi.fn().mockImplementation(async () => jsonResponse([]));
     vi.stubGlobal("fetch", fetchMock);
@@ -195,6 +234,21 @@ describe("hosted Tauri API transport", () => {
     );
   });
 
+  it("rejects hosted file listing responses that are not arrays", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response("<html></html>", {
+        status: 200,
+        headers: { "Content-Type": "text/html" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const { listFiles } = await import("./tauri");
+
+    await expect(listFiles()).rejects.toThrow(
+      "Workspace file list response was not valid JSON",
+    );
+  });
+
   it("passes dotfile visibility through native file listing commands", async () => {
     (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
     const { invoke } = await import("@tauri-apps/api/core");
@@ -206,6 +260,59 @@ describe("hosted Tauri API transport", () => {
     expect(invoke).toHaveBeenCalledWith("list_files", {
       showDotfiles: true,
       showGeneratedInternal: true,
+    });
+  });
+
+  it("uses native commands for UI state persistence", async () => {
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    const { invoke } = await import("@tauri-apps/api/core");
+    vi.mocked(invoke).mockResolvedValueOnce({
+      view: {
+        showDotfiles: true,
+        showGeneratedInternal: false,
+      },
+      workspace: {
+        expandedFolders: ["src"],
+        openFiles: ["src/App.tsx"],
+        activeFile: "src/App.tsx",
+        selectedPath: "src/App.tsx",
+      },
+    });
+    const { getUiState, updateUiState } = await import("./tauri");
+
+    await expect(getUiState()).resolves.toMatchObject({
+      view: {
+        showDotfiles: true,
+      },
+      workspace: {
+        openFiles: ["src/App.tsx"],
+      },
+    });
+    await updateUiState(
+      {
+        showDotfiles: true,
+        showGeneratedInternal: false,
+      },
+      {
+        expandedFolders: ["src"],
+        openFiles: ["src/App.tsx"],
+        activeFile: "src/App.tsx",
+        selectedPath: "src/App.tsx",
+      },
+    );
+
+    expect(invoke).toHaveBeenCalledWith("get_ui_state");
+    expect(invoke).toHaveBeenCalledWith("update_ui_state", {
+      view: {
+        showDotfiles: true,
+        showGeneratedInternal: false,
+      },
+      workspace: {
+        expandedFolders: ["src"],
+        openFiles: ["src/App.tsx"],
+        activeFile: "src/App.tsx",
+        selectedPath: "src/App.tsx",
+      },
     });
   });
 });

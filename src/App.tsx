@@ -52,6 +52,7 @@ import {
   getHttpEndpoint,
   getInitialFile,
   getLspServers,
+  getUiState,
   getWorkspaceRoot,
   isNativeTauri,
   listFiles,
@@ -62,7 +63,10 @@ import {
   searchFiles,
   setWorkspaceRootPath,
   updateAgentContext,
+  updateUiState,
   writeFile,
+  type PersistedUiSnapshot,
+  type WorkspaceUiState,
 } from "./tauri";
 import {
   setLspDiagnosticsHandler,
@@ -127,6 +131,9 @@ export default function App() {
   const [integrationsOpen, setIntegrationsOpen] = useState(false);
   const [showDotfiles, setShowDotfiles] = useState(false);
   const [showGeneratedInternal, setShowGeneratedInternal] = useState(false);
+  const [uiStateLoaded, setUiStateLoaded] = useState(false);
+  const [workspaceUiRestored, setWorkspaceUiRestored] = useState(false);
+  const [expandedFolders, setExpandedFolders] = useState<Set<string>>(() => new Set());
   const [error, setError] = useState<string>();
   const [status, setStatus] = useState("Ready");
   const [selection, setSelection] = useState<EditorSelection>();
@@ -139,6 +146,12 @@ export default function App() {
   const [claudeBridge, setClaudeBridge] = useState<ClaudeBridgeStatus>();
   const currentFindInputRef = useRef<HTMLInputElement | null>(null);
   const initialFileOpenedRef = useRef(false);
+  const persistedWorkspaceRef = useRef<WorkspaceUiState>({
+    expandedFolders: [],
+    openFiles: [],
+  });
+  const persistedFilesRestoredRef = useRef(false);
+  const uiPersistTimerRef = useRef<number | undefined>(undefined);
 
   const activeFile = openFiles.find((file) => file.path === activePath);
   const pendingCloseFile = openFiles.find((file) => file.path === pendingClosePath);
@@ -187,6 +200,42 @@ export default function App() {
     () => suggestNewFolderPath(selectedPath, files),
     [files, selectedPath],
   );
+  const openFilePathSignature = useMemo(
+    () => openFiles.map((file) => file.path).join("\0"),
+    [openFiles],
+  );
+
+  const applyPersistedUiSnapshot = useCallback((snapshot: PersistedUiSnapshot) => {
+    persistedWorkspaceRef.current = snapshot.workspace;
+    persistedFilesRestoredRef.current = false;
+    setWorkspaceUiRestored(false);
+    setShowDotfiles(snapshot.view.showDotfiles);
+    setShowGeneratedInternal(snapshot.view.showGeneratedInternal);
+    setExpandedFolders(new Set(snapshot.workspace.expandedFolders));
+    setSelectedPath(snapshot.workspace.selectedPath);
+  }, []);
+
+  const loadPersistedUiState = useCallback(async () => {
+    try {
+      applyPersistedUiSnapshot(await getUiState());
+    } catch (reason) {
+      setError(`Unable to load saved UI state: ${String(reason)}`);
+    } finally {
+      setUiStateLoaded(true);
+    }
+  }, [applyPersistedUiSnapshot]);
+
+  const toggleFolder = useCallback((path: string) => {
+    setExpandedFolders((current) => {
+      const next = new Set(current);
+      if (next.has(path)) {
+        next.delete(path);
+      } else {
+        next.add(path);
+      }
+      return next;
+    });
+  }, []);
 
   const refreshFiles = useCallback(async () => {
     setWorkspaceLoading(true);
@@ -245,11 +294,16 @@ export default function App() {
   }, [refreshFiles]);
 
   useEffect(() => {
+    loadPersistedUiState();
+  }, [loadPersistedUiState]);
+
+  useEffect(() => {
+    if (!uiStateLoaded) return;
     refreshFiles().catch((reason) => {
       setError(String(reason));
       setStatus("Workspace load failed");
     });
-  }, [refreshFiles]);
+  }, [refreshFiles, uiStateLoaded]);
 
   useEffect(() => {
     const query = contentQuery.trim();
@@ -382,6 +436,111 @@ export default function App() {
     initialFileOpenedRef.current = true;
     openPath(entry, true);
   }, [files, initialFile, openPath, workspaceLoading]);
+
+  useEffect(() => {
+    if (
+      !uiStateLoaded ||
+      workspaceLoading ||
+      workspaceLoadFailed ||
+      persistedFilesRestoredRef.current
+    ) {
+      return;
+    }
+
+    persistedFilesRestoredRef.current = true;
+    const workspaceState = persistedWorkspaceRef.current;
+    const entriesByPath = new Map(files.map((entry) => [entry.path, entry]));
+    const restorePaths = workspaceState.openFiles.filter((path) => {
+      const entry = entriesByPath.get(path);
+      return entry && !entry.isDir && !skipOpenPattern.test(entry.name);
+    });
+
+    if (restorePaths.length === 0) {
+      setWorkspaceUiRestored(true);
+      return;
+    }
+
+    let disposed = false;
+    Promise.all(
+      restorePaths.map(async (path) => {
+        const entry = entriesByPath.get(path)!;
+        return {
+          path,
+          contents: await readFile(path),
+          dirty: false,
+          modifiedMs: entry.modifiedMs,
+          pinned: true,
+        };
+      }),
+    )
+      .then((restoredTabs) => {
+        if (disposed) return;
+        const restoredPaths = new Set(restoredTabs.map((tab) => tab.path));
+        setOpenFiles((current) => {
+          const currentPaths = new Set(current.map((tab) => tab.path));
+          return [
+            ...current,
+            ...restoredTabs.filter((tab) => !currentPaths.has(tab.path)),
+          ];
+        });
+        if (workspaceState.activeFile && restoredPaths.has(workspaceState.activeFile)) {
+          setActivePath(workspaceState.activeFile);
+        } else {
+          setActivePath(restoredTabs[0]?.path);
+        }
+        setStatus("Ready");
+      })
+      .catch((reason) => {
+        if (!disposed) {
+          setError(`Unable to restore saved tabs: ${String(reason)}`);
+        }
+      })
+      .finally(() => {
+        if (!disposed) setWorkspaceUiRestored(true);
+      });
+
+    return () => {
+      disposed = true;
+    };
+  }, [
+    files,
+    uiStateLoaded,
+    workspaceLoadFailed,
+    workspaceLoading,
+  ]);
+
+  useEffect(() => {
+    if (!uiStateLoaded || !workspaceUiRestored) return;
+
+    window.clearTimeout(uiPersistTimerRef.current);
+    uiPersistTimerRef.current = window.setTimeout(() => {
+      updateUiState(
+        {
+          showDotfiles,
+          showGeneratedInternal,
+        },
+        {
+          expandedFolders: [...expandedFolders],
+          openFiles: openFiles.map((file) => file.path),
+          activeFile: activePath,
+          selectedPath,
+        },
+      ).catch((reason) => {
+        setError(`Unable to save UI state: ${String(reason)}`);
+      });
+    }, 250);
+
+    return () => window.clearTimeout(uiPersistTimerRef.current);
+  }, [
+    activePath,
+    expandedFolders,
+    openFilePathSignature,
+    selectedPath,
+    showDotfiles,
+    showGeneratedInternal,
+    uiStateLoaded,
+    workspaceUiRestored,
+  ]);
 
   const closeQuickOpen = useCallback(() => {
     setQuickOpenVisible(false);
@@ -634,9 +793,16 @@ export default function App() {
   }, [closeApplication, saveAll]);
 
   const clearWorkspaceUi = useCallback(() => {
+    persistedWorkspaceRef.current = {
+      expandedFolders: [],
+      openFiles: [],
+    };
+    persistedFilesRestoredRef.current = false;
+    setWorkspaceUiRestored(false);
     setOpenFiles([]);
     setActivePath(undefined);
     setSelectedPath(undefined);
+    setExpandedFolders(new Set());
     setRevealTarget(undefined);
     setSelection(undefined);
     setDiagnosticsByPath({});
@@ -658,6 +824,7 @@ export default function App() {
       try {
         const selected = await setWorkspaceRootPath(path);
         clearWorkspaceUi();
+        applyPersistedUiSnapshot(await getUiState());
         await refreshFiles();
         setStatus(`Opened ${lastSegment(selected) || selected}`);
       } catch (reason) {
@@ -665,7 +832,7 @@ export default function App() {
         setStatus("Open folder failed");
       }
     },
-    [clearWorkspaceUi, openFiles, refreshFiles],
+    [applyPersistedUiSnapshot, clearWorkspaceUi, openFiles, refreshFiles],
   );
 
   const openFileFromWorkspace = useCallback(
@@ -682,6 +849,13 @@ export default function App() {
         if (workspaceRootPath !== workspaceRoot) {
           await setWorkspaceRootPath(workspaceRootPath);
           clearWorkspaceUi();
+          const snapshot = await getUiState();
+          if (!snapshot.workspace.openFiles.includes(path)) {
+            snapshot.workspace.openFiles = [...snapshot.workspace.openFiles, path];
+          }
+          snapshot.workspace.activeFile = path;
+          snapshot.workspace.selectedPath = path;
+          applyPersistedUiSnapshot(snapshot);
           entries = await refreshFiles();
         }
 
@@ -696,7 +870,15 @@ export default function App() {
         setStatus("Open recent file failed");
       }
     },
-    [clearWorkspaceUi, files, openFiles, openPath, refreshFiles, workspaceRoot],
+    [
+      applyPersistedUiSnapshot,
+      clearWorkspaceUi,
+      files,
+      openFiles,
+      openPath,
+      refreshFiles,
+      workspaceRoot,
+    ],
   );
 
   useEffect(() => {
@@ -771,13 +953,14 @@ export default function App() {
       }
 
       clearWorkspaceUi();
+      applyPersistedUiSnapshot(await getUiState());
       await refreshFiles();
       setStatus(`Opened ${lastSegment(selected) || selected}`);
     } catch (reason) {
       setError(String(reason));
       setStatus("Open folder failed");
     }
-  }, [clearWorkspaceUi, openFiles, refreshFiles]);
+  }, [applyPersistedUiSnapshot, clearWorkspaceUi, openFiles, refreshFiles]);
 
   const createNewFile = useCallback(async () => {
     const path = newFilePath.trim();
@@ -1153,10 +1336,13 @@ export default function App() {
             filteredTree.map((node) => (
               <TreeItem
                 key={node.path}
+                expandedFolders={expandedFolders}
+                forceExpanded={Boolean(filter.trim())}
                 node={node}
                 selectedPath={selectedPath}
                 onOpen={openPath}
                 onSelect={setSelectedPath}
+                onToggleFolder={toggleFolder}
               />
             ))
           )}
@@ -1792,17 +1978,23 @@ export default function App() {
 }
 
 function TreeItem({
+  expandedFolders,
+  forceExpanded,
   node,
   selectedPath,
   onOpen,
   onSelect,
+  onToggleFolder,
 }: {
+  expandedFolders: Set<string>;
+  forceExpanded: boolean;
   node: TreeNode;
   selectedPath?: string;
   onOpen: (entry: FileEntry, pinned?: boolean) => void;
   onSelect: (path: string) => void;
+  onToggleFolder: (path: string) => void;
 }) {
-  const [expanded, setExpanded] = useState(node.depth < 1);
+  const expanded = forceExpanded || expandedFolders.has(node.path);
   const Icon = iconForFile(node.name, node.isDir);
   const isActive = selectedPath === node.path;
 
@@ -1814,7 +2006,7 @@ function TreeItem({
         onClick={() => {
           onSelect(node.path);
           if (node.isDir) {
-            setExpanded((value) => !value);
+            onToggleFolder(node.path);
           } else {
             onOpen(node, false);
           }
@@ -1840,10 +2032,13 @@ function TreeItem({
         ? node.children.map((child) => (
             <TreeItem
               key={child.path}
+              expandedFolders={expandedFolders}
+              forceExpanded={forceExpanded}
               node={child}
               selectedPath={selectedPath}
               onOpen={onOpen}
               onSelect={onSelect}
+              onToggleFolder={onToggleFolder}
             />
           ))
         : null}

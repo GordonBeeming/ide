@@ -72,6 +72,34 @@ export interface SearchMatch {
   matchEnd: number;
 }
 
+export interface PersistedViewSettings {
+  showDotfiles: boolean;
+  showGeneratedInternal: boolean;
+}
+
+export interface WorkspaceUiState {
+  expandedFolders: string[];
+  openFiles: string[];
+  activeFile?: string;
+  selectedPath?: string;
+}
+
+export interface PersistedUiSnapshot {
+  view: PersistedViewSettings;
+  workspace: WorkspaceUiState;
+}
+
+const defaultUiSnapshot: PersistedUiSnapshot = {
+  view: {
+    showDotfiles: false,
+    showGeneratedInternal: false,
+  },
+  workspace: {
+    expandedFolders: [],
+    openFiles: [],
+  },
+};
+
 export function isNativeTauri() {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 }
@@ -97,14 +125,32 @@ export function recordRecentFile(path: string) {
   return invoke<void>("record_recent_file", { path });
 }
 
+export function getUiState() {
+  if (!isNativeTauri()) return Promise.resolve(defaultUiSnapshot);
+  return invoke<PersistedUiSnapshot>("get_ui_state");
+}
+
+export function updateUiState(
+  view: PersistedViewSettings,
+  workspace: WorkspaceUiState,
+) {
+  if (!isNativeTauri()) return Promise.resolve();
+  return invoke<void>("update_ui_state", { view, workspace });
+}
+
 export function listFiles(showDotfiles = false, showGeneratedInternal = false) {
   const params = new URLSearchParams();
   if (showDotfiles) params.set("showDotfiles", "true");
   if (showGeneratedInternal) params.set("showGeneratedInternal", "true");
   const query = params.toString();
   const path = query ? `/api/files?${query}` : "/api/files";
-  return callApi<FileEntry[]>("list_files", path, {
+  return callApi<unknown>("list_files", path, {
     invokeArgs: { showDotfiles, showGeneratedInternal },
+  }).then((entries) => {
+    if (!Array.isArray(entries)) {
+      throw new Error("Workspace file list response was not valid JSON");
+    }
+    return entries as FileEntry[];
   });
 }
 
@@ -192,7 +238,19 @@ export function getClaudeBridgeStatus() {
 }
 
 export function getCodexMcpStatus() {
-  return callApi<CodexMcpStatus | undefined>("get_codex_mcp_status", "/api/codex-mcp");
+  return callApi<unknown>("get_codex_mcp_status", "/api/codex-mcp").then((status) => {
+    if (
+      status &&
+      typeof status === "object" &&
+      "endpoint" in status &&
+      "bearerToken" in status &&
+      typeof status.endpoint === "string" &&
+      typeof status.bearerToken === "string"
+    ) {
+      return status as CodexMcpStatus;
+    }
+    return undefined;
+  });
 }
 
 export function startLsp(language: string) {

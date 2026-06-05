@@ -50,6 +50,8 @@ const tauriMocks = vi.hoisted(() => ({
   deleteFile: vi.fn(),
   searchFiles: vi.fn(),
   pickWorkspaceFolder: vi.fn(),
+  getUiState: vi.fn(),
+  updateUiState: vi.fn(),
   updateAgentContext: vi.fn(),
   getLspServers: vi.fn(),
   getHttpEndpoint: vi.fn(),
@@ -89,6 +91,8 @@ vi.mock("./tauri", async () => {
     deleteFile: tauriMocks.deleteFile,
     searchFiles: tauriMocks.searchFiles,
     pickWorkspaceFolder: tauriMocks.pickWorkspaceFolder,
+    getUiState: tauriMocks.getUiState,
+    updateUiState: tauriMocks.updateUiState,
     updateAgentContext: tauriMocks.updateAgentContext,
     getLspServers: tauriMocks.getLspServers,
     getHttpEndpoint: tauriMocks.getHttpEndpoint,
@@ -179,6 +183,17 @@ describe("App shell interactions", () => {
     tauriMocks.renameFile.mockResolvedValue(undefined);
     tauriMocks.deleteFile.mockResolvedValue(undefined);
     tauriMocks.searchFiles.mockResolvedValue([]);
+    tauriMocks.getUiState.mockResolvedValue({
+      view: {
+        showDotfiles: false,
+        showGeneratedInternal: false,
+      },
+      workspace: {
+        expandedFolders: [],
+        openFiles: [],
+      },
+    });
+    tauriMocks.updateUiState.mockResolvedValue(undefined);
     tauriMocks.updateAgentContext.mockResolvedValue(undefined);
     tauriMocks.getLspServers.mockResolvedValue([]);
     tauriMocks.getHttpEndpoint.mockResolvedValue("http://127.0.0.1:1420");
@@ -228,6 +243,44 @@ describe("App shell interactions", () => {
     expect(screen.queryByText("Workspace load failed")).not.toBeInTheDocument();
   });
 
+  it("keeps first-level folders collapsed until the user opens them", async () => {
+    render(<App />);
+
+    expect(await treeButton("src")).toBeInTheDocument();
+    expect(screen.queryByText("App.tsx")).not.toBeInTheDocument();
+
+    fireEvent.click(await treeButton("src"));
+
+    expect(await treeButton("App.tsx")).toBeInTheDocument();
+  });
+
+  it("restores saved view settings, expanded folders, and open files", async () => {
+    tauriMocks.getUiState.mockResolvedValueOnce({
+      view: {
+        showDotfiles: true,
+        showGeneratedInternal: true,
+      },
+      workspace: {
+        expandedFolders: ["src"],
+        openFiles: ["src/App.tsx"],
+        activeFile: "src/App.tsx",
+        selectedPath: "src/App.tsx",
+      },
+    });
+
+    render(<App />);
+
+    await waitFor(() =>
+      expect(tauriMocks.listFiles).toHaveBeenCalledWith(true, true),
+    );
+    expect(await treeButton("App.tsx")).toHaveClass("tree-row--active");
+    const tab = await findTab("src/App.tsx");
+    expect(tab).not.toHaveClass("tab--temp");
+    expect(await screen.findByLabelText("Editor src/App.tsx")).toHaveValue(
+      "export function App() {}",
+    );
+  });
+
   it("reloads the tree with dotfiles when the native menu toggle is used", async () => {
     (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
     tauriMocks.listFiles
@@ -255,6 +308,15 @@ describe("App shell interactions", () => {
 
     await waitFor(() =>
       expect(tauriMocks.listFiles).toHaveBeenLastCalledWith(true, false),
+    );
+    await waitFor(() =>
+      expect(tauriMocks.updateUiState).toHaveBeenLastCalledWith(
+        {
+          showDotfiles: true,
+          showGeneratedInternal: false,
+        },
+        expect.any(Object),
+      ),
     );
     expect(await treeButton(".gitignore")).toBeInTheDocument();
   });
@@ -287,6 +349,15 @@ describe("App shell interactions", () => {
 
     await waitFor(() =>
       expect(tauriMocks.listFiles).toHaveBeenLastCalledWith(false, true),
+    );
+    await waitFor(() =>
+      expect(tauriMocks.updateUiState).toHaveBeenLastCalledWith(
+        {
+          showDotfiles: false,
+          showGeneratedInternal: true,
+        },
+        expect.any(Object),
+      ),
     );
     expect(await treeButton("node_modules")).toBeInTheDocument();
   });
@@ -367,6 +438,7 @@ describe("App shell interactions", () => {
     fireEvent.click(await treeButton("README.md"));
     await findTab("README.md");
 
+    fireEvent.click(await treeButton("src"));
     fireEvent.click(await treeButton("App.tsx"));
 
     await findTab("src/App.tsx");
@@ -382,6 +454,7 @@ describe("App shell interactions", () => {
       target: { value: "changed readme" },
     });
 
+    fireEvent.click(await treeButton("src"));
     fireEvent.click(await treeButton("App.tsx"));
     await findTab("src/App.tsx");
     fireEvent.change(await screen.findByLabelText("Editor src/App.tsx"), {
@@ -495,6 +568,7 @@ describe("App shell interactions", () => {
       target: { value: "changed readme" },
     });
 
+    fireEvent.click(await treeButton("src"));
     fireEvent.click(await treeButton("App.tsx"));
     await findTab("src/App.tsx");
     fireEvent.change(await screen.findByLabelText("Editor src/App.tsx"), {
@@ -518,6 +592,7 @@ describe("App shell interactions", () => {
 
     await waitFor(() => expect(latestAgentContext()?.selection?.filePath).toBe("README.md"));
 
+    fireEvent.click(await treeButton("src"));
     fireEvent.click(await treeButton("App.tsx"));
 
     await waitFor(() =>
@@ -571,6 +646,7 @@ describe("App shell interactions", () => {
   it("finds text in the active file and reveals the matched line", async () => {
     render(<App />);
 
+    fireEvent.click(await treeButton("src"));
     fireEvent.click(await treeButton("App.tsx"));
     await findTab("src/App.tsx");
     fireEvent.change(screen.getByPlaceholderText("Find in file"), {

@@ -22,6 +22,8 @@ struct AppState {
     initial_file: Arc<RwLock<Option<String>>>,
     recent_items: Arc<std::sync::RwLock<RecentItems>>,
     recent_store_path: Arc<std::sync::RwLock<Option<PathBuf>>>,
+    ui_state: Arc<std::sync::RwLock<AppUiState>>,
+    ui_state_store_path: Arc<std::sync::RwLock<Option<PathBuf>>>,
     agent_context: Arc<RwLock<AgentContext>>,
     lsp_manager: lsp::LspManager,
     http_endpoint: Arc<RwLock<Option<String>>>,
@@ -97,6 +99,47 @@ struct RecentFile {
     last_opened: u128,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct AppUiState {
+    view: PersistedViewSettings,
+    workspaces: Vec<PersistedWorkspaceUiState>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct PersistedViewSettings {
+    show_dotfiles: bool,
+    show_generated_internal: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct PersistedWorkspaceUiState {
+    workspace_root: String,
+    expanded_folders: Vec<String>,
+    open_files: Vec<String>,
+    active_file: Option<String>,
+    selected_path: Option<String>,
+    updated_at: u128,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct WorkspaceUiStatePayload {
+    expanded_folders: Vec<String>,
+    open_files: Vec<String>,
+    active_file: Option<String>,
+    selected_path: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct PersistedUiSnapshot {
+    view: PersistedViewSettings,
+    workspace: WorkspaceUiStatePayload,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct OpenWorkspaceRequest {
@@ -126,6 +169,8 @@ enum CommandError {
     Dialog(String),
     #[error("recent item storage failed: {0}")]
     Recent(String),
+    #[error("ui state storage failed: {0}")]
+    UiState(String),
 }
 
 impl serde::Serialize for CommandError {
@@ -271,6 +316,52 @@ async fn record_recent_file(
 }
 
 #[tauri::command]
+async fn get_ui_state(state: State<'_, AppState>) -> Result<PersistedUiSnapshot, CommandError> {
+    let workspace_root = state
+        .workspace_root
+        .read()
+        .await
+        .to_string_lossy()
+        .to_string();
+    workspace_ui_snapshot_for_root(&state, &workspace_root)
+}
+
+#[tauri::command]
+async fn update_ui_state(
+    state: State<'_, AppState>,
+    view: PersistedViewSettings,
+    workspace: WorkspaceUiStatePayload,
+) -> Result<(), CommandError> {
+    let workspace_root = state
+        .workspace_root
+        .read()
+        .await
+        .to_string_lossy()
+        .to_string();
+    let mut workspace = sanitize_workspace_ui_state(workspace);
+    let mut ui_state = state
+        .ui_state
+        .write()
+        .map_err(|_| CommandError::UiState("ui state lock poisoned".to_string()))?;
+    ui_state.view = view;
+    let persisted = PersistedWorkspaceUiState {
+        workspace_root: workspace_root.clone(),
+        expanded_folders: std::mem::take(&mut workspace.expanded_folders),
+        open_files: std::mem::take(&mut workspace.open_files),
+        active_file: workspace.active_file.take(),
+        selected_path: workspace.selected_path.take(),
+        updated_at: now_ms(),
+    };
+    ui_state
+        .workspaces
+        .retain(|workspace| workspace.workspace_root != workspace_root);
+    ui_state.workspaces.insert(0, persisted);
+    ui_state.workspaces.truncate(24);
+    drop(ui_state);
+    persist_ui_state(&state)
+}
+
+#[tauri::command]
 async fn update_agent_context(
     state: State<'_, AppState>,
     context: AgentContext,
@@ -361,6 +452,8 @@ pub fn run() {
         initial_file: Arc::new(RwLock::new(launch_target.initial_file)),
         recent_items: Arc::new(std::sync::RwLock::new(RecentItems::default())),
         recent_store_path: Arc::new(std::sync::RwLock::new(None)),
+        ui_state: Arc::new(std::sync::RwLock::new(AppUiState::default())),
+        ui_state_store_path: Arc::new(std::sync::RwLock::new(None)),
         agent_context,
         lsp_manager,
         http_endpoint,
@@ -392,6 +485,21 @@ pub fn run() {
                 .write()
                 .map_err(|_| std::io::Error::other("recent items lock poisoned"))? =
                 load_recent_items(&recent_store_path)?;
+            let ui_state_store_path = app
+                .path()
+                .app_data_dir()
+                .map_err(|error| std::io::Error::other(error.to_string()))?
+                .join("ui-state.json");
+            *http_state
+                .ui_state_store_path
+                .write()
+                .map_err(|_| std::io::Error::other("ui state store lock poisoned"))? =
+                Some(ui_state_store_path.clone());
+            *http_state
+                .ui_state
+                .write()
+                .map_err(|_| std::io::Error::other("ui state lock poisoned"))? =
+                load_ui_state(&ui_state_store_path)?;
             let initial_root = http_state.workspace_root.blocking_read().clone();
             record_recent_workspace_item(&http_state, &initial_root)
                 .map_err(|error| std::io::Error::other(error.to_string()))?;
@@ -456,7 +564,12 @@ pub fn run() {
         .on_menu_event(|app, event| {
             let id = event.id().as_ref().to_string();
             if id == "open_folder" {
-                if let Some(path) = app.dialog().file().set_title("Open Folder").blocking_pick_folder() {
+                if let Some(path) = app
+                    .dialog()
+                    .file()
+                    .set_title("Open Folder")
+                    .blocking_pick_folder()
+                {
                     match path.into_path() {
                         Ok(path) => {
                             let _ = app.emit(
@@ -485,7 +598,10 @@ pub fn run() {
                     .ok()
                     .and_then(|items| items.workspaces.get(index).cloned());
                 if let Some(item) = item {
-                    let _ = app.emit("menu://open-workspace", OpenWorkspaceRequest { path: item.path });
+                    let _ = app.emit(
+                        "menu://open-workspace",
+                        OpenWorkspaceRequest { path: item.path },
+                    );
                 }
                 return;
             }
@@ -541,6 +657,8 @@ pub fn run() {
             pick_workspace_folder,
             set_workspace_root,
             record_recent_file,
+            get_ui_state,
+            update_ui_state,
             update_agent_context,
             get_agent_context,
             get_lsp_servers,
@@ -580,6 +698,12 @@ fn rebuild_app_menu(app: &tauri::AppHandle, state: &AppState) -> Result<(), Comm
         .recent_items
         .read()
         .map_err(|_| CommandError::Recent("recent items lock poisoned".to_string()))?
+        .clone();
+    let view_settings = state
+        .ui_state
+        .read()
+        .map_err(|_| CommandError::UiState("ui state lock poisoned".to_string()))?
+        .view
         .clone();
     let open_folder = MenuItemBuilder::with_id("open_folder", "Open Folder...")
         .accelerator("CmdOrCtrl+O")
@@ -641,15 +765,21 @@ fn rebuild_app_menu(app: &tauri::AppHandle, state: &AppState) -> Result<(), Comm
     let show_integrations = MenuItemBuilder::with_id("show_integrations", "Integrations...")
         .build(app)
         .map_err(|error| CommandError::Recent(error.to_string()))?;
-    let toggle_dotfiles =
-        CheckMenuItem::with_id(app, "toggle_dotfiles", "Show Dotfiles", true, false, None::<&str>)
-            .map_err(|error| CommandError::Recent(error.to_string()))?;
+    let toggle_dotfiles = CheckMenuItem::with_id(
+        app,
+        "toggle_dotfiles",
+        "Show Dotfiles",
+        true,
+        view_settings.show_dotfiles,
+        None::<&str>,
+    )
+    .map_err(|error| CommandError::Recent(error.to_string()))?;
     let toggle_generated_internal = CheckMenuItem::with_id(
         app,
         "toggle_generated_internal",
         "Show Generated/Internal Folders",
         true,
-        false,
+        view_settings.show_generated_internal,
         None::<&str>,
     )
     .map_err(|error| CommandError::Recent(error.to_string()))?;
@@ -744,6 +874,98 @@ fn persist_recent_items(state: &AppState) -> Result<(), CommandError> {
 fn load_recent_items(path: &Path) -> Result<RecentItems, std::io::Error> {
     if !path.exists() {
         return Ok(RecentItems::default());
+    }
+
+    let contents = std::fs::read_to_string(path)?;
+    serde_json::from_str(&contents).map_err(std::io::Error::other)
+}
+
+fn workspace_ui_snapshot_for_root(
+    state: &AppState,
+    workspace_root: &str,
+) -> Result<PersistedUiSnapshot, CommandError> {
+    let ui_state = state
+        .ui_state
+        .read()
+        .map_err(|_| CommandError::UiState("ui state lock poisoned".to_string()))?;
+    let workspace = ui_state
+        .workspaces
+        .iter()
+        .find(|workspace| workspace.workspace_root == workspace_root)
+        .map(|workspace| WorkspaceUiStatePayload {
+            expanded_folders: workspace.expanded_folders.clone(),
+            open_files: workspace.open_files.clone(),
+            active_file: workspace.active_file.clone(),
+            selected_path: workspace.selected_path.clone(),
+        })
+        .unwrap_or_default();
+    Ok(PersistedUiSnapshot {
+        view: ui_state.view.clone(),
+        workspace,
+    })
+}
+
+fn sanitize_workspace_ui_state(state: WorkspaceUiStatePayload) -> WorkspaceUiStatePayload {
+    let mut expanded_folders = state
+        .expanded_folders
+        .into_iter()
+        .filter(|path| is_safe_relative_path(path))
+        .collect::<Vec<_>>();
+    expanded_folders.sort();
+    expanded_folders.dedup();
+
+    let mut open_files = state
+        .open_files
+        .into_iter()
+        .filter(|path| is_safe_relative_path(path))
+        .collect::<Vec<_>>();
+    open_files.dedup();
+    open_files.truncate(32);
+
+    let active_file = state
+        .active_file
+        .filter(|path| is_safe_relative_path(path) && open_files.contains(path));
+    let selected_path = state
+        .selected_path
+        .filter(|path| is_safe_relative_path(path));
+
+    WorkspaceUiStatePayload {
+        expanded_folders,
+        open_files,
+        active_file,
+        selected_path,
+    }
+}
+
+fn is_safe_relative_path(value: &str) -> bool {
+    let path = Path::new(value);
+    !value.is_empty()
+        && !path.is_absolute()
+        && path
+            .components()
+            .all(|component| matches!(component, std::path::Component::Normal(_)))
+}
+
+fn persist_ui_state(state: &AppState) -> Result<(), CommandError> {
+    let path = state
+        .ui_state_store_path
+        .read()
+        .map_err(|_| CommandError::UiState("ui state store lock poisoned".to_string()))?
+        .clone()
+        .ok_or_else(|| CommandError::UiState("ui state store path is unavailable".to_string()))?;
+    let state = state
+        .ui_state
+        .read()
+        .map_err(|_| CommandError::UiState("ui state lock poisoned".to_string()))?
+        .clone();
+    let contents = serde_json::to_string_pretty(&state)
+        .map_err(|error| CommandError::UiState(error.to_string()))?;
+    std::fs::write(path, contents).map_err(|error| CommandError::UiState(error.to_string()))
+}
+
+fn load_ui_state(path: &Path) -> Result<AppUiState, std::io::Error> {
+    if !path.exists() {
+        return Ok(AppUiState::default());
     }
 
     let contents = std::fs::read_to_string(path)?;
@@ -917,12 +1139,82 @@ mod tests {
         assert_eq!(loaded.files[1].path, "README.md");
     }
 
+    #[test]
+    fn ui_state_is_sanitized_deduplicated_and_persisted() {
+        let dir = tempdir().unwrap();
+        let recents_path = dir.path().join("recents.json");
+        let ui_state_path = dir.path().join("ui-state.json");
+        let state = test_state(recents_path);
+        *state.ui_state_store_path.write().unwrap() = Some(ui_state_path.clone());
+
+        let workspace = sanitize_workspace_ui_state(WorkspaceUiStatePayload {
+            expanded_folders: vec![
+                "src".to_string(),
+                "../secret".to_string(),
+                "src".to_string(),
+                "/tmp".to_string(),
+            ],
+            open_files: vec![
+                "README.md".to_string(),
+                "../secret".to_string(),
+                "README.md".to_string(),
+                "src/App.tsx".to_string(),
+            ],
+            active_file: Some("src/App.tsx".to_string()),
+            selected_path: Some("/tmp".to_string()),
+        });
+
+        assert_eq!(workspace.expanded_folders, vec!["src".to_string()]);
+        assert_eq!(
+            workspace.open_files,
+            vec!["README.md".to_string(), "src/App.tsx".to_string()]
+        );
+        assert_eq!(workspace.active_file, Some("src/App.tsx".to_string()));
+        assert_eq!(workspace.selected_path, None);
+
+        *state.ui_state.write().unwrap() = AppUiState {
+            view: PersistedViewSettings {
+                show_dotfiles: true,
+                show_generated_internal: true,
+            },
+            workspaces: vec![PersistedWorkspaceUiState {
+                workspace_root: "/workspace".to_string(),
+                expanded_folders: workspace.expanded_folders,
+                open_files: workspace.open_files,
+                active_file: workspace.active_file,
+                selected_path: workspace.selected_path,
+                updated_at: 123,
+            }],
+        };
+        persist_ui_state(&state).unwrap();
+
+        let loaded = load_ui_state(&ui_state_path).unwrap();
+        assert!(loaded.view.show_dotfiles);
+        assert!(loaded.view.show_generated_internal);
+        assert_eq!(loaded.workspaces.len(), 1);
+
+        *state.ui_state.write().unwrap() = loaded;
+        let snapshot = workspace_ui_snapshot_for_root(&state, "/workspace").unwrap();
+        assert_eq!(snapshot.workspace.expanded_folders, vec!["src".to_string()]);
+        assert_eq!(
+            snapshot.workspace.open_files,
+            vec!["README.md".to_string(), "src/App.tsx".to_string()]
+        );
+        assert_eq!(
+            snapshot.workspace.active_file,
+            Some("src/App.tsx".to_string())
+        );
+    }
+
     fn test_state(recents_path: PathBuf) -> AppState {
+        let ui_state_path = recents_path.with_file_name("ui-state.json");
         AppState {
             workspace_root: Arc::new(RwLock::new(PathBuf::new())),
             initial_file: Arc::new(RwLock::new(None)),
             recent_items: Arc::new(std::sync::RwLock::new(RecentItems::default())),
             recent_store_path: Arc::new(std::sync::RwLock::new(Some(recents_path))),
+            ui_state: Arc::new(std::sync::RwLock::new(AppUiState::default())),
+            ui_state_store_path: Arc::new(std::sync::RwLock::new(Some(ui_state_path))),
             agent_context: Arc::new(RwLock::new(AgentContext::default())),
             lsp_manager: lsp::LspManager::new(),
             http_endpoint: Arc::new(RwLock::new(None)),
