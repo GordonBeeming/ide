@@ -29,6 +29,8 @@ The service appears under Finder's Quick Actions menu as `Open in Ide`. It hands
 
 `npm run finder:check` validates the generated Quick Action and runner in a temporary directory. It verifies that the service registers for files and folders, emits a valid plist/workflow, and hands targets to `/api/open-path` with the local bearer token before `run-tests.sh` moves on to browser smoke tests.
 
+Packaged builds declare Tauri `bundle.fileAssociations` for common text, code, web, config, and .NET project files. Tauri emits `RunEvent::Opened` when the OS opens a file with the app; the Rust backend converts those file URLs into the same open-file/open-workspace payloads used by the native menu, stores cold-start requests until the frontend drains them, and emits live requests when the app is already running.
+
 ## Manual Commands
 
 Run the full local verification suite:
@@ -150,6 +152,8 @@ The native folder picker is owned by the Rust backend through `tauri-plugin-dial
 - clears backend agent context
 - clears backend LSP sessions and frontend LSP client caches so a language server is not reused with the wrong root
 - rewrites the Claude bridge lock file workspace metadata
+
+Native OS file-open events reuse the same switching path. Opening a file from the OS uses the file's parent as the workspace root and opens the file as a persistent single-file session; opening a folder still goes through the Open Folder menu, `run.sh`, or the Finder Quick Action because platform file associations do not register folders.
 
 The frontend refuses to switch folders while any open tab is dirty.
 

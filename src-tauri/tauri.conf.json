@@ -26,6 +26,97 @@
   },
   "bundle": {
     "active": true,
+    "category": "DeveloperTool",
+    "fileAssociations": [
+      {
+        "name": "Source Code",
+        "ext": [
+          "rs",
+          "ts",
+          "tsx",
+          "js",
+          "jsx",
+          "mjs",
+          "cjs",
+          "cs",
+          "c",
+          "h",
+          "cpp",
+          "hpp",
+          "cc",
+          "java",
+          "kt",
+          "kts",
+          "scala",
+          "py",
+          "go",
+          "rb",
+          "php",
+          "swift"
+        ],
+        "mimeType": "text/plain",
+        "role": "Editor",
+        "rank": "Alternate"
+      },
+      {
+        "name": "Web and Style Files",
+        "ext": [
+          "html",
+          "htm",
+          "css",
+          "scss",
+          "sass",
+          "less",
+          "vue",
+          "svelte"
+        ],
+        "mimeType": "text/plain",
+        "role": "Editor",
+        "rank": "Alternate"
+      },
+      {
+        "name": "Structured Text and Config",
+        "ext": [
+          "json",
+          "jsonc",
+          "md",
+          "markdown",
+          "txt",
+          "toml",
+          "yaml",
+          "yml",
+          "xml",
+          "sql",
+          "sh",
+          "bash",
+          "zsh",
+          "ps1",
+          "bat",
+          "cmd",
+          "diff",
+          "patch",
+          "editorconfig",
+          "gitignore",
+          "dockerignore",
+          "env"
+        ],
+        "mimeType": "text/plain",
+        "role": "Editor",
+        "rank": "Alternate"
+      },
+      {
+        "name": ".NET Project Files",
+        "ext": [
+          "csproj",
+          "props",
+          "targets",
+          "sln"
+        ],
+        "mimeType": "text/xml",
+        "role": "Editor",
+        "rank": "Alternate"
+      }
+    ],
     "targets": "all"
   }
 }

@@ -57,6 +57,7 @@ const files: FileEntry[] = [
 const tauriMocks = vi.hoisted(() => ({
   getWorkspaceRoot: vi.fn(),
   getInitialFile: vi.fn(),
+  takeOpenedLaunchTargets: vi.fn(),
   listFiles: vi.fn(),
   readFile: vi.fn(),
   statFile: vi.fn(),
@@ -112,6 +113,7 @@ vi.mock("./tauri", async () => {
     ...actual,
     getWorkspaceRoot: tauriMocks.getWorkspaceRoot,
     getInitialFile: tauriMocks.getInitialFile,
+    takeOpenedLaunchTargets: tauriMocks.takeOpenedLaunchTargets,
     listFiles: tauriMocks.listFiles,
     readFile: tauriMocks.readFile,
     statFile: tauriMocks.statFile,
@@ -224,6 +226,7 @@ describe("App shell interactions", () => {
     lspMocks.setLspStatusHandler.mockReset();
     tauriMocks.getWorkspaceRoot.mockResolvedValue("/workspace");
     tauriMocks.getInitialFile.mockResolvedValue(undefined);
+    tauriMocks.takeOpenedLaunchTargets.mockResolvedValue([]);
     tauriMocks.listFiles.mockResolvedValue(files);
     tauriMocks.statFile.mockImplementation(async (path: string) => {
       const entry = files.find((candidate) => candidate.path === path);
@@ -399,6 +402,42 @@ describe("App shell interactions", () => {
     expect(tauriMocks.setWorkspaceRootPath).toHaveBeenCalledWith(
       "/Users/gordonbeeming/Developer",
     );
+  });
+
+  it("opens pending OS file association requests after native listeners register", async () => {
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    tauriMocks.takeOpenedLaunchTargets.mockResolvedValueOnce([
+      {
+        type: "file",
+        workspaceRoot: "/Users/gordonbeeming/Developer",
+        path: "notes.md",
+        singleFile: true,
+      },
+    ]);
+    tauriMocks.statFile.mockResolvedValueOnce({
+      path: "notes.md",
+      name: "notes.md",
+      isDir: false,
+      depth: 0,
+      size: 11,
+      modifiedMs: 505,
+    });
+    tauriMocks.readFile.mockImplementation(async (path: string) => {
+      if (path === "notes.md") return "# Notes";
+      if (path === "README.md") return "readme";
+      if (path === "src/App.tsx") return "export function App() {}";
+      return "";
+    });
+
+    render(<App />);
+
+    expect(await screen.findByLabelText("Editor notes.md")).toHaveValue("# Notes");
+    expect(tauriMocks.takeOpenedLaunchTargets).toHaveBeenCalledTimes(1);
+    expect(tauriMocks.setWorkspaceRootPath).toHaveBeenCalledWith(
+      "/Users/gordonbeeming/Developer",
+    );
+    expect(tauriMocks.recordRecentFile).toHaveBeenCalledWith("notes.md", true);
+    expect(screen.queryByText("README.md")).not.toBeInTheDocument();
   });
 
   it("keeps first-level folders collapsed until the user opens them", async () => {

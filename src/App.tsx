@@ -92,9 +92,11 @@ import {
   searchFiles,
   setWorkspaceRootPath,
   statFile,
+  takeOpenedLaunchTargets,
   updateAgentContext,
   updateUiState,
   writeFile,
+  type OpenLaunchRequest,
   type PersistedUiSnapshot,
   type WorkspaceUiState,
 } from "./tauri";
@@ -243,6 +245,7 @@ export default function App() {
   const sidebarContentSearchInputRef = useRef<HTMLInputElement | null>(null);
   const currentFindInputRef = useRef<HTMLInputElement | null>(null);
   const initialFileOpenedRef = useRef(false);
+  const openedLaunchTargetsDrainedRef = useRef(false);
   const persistedWorkspaceRef = useRef<WorkspaceUiState>({
     expandedFolders: [],
     openFiles: [],
@@ -1356,6 +1359,22 @@ export default function App() {
     ],
   );
 
+  const handleOpenLaunchRequest = useCallback(
+    (request: OpenLaunchRequest) => {
+      if (request.type === "workspace") {
+        void openWorkspacePath(request.path);
+        return;
+      }
+
+      void openFileFromWorkspace(
+        request.workspaceRoot,
+        request.path,
+        request.singleFile,
+      );
+    },
+    [openFileFromWorkspace, openWorkspacePath],
+  );
+
   useEffect(() => {
     if (!isNativeTauri()) return;
 
@@ -1363,14 +1382,18 @@ export default function App() {
     let unlistenCallbacks: Array<() => void> = [];
     Promise.all([
       listen<{ path: string }>("menu://open-workspace", (event) => {
-        void openWorkspacePath(event.payload.path);
+        handleOpenLaunchRequest({
+          type: "workspace",
+          path: event.payload.path,
+        });
       }),
       listen<{ workspaceRoot: string; path: string; singleFile?: boolean }>("menu://open-file", (event) => {
-        void openFileFromWorkspace(
-          event.payload.workspaceRoot,
-          event.payload.path,
-          Boolean(event.payload.singleFile),
-        );
+        handleOpenLaunchRequest({
+          type: "file",
+          workspaceRoot: event.payload.workspaceRoot,
+          path: event.payload.path,
+          singleFile: Boolean(event.payload.singleFile),
+        });
       }),
       listen("menu://close-tab", () => {
         requestCloseActiveFile();
@@ -1451,6 +1474,12 @@ export default function App() {
           return;
         }
         unlistenCallbacks = callbacks;
+        if (openedLaunchTargetsDrainedRef.current) return undefined;
+        openedLaunchTargetsDrainedRef.current = true;
+        return takeOpenedLaunchTargets().then((requests) => {
+          if (disposed) return;
+          requests.forEach(handleOpenLaunchRequest);
+        });
       })
       .catch((reason) => {
         if (!disposed) {
@@ -1463,6 +1492,7 @@ export default function App() {
       unlistenCallbacks.forEach((unlisten) => unlisten());
     };
   }, [
+    handleOpenLaunchRequest,
     openFileFromWorkspace,
     openNewFileDialog,
     openNewFolderDialog,

@@ -78,6 +78,18 @@ export interface OpenFileRequest {
   singleFile: boolean;
 }
 
+export type OpenLaunchRequest =
+  | {
+      type: "workspace";
+      path: string;
+    }
+  | {
+      type: "file";
+      workspaceRoot: string;
+      path: string;
+      singleFile: boolean;
+    };
+
 export interface PersistedViewSettings {
   showDotfiles: boolean;
   showGeneratedInternal: boolean;
@@ -117,6 +129,11 @@ export function getWorkspaceRoot() {
 export function getInitialFile() {
   if (!isNativeTauri()) return Promise.resolve(undefined);
   return invoke<string | undefined>("get_initial_file");
+}
+
+export function takeOpenedLaunchTargets() {
+  if (!isNativeTauri()) return Promise.resolve([]);
+  return invoke<OpenLaunchRequest[]>("take_opened_launch_targets");
 }
 
 export function setWorkspaceRootPath(path: string) {

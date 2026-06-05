@@ -16,6 +16,8 @@ Implemented:
 - Native File menu with New File, New Folder, Open File, Open Folder, Recents, Save, Reload, Rename/Delete, Close Tab, and Close All.
 - Native View menu toggles for showing dotfiles and generated/internal folders in the tree.
 - File/folder launch targets through the local runner and macOS Finder Quick Action.
+- Packaged-app file associations for common text, code, web, config, and .NET project files.
+- Runtime handling for native OS file-open events, including cold-start opens before the frontend has registered listeners.
 - Explicit workspace loading, empty, and load-failure retry states.
 - Collapsible sidebar for focused editing.
 - Collapsed file-name filtering and bounded text search across the current workspace.
@@ -78,6 +80,8 @@ On macOS, install the Finder Quick Action for direct file/folder opening:
 After installation, use Finder's right-click menu: Quick Actions > Open in Ide. Recent folders and files are stored in the OS app-data location and exposed through the native File menu, not as in-app sidebar content.
 
 The Finder Quick Action generator is covered by `npm run finder:check`, which installs into a temporary directory and validates the generated service, file/folder UTI coverage, and loopback handoff script without touching your real Finder services.
+
+Packaged builds also declare file associations for common editor-supported file types, so macOS and other platforms can offer Ide from native `Open With` flows for those files. Folder opening is still handled through the native Open Folder menu, `./run.sh /path/to/folder`, and the macOS Finder Quick Action because OS file associations are file-oriented.
 
 ## Requirements
 

@@ -207,6 +207,42 @@ describe("hosted Tauri API transport", () => {
     expect(invoke).toHaveBeenCalledWith("pick_open_file");
   });
 
+  it("drains native OS-open launch requests only through Tauri", async () => {
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    const { invoke } = await import("@tauri-apps/api/core");
+    vi.mocked(invoke).mockResolvedValue([
+      {
+        type: "file",
+        workspaceRoot: "/workspace",
+        path: "notes.md",
+        singleFile: true,
+      },
+    ]);
+    const { takeOpenedLaunchTargets } = await import("./tauri");
+
+    await expect(takeOpenedLaunchTargets()).resolves.toEqual([
+      {
+        type: "file",
+        workspaceRoot: "/workspace",
+        path: "notes.md",
+        singleFile: true,
+      },
+    ]);
+    expect(invoke).toHaveBeenCalledWith("take_opened_launch_targets");
+  });
+
+  it("does not request OS-open launch targets from hosted browser mode", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const { invoke } = await import("@tauri-apps/api/core");
+    vi.mocked(invoke).mockClear();
+    const { takeOpenedLaunchTargets } = await import("./tauri");
+
+    await expect(takeOpenedLaunchTargets()).resolves.toEqual([]);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(invoke).not.toHaveBeenCalled();
+  });
+
   it("rejects native file picking from hosted browser mode", async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);

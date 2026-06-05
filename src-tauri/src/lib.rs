@@ -21,6 +21,7 @@ use workspace::{
 struct AppState {
     workspace_root: Arc<RwLock<PathBuf>>,
     initial_file: Arc<RwLock<Option<String>>>,
+    pending_open_requests: Arc<std::sync::RwLock<Vec<OpenLaunchRequest>>>,
     recent_items: Arc<std::sync::RwLock<RecentItems>>,
     recent_store_path: Arc<std::sync::RwLock<Option<PathBuf>>>,
     ui_state: Arc<std::sync::RwLock<AppUiState>>,
@@ -157,6 +158,23 @@ struct OpenFileRequest {
     single_file: bool,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+enum OpenLaunchRequest {
+    Workspace {
+        path: String,
+    },
+    File {
+        workspace_root: String,
+        path: String,
+        single_file: bool,
+    },
+}
+
 #[derive(Debug, thiserror::Error)]
 enum CommandError {
     #[error("{0}")]
@@ -199,6 +217,17 @@ async fn get_workspace_root(state: State<'_, AppState>) -> Result<String, Comman
 #[tauri::command]
 async fn get_initial_file(state: State<'_, AppState>) -> Result<Option<String>, CommandError> {
     Ok(state.initial_file.read().await.clone())
+}
+
+#[tauri::command]
+async fn take_opened_launch_targets(
+    state: State<'_, AppState>,
+) -> Result<Vec<OpenLaunchRequest>, CommandError> {
+    let mut pending = state
+        .pending_open_requests
+        .write()
+        .map_err(|_| CommandError::Recent("open request lock poisoned".to_string()))?;
+    Ok(std::mem::take(&mut *pending))
 }
 
 #[tauri::command]
@@ -485,6 +514,7 @@ pub fn run() {
     let app_state = AppState {
         workspace_root: Arc::new(RwLock::new(launch_target.workspace_root)),
         initial_file: Arc::new(RwLock::new(launch_target.initial_file)),
+        pending_open_requests: Arc::new(std::sync::RwLock::new(Vec::new())),
         recent_items: Arc::new(std::sync::RwLock::new(RecentItems::default())),
         recent_store_path: Arc::new(std::sync::RwLock::new(None)),
         ui_state: Arc::new(std::sync::RwLock::new(AppUiState::default())),
@@ -799,6 +829,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_workspace_root,
             get_initial_file,
+            take_opened_launch_targets,
             list_files,
             read_file,
             stat_file,
@@ -823,8 +854,28 @@ pub fn run() {
             start_lsp,
             send_lsp_message
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running application");
+        .build(tauri::generate_context!())
+        .expect("error while building application")
+        .run(|app, event| {
+            #[cfg(any(target_os = "macos", target_os = "ios", target_os = "android"))]
+            if let tauri::RunEvent::Opened { urls } = event {
+                let requests = open_launch_requests_for_urls(urls);
+                if requests.is_empty() {
+                    return;
+                }
+
+                let state = app.state::<AppState>();
+                if let Ok(mut pending) = state.pending_open_requests.write() {
+                    pending.extend(requests.clone());
+                } else {
+                    let _ = app.emit("app://error", "Unable to store opened file request");
+                }
+
+                for request in requests {
+                    emit_open_launch_request(app, request);
+                }
+            }
+        });
 }
 
 async fn set_workspace_root_path(
@@ -1297,6 +1348,52 @@ fn open_file_request_for_launch_target(target: LaunchTarget) -> Option<OpenFileR
     })
 }
 
+fn open_launch_request_for_path(path: PathBuf) -> Result<OpenLaunchRequest, std::io::Error> {
+    let target = launch_target_for_path(path)?;
+    if let Some(request) = open_file_request_for_launch_target(target.clone()) {
+        return Ok(OpenLaunchRequest::File {
+            workspace_root: request.workspace_root,
+            path: request.path,
+            single_file: request.single_file,
+        });
+    }
+
+    Ok(OpenLaunchRequest::Workspace {
+        path: target.workspace_root.to_string_lossy().to_string(),
+    })
+}
+
+fn open_launch_requests_for_urls(urls: Vec<tauri::Url>) -> Vec<OpenLaunchRequest> {
+    urls.into_iter()
+        .filter_map(|url| {
+            let path = url.to_file_path().ok()?;
+            open_launch_request_for_path(path).ok()
+        })
+        .collect()
+}
+
+fn emit_open_launch_request(app: &tauri::AppHandle, request: OpenLaunchRequest) {
+    match request {
+        OpenLaunchRequest::Workspace { path } => {
+            let _ = app.emit("menu://open-workspace", OpenWorkspaceRequest { path });
+        }
+        OpenLaunchRequest::File {
+            workspace_root,
+            path,
+            single_file,
+        } => {
+            let _ = app.emit(
+                "menu://open-file",
+                OpenFileRequest {
+                    workspace_root,
+                    path,
+                    single_file,
+                },
+            );
+        }
+    }
+}
+
 fn project_root_for_process_dir(process_dir: &std::path::Path) -> PathBuf {
     if process_dir
         .file_name()
@@ -1371,6 +1468,56 @@ mod tests {
                 initial_file: Some("notes.md".to_string()),
             }
         );
+    }
+
+    #[test]
+    fn open_launch_request_for_folder_opens_workspace() {
+        let dir = tempdir().unwrap();
+        let canonical_dir = dir.path().canonicalize().unwrap();
+
+        let request = open_launch_request_for_path(dir.path().to_path_buf()).unwrap();
+
+        assert_eq!(
+            serde_json::to_value(request).unwrap(),
+            serde_json::json!({
+                "type": "workspace",
+                "path": canonical_dir.to_string_lossy(),
+            })
+        );
+    }
+
+    #[test]
+    fn open_launch_request_for_file_opens_single_file_session() {
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("notes.md");
+        std::fs::write(&file_path, "# Notes").unwrap();
+        let canonical_dir = dir.path().canonicalize().unwrap();
+
+        let request = open_launch_request_for_path(file_path).unwrap();
+
+        assert_eq!(
+            serde_json::to_value(request).unwrap(),
+            serde_json::json!({
+                "type": "file",
+                "workspaceRoot": canonical_dir.to_string_lossy(),
+                "path": "notes.md",
+                "singleFile": true,
+            })
+        );
+    }
+
+    #[test]
+    fn open_launch_requests_ignore_non_file_urls() {
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("notes.md");
+        std::fs::write(&file_path, "# Notes").unwrap();
+        let file_url = tauri::Url::from_file_path(file_path).unwrap();
+        let web_url = tauri::Url::parse("https://example.com/notes.md").unwrap();
+
+        let requests = open_launch_requests_for_urls(vec![web_url, file_url]);
+
+        assert_eq!(requests.len(), 1);
+        assert!(matches!(requests[0], OpenLaunchRequest::File { .. }));
     }
 
     #[test]
@@ -1474,6 +1621,7 @@ mod tests {
         AppState {
             workspace_root: Arc::new(RwLock::new(PathBuf::new())),
             initial_file: Arc::new(RwLock::new(None)),
+            pending_open_requests: Arc::new(std::sync::RwLock::new(Vec::new())),
             recent_items: Arc::new(std::sync::RwLock::new(RecentItems::default())),
             recent_store_path: Arc::new(std::sync::RwLock::new(Some(recents_path))),
             ui_state: Arc::new(std::sync::RwLock::new(AppUiState::default())),

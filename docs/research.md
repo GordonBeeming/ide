@@ -6,6 +6,17 @@
 - CodeMirror 6 keeps the editor surface modular. Language packages and the LSP client can be lazy-loaded by file type.
 - Monaco remains intentionally excluded because this IDE is optimizing for startup cost and controlled feature scope.
 
+## Native File Opening
+
+Tauri 2 supports bundled file associations through `bundle.fileAssociations` in `tauri.conf.json`. The config maps extensions, MIME types, editor/viewer role, and handler rank into platform metadata such as macOS `CFBundleDocumentTypes`/Launch Services and Linux desktop MIME entries.
+
+Tauri emits `RunEvent::Opened` when the OS opens associated files with the app. The event can arrive while the app is already running or during startup, so the backend needs to both emit a live frontend event and store cold-start requests until the frontend drains them.
+
+References:
+
+- https://v2.tauri.app/reference/config/#fileassociation
+- https://v2.tauri.app/learn/mobile-file-associations/#handling-opened-files
+
 ## Claude Code IDE Bridge
 
 Claude Code IDE integration is based on a localhost MCP transport discovered through lock files:
