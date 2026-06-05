@@ -77,7 +77,7 @@ The app is intentionally split into a small always-loaded shell and lazy-loaded 
 - `src/commandPalette.ts`: tested command palette matching, ranking, and keyboard selection rules.
 - `src/editorNavigation.ts`: tested line clamping for search-result reveal behavior.
 - `src/currentFileSearch.ts`: tested current-file search over loaded and unsaved editor contents.
-- `src/App.test.tsx`: rendered shell coverage for non-text file selection, collapsed search controls, preview-tab lifecycle, dirty-tab save-and-close prompts, native Close Tab/Close All/Search menu handling, command-palette file opening, keyboard tab switching, caret status reporting, current-file search, new-file/folder creation, file/folder rename/delete, reload-from-disk behavior, stale-save handling, Save All success/failure behavior, active-file-safe agent selection context, and content search result/error behavior.
+- `src/App.test.tsx`: rendered shell coverage for non-text file selection, collapsed search controls, preview-tab lifecycle, dirty-tab save-and-close prompts, native Close Tab/Close All/Search menu handling, command-palette file opening, keyboard tab switching, go-to-line navigation and validation, caret status reporting, current-file search, new-file/folder creation, file/folder rename/delete, reload-from-disk behavior, stale-save handling, Save All success/failure behavior, active-file-safe agent selection context, and content search result/error behavior.
 - `src/tauri.test.ts`: hosted browser transport coverage for bearer-token file/folder creation, native-only file picking, file rename/delete/writes, stale-save tokens, and loopback API base selection.
 - `scripts/bundle-budget.mjs`: production bundle budget coverage for startup assets and the lazy editor chunk.
 - `scripts/validate-finder-quick-action.mjs`: non-installing QA for the macOS Finder Quick Action service and generated runner.
@@ -177,6 +177,7 @@ The Search menu owns:
 
 - `Command Palette...`
 - `Go to File...`
+- `Go to Line...`
 - `Find in File`
 - `Find in Files`
 
@@ -198,6 +199,7 @@ Supported keyboard commands:
 - `Cmd/Ctrl+Shift+P`: open the command palette.
 - `Cmd/Ctrl+F`: open and focus current-file search.
 - `Cmd/Ctrl+Shift+F`: open and focus workspace content search.
+- `Ctrl+G`: jump to a line in the active file.
 - `Cmd/Ctrl+N`: create a new file.
 - `Cmd/Ctrl+P`: open the quick-open palette.
 - `F2`: rename the selected file or folder.

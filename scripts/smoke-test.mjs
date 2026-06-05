@@ -332,6 +332,12 @@ async function runScenario(browser, url, colorScheme) {
   await page.getByText("Smoke workspace").waitFor();
   await assertTheme(page, colorScheme);
 
+  await page.keyboard.press("Control+G");
+  await page.getByRole("dialog", { name: "Go to line" }).waitFor();
+  await page.getByLabel("Line number").fill("2");
+  await page.keyboard.press("Enter");
+  await page.getByText("Moved to docs/README.md:2").waitFor();
+
   const saveDisabled = await page
     .locator('button[title="Save"]')
     .evaluate((button) => button.disabled);

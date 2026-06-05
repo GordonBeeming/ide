@@ -18,6 +18,7 @@ import {
   FileCog,
   FolderOpen,
   FolderPlus,
+  ListOrdered,
   ListFilter,
   PanelLeftClose,
   PanelLeftOpen,
@@ -159,6 +160,17 @@ function renamePathPrefix(path: string, fromPath: string, toPath: string) {
     : path;
 }
 
+function documentLineCount(contents: string) {
+  return Math.max(contents.split(/\r\n|\r|\n/).length, 1);
+}
+
+function positiveWholeNumber(value: string) {
+  const trimmed = value.trim();
+  if (!/^\d+$/.test(trimmed)) return undefined;
+  const parsed = Number(trimmed);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : undefined;
+}
+
 export default function App() {
   const [workspaceRoot, setWorkspaceRoot] = useState("");
   const [workspaceLoading, setWorkspaceLoading] = useState(true);
@@ -194,6 +206,8 @@ export default function App() {
   const [renameDialogOpen, setRenameDialogOpen] = useState(false);
   const [renameFromPath, setRenameFromPath] = useState("");
   const [renameToPath, setRenameToPath] = useState("");
+  const [goToLineDialogOpen, setGoToLineDialogOpen] = useState(false);
+  const [goToLineValue, setGoToLineValue] = useState("");
   const [pendingDeletePath, setPendingDeletePath] = useState<string>();
   const [pendingReloadPath, setPendingReloadPath] = useState<string>();
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -1002,6 +1016,51 @@ export default function App() {
     setCurrentFindOpen(true);
   }, [activeFile]);
 
+  const openGoToLineDialog = useCallback(() => {
+    if (!activeFile) {
+      setStatus("Go to line requires an open file");
+      return;
+    }
+
+    setError(undefined);
+    setCommandPaletteVisible(false);
+    setCommandPaletteQuery("");
+    setCommandPaletteIndex(0);
+    setQuickOpenVisible(false);
+    setQuickOpenQuery("");
+    setQuickOpenIndex(0);
+    setGoToLineValue(
+      cursor?.filePath === activeFile.path ? String(cursor.line) : "",
+    );
+    setGoToLineDialogOpen(true);
+  }, [activeFile, cursor]);
+
+  const closeGoToLineDialog = useCallback(() => {
+    setGoToLineDialogOpen(false);
+    setGoToLineValue("");
+  }, []);
+
+  const goToLine = useCallback(() => {
+    if (!activeFile) {
+      closeGoToLineDialog();
+      setStatus("Go to line requires an open file");
+      return;
+    }
+
+    const requestedLine = positiveWholeNumber(goToLineValue);
+    if (!requestedLine) {
+      setError("Line number must be a positive whole number.");
+      setStatus("Go to line failed");
+      return;
+    }
+
+    const targetLine = Math.min(requestedLine, documentLineCount(activeFile.contents));
+    setError(undefined);
+    setRevealTarget({ path: activeFile.path, lineNumber: targetLine });
+    setStatus(`Moved to ${activeFile.path}:${targetLine}`);
+    closeGoToLineDialog();
+  }, [activeFile, closeGoToLineDialog, goToLineValue]);
+
   const openWorkspaceSearch = useCallback(() => {
     setActiveSidebarSearch("content");
   }, []);
@@ -1240,6 +1299,9 @@ export default function App() {
       listen("menu://quick-open", () => {
         openQuickOpen();
       }),
+      listen("menu://go-to-line", () => {
+        openGoToLineDialog();
+      }),
       listen("menu://find-in-file", () => {
         openCurrentFileFind();
       }),
@@ -1294,6 +1356,7 @@ export default function App() {
     openNewFolderDialog,
     openCommandPalette,
     openCurrentFileFind,
+    openGoToLineDialog,
     openQuickOpen,
     openRenameDialog,
     openWorkspaceSearch,
@@ -1383,6 +1446,14 @@ export default function App() {
         keywords: ["current file search"],
         enabled: Boolean(activeFile),
         run: openCurrentFileFind,
+      },
+      {
+        id: "go_to_line",
+        title: "Go to Line",
+        detail: activeFile ? `Jump within ${activeFile.path}` : "Jump within the active file",
+        keywords: ["line number", "jump"],
+        enabled: Boolean(activeFile),
+        run: openGoToLineDialog,
       },
       {
         id: "new_file",
@@ -1543,6 +1614,7 @@ export default function App() {
       activeFile,
       hasDirtyFiles,
       openCurrentFileFind,
+      openGoToLineDialog,
       openNewFileDialog,
       openNewFolderDialog,
       openFileFromDialog,
@@ -1891,6 +1963,9 @@ export default function App() {
       } else if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "p") {
         event.preventDefault();
         openQuickOpen();
+      } else if (event.ctrlKey && !event.metaKey && event.key.toLowerCase() === "g") {
+        event.preventDefault();
+        openGoToLineDialog();
       } else if (
         (event.metaKey || event.ctrlKey) &&
         event.shiftKey &&
@@ -1910,6 +1985,9 @@ export default function App() {
       } else if (event.key === "Escape" && renameDialogOpen) {
         event.preventDefault();
         closeRenameDialog();
+      } else if (event.key === "Escape" && goToLineDialogOpen) {
+        event.preventDefault();
+        closeGoToLineDialog();
       } else if (event.key === "Escape" && pendingDeletePath) {
         event.preventDefault();
         cancelDeleteSelectedFile();
@@ -1942,6 +2020,7 @@ export default function App() {
     activeFile,
     closeQuickOpen,
     closeCommandPalette,
+    closeGoToLineDialog,
     closeNewFileDialog,
     closeNewFolderDialog,
     closeRenameDialog,
@@ -1951,6 +2030,7 @@ export default function App() {
     newFileDialogOpen,
     newFolderDialogOpen,
     integrationsOpen,
+    goToLineDialogOpen,
     nativePickerAvailable,
     commandPaletteVisible,
     openRenameDialog,
@@ -1960,6 +2040,7 @@ export default function App() {
     openWorkspace,
     openCommandPalette,
     openCurrentFileFind,
+    openGoToLineDialog,
     openQuickOpen,
     openWorkspaceSearch,
     openFiles,
@@ -2593,6 +2674,51 @@ export default function App() {
               </button>
             </div>
           </section>
+        </div>
+      ) : null}
+
+      {goToLineDialogOpen ? (
+        <div className="dialog-backdrop" role="presentation">
+          <form
+            className="confirm-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="go-to-line-title"
+            onSubmit={(event) => {
+              event.preventDefault();
+              goToLine();
+            }}
+          >
+            <div>
+              <div className="eyebrow">Navigate</div>
+              <h2 id="go-to-line-title">Go to line</h2>
+              <p>{activeFile?.path}</p>
+              <label className="dialog-field">
+                <span>Line number</span>
+                <input
+                  autoFocus
+                  inputMode="numeric"
+                  pattern="[0-9]*"
+                  value={goToLineValue}
+                  onChange={(event) => setGoToLineValue(event.target.value)}
+                  placeholder="42"
+                />
+              </label>
+            </div>
+            <div className="confirm-dialog__actions">
+              <button
+                className="command-button command-button--quiet"
+                type="button"
+                onClick={closeGoToLineDialog}
+              >
+                Cancel
+              </button>
+              <button className="command-button command-button--primary" type="submit">
+                <ListOrdered size={15} />
+                Go
+              </button>
+            </div>
+          </form>
         </div>
       ) : null}
 

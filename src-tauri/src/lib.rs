@@ -724,6 +724,11 @@ pub fn run() {
                 return;
             }
 
+            if id == "go_to_line" {
+                let _ = app.emit("menu://go-to-line", ());
+                return;
+            }
+
             if id == "find_in_file" {
                 let _ = app.emit("menu://find-in-file", ());
                 return;
@@ -1022,6 +1027,10 @@ fn rebuild_app_menu(app: &tauri::AppHandle, state: &AppState) -> Result<(), Comm
         .accelerator("CmdOrCtrl+P")
         .build(app)
         .map_err(|error| CommandError::Recent(error.to_string()))?;
+    let go_to_line = MenuItemBuilder::with_id("go_to_line", "Go to Line...")
+        .accelerator("Ctrl+G")
+        .build(app)
+        .map_err(|error| CommandError::Recent(error.to_string()))?;
     let find_in_file = MenuItemBuilder::with_id("find_in_file", "Find in File")
         .accelerator("CmdOrCtrl+F")
         .build(app)
@@ -1034,6 +1043,7 @@ fn rebuild_app_menu(app: &tauri::AppHandle, state: &AppState) -> Result<(), Comm
         .item(&command_palette)
         .separator()
         .item(&quick_open)
+        .item(&go_to_line)
         .item(&find_in_file)
         .item(&find_in_files)
         .build()

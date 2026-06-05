@@ -608,6 +608,11 @@ describe("App shell interactions", () => {
       eventMocks.listeners.get("menu://find-in-file")?.({ payload: undefined });
     });
     expect(await screen.findByPlaceholderText("Find in file")).toHaveFocus();
+
+    act(() => {
+      eventMocks.listeners.get("menu://go-to-line")?.({ payload: undefined });
+    });
+    expect(screen.getByRole("dialog", { name: "Go to line" })).toBeInTheDocument();
   });
 
   it("reports when native Find in File is used without an active file", async () => {
@@ -778,6 +783,69 @@ describe("App shell interactions", () => {
         name: /Find in File\s*Search inside the active file/,
       }),
     ).toBeDisabled();
+
+    fireEvent.change(input, { target: { value: "line number" } });
+    expect(
+      within(palette).getByRole("button", {
+        name: /Go to Line\s*Jump within the active file/,
+      }),
+    ).toBeDisabled();
+  });
+
+  it("opens go to line from the keyboard and reveals the requested line", async () => {
+    tauriMocks.readFile.mockImplementation(async (path: string) => {
+      if (path === "README.md") return "one\ntwo\nthree\nfour\nfive";
+      if (path === "src/App.tsx") return "export function App() {}";
+      return "";
+    });
+    render(<App />);
+
+    fireEvent.click(await treeButton("README.md"));
+    await findTab("README.md");
+
+    fireEvent.keyDown(window, { key: "g", ctrlKey: true });
+    const dialog = screen.getByRole("dialog", { name: "Go to line" });
+    const input = within(dialog).getByLabelText("Line number");
+
+    fireEvent.change(input, { target: { value: "4" } });
+    fireEvent.submit(dialog);
+
+    expect(screen.queryByRole("dialog", { name: "Go to line" }))
+      .not.toBeInTheDocument();
+    expect(screen.getByText("Reveal line 4")).toBeInTheDocument();
+    expect(screen.getByText("Moved to README.md:4")).toBeInTheDocument();
+    expect(screen.getByText("4:1")).toBeInTheDocument();
+  });
+
+  it("validates go to line input and clamps lines past the end of the file", async () => {
+    tauriMocks.readFile.mockImplementation(async (path: string) => {
+      if (path === "README.md") return "one\ntwo\nthree";
+      if (path === "src/App.tsx") return "export function App() {}";
+      return "";
+    });
+    render(<App />);
+
+    fireEvent.click(await treeButton("README.md"));
+    await findTab("README.md");
+    fireEvent.keyDown(window, { key: "g", ctrlKey: true });
+
+    let dialog = screen.getByRole("dialog", { name: "Go to line" });
+    let input = within(dialog).getByLabelText("Line number");
+    fireEvent.change(input, { target: { value: "abc" } });
+    fireEvent.submit(dialog);
+
+    expect(await screen.findByText("Line number must be a positive whole number."))
+      .toBeInTheDocument();
+    expect(screen.getByText("Go to line failed")).toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: "Go to line" })).toBeInTheDocument();
+
+    dialog = screen.getByRole("dialog", { name: "Go to line" });
+    input = within(dialog).getByLabelText("Line number");
+    fireEvent.change(input, { target: { value: "999" } });
+    fireEvent.submit(dialog);
+
+    expect(screen.getByText("Reveal line 3")).toBeInTheDocument();
+    expect(screen.getByText("Moved to README.md:3")).toBeInTheDocument();
   });
 
   it("disables save toolbar actions until there are unsaved edits", async () => {
