@@ -285,33 +285,6 @@ fn is_executable(path: &Path) -> bool {
             .unwrap_or(false)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use tempfile::tempdir;
-
-    #[test]
-    fn find_on_path_returns_none_for_missing_command() {
-        assert!(find_on_path("ide-definitely-missing-command").is_none());
-    }
-
-    #[test]
-    fn is_executable_accepts_regular_files() {
-        let dir = tempdir().unwrap();
-        let file = dir.path().join("server");
-        std::fs::write(&file, "").unwrap();
-
-        assert!(is_executable(&file));
-    }
-
-    #[test]
-    fn stale_session_removal_only_matches_current_session_id() {
-        assert!(should_remove_session(Some("current"), "current"));
-        assert!(!should_remove_session(Some("current"), "old"));
-        assert!(!should_remove_session(None, "current"));
-    }
-}
-
 fn spawn_stdout_reader(
     app: AppHandle,
     language: String,
@@ -465,4 +438,31 @@ async fn remove_session_if_matches(
 
 fn should_remove_session(existing_session_id: Option<&str>, session_id: &str) -> bool {
     existing_session_id.is_some_and(|existing| existing == session_id)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[test]
+    fn find_on_path_returns_none_for_missing_command() {
+        assert!(find_on_path("ide-definitely-missing-command").is_none());
+    }
+
+    #[test]
+    fn is_executable_accepts_regular_files() {
+        let dir = tempdir().unwrap();
+        let file = dir.path().join("server");
+        std::fs::write(&file, "").unwrap();
+
+        assert!(is_executable(&file));
+    }
+
+    #[test]
+    fn stale_session_removal_only_matches_current_session_id() {
+        assert!(should_remove_session(Some("current"), "current"));
+        assert!(!should_remove_session(Some("current"), "old"));
+        assert!(!should_remove_session(None, "current"));
+    }
 }

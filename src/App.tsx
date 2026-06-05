@@ -1109,13 +1109,13 @@ export default function App() {
           entries.find((candidate) => candidate.path === path) ??
           fileEntryForDirectOpen(path);
         if (!entry || entry.isDir) {
-          throw new Error(`Recent file is not in the current workspace: ${path}`);
+          throw new Error(`File is not in the current workspace: ${path}`);
         }
 
         await openPath(entry, true, undefined, singleFile);
       } catch (reason) {
         setError(String(reason));
-        setStatus("Open recent file failed");
+        setStatus("Open file failed");
       }
     },
     [

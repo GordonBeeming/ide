@@ -131,6 +131,8 @@ async fn handle_connection(
     state: ClaudeBridgeState,
     expected_token: String,
 ) -> Result<(), String> {
+    // Tungstenite's handshake callback requires returning ErrorResponse by value.
+    #[allow(clippy::result_large_err)]
     let websocket =
         tokio_tungstenite::accept_hdr_async(stream, |request: &Request, response: Response| {
             let is_authorized = request

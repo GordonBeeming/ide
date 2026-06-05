@@ -27,6 +27,8 @@ npm audit --audit-level=moderate
 
 (
   cd src-tauri
+  cargo fmt --check
+  cargo clippy --all-targets -- -D warnings
   cargo test
   cargo check
   if command -v cargo-audit >/dev/null 2>&1; then

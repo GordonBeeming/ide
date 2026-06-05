@@ -47,6 +47,8 @@ npm test
 npm run finder:check
 npm run smoke
 npm audit --audit-level=moderate
+cd src-tauri && cargo fmt --check
+cd src-tauri && cargo clippy --all-targets -- -D warnings
 cd src-tauri && cargo check
 cd src-tauri && cargo test
 cd src-tauri && cargo audit
@@ -59,7 +61,7 @@ npm run tauri:dev
 
 `npm run smoke` starts Vite on a local ephemeral port, mocks the loopback API, and drives the real app shell through a local Chromium-family browser in light and dark mode. It covers collapsed search controls, workspace filtering, content search, opening a file, clean-save button state, and shell/editor theme alignment for both the empty editor canvas and the loaded CodeMirror canvas. The theme check asserts matching computed colors and expected light/dark luminance so a mixed light shell with a dark editor pane is caught. Set `IDE_SMOKE_BROWSER=/path/to/browser` if the script cannot find Chrome, Chromium, or Edge.
 
-`run-tests.sh` runs `cargo audit` when `cargo-audit` is installed. If it is missing, the script prints an explicit warning so the advisory scan gap is visible.
+`run-tests.sh` runs `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test`, `cargo check`, and `cargo audit` when `cargo-audit` is installed. If `cargo-audit` is missing, the script prints an explicit warning so the advisory scan gap is visible.
 
 ## Architecture
 
@@ -158,6 +160,7 @@ The File menu owns:
 
 - `New File`
 - `New Folder`
+- `Open File...`
 - `Open Folder...`
 - `Recent Folders`
 - `Recent Files`

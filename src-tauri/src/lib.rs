@@ -603,6 +603,49 @@ pub fn run() {
                 return;
             }
 
+            if id == "open_file" {
+                if let Some(path) = app
+                    .dialog()
+                    .file()
+                    .set_title("Open File")
+                    .blocking_pick_file()
+                {
+                    match path
+                        .into_path()
+                        .map_err(|error| error.to_string())
+                        .and_then(|path| {
+                            launch_target_for_path(path).map_err(|error| error.to_string())
+                        }) {
+                        Ok(target) => {
+                            if let Some(initial_file) = target.initial_file {
+                                let _ = app.emit(
+                                    "menu://open-file",
+                                    OpenFileRequest {
+                                        workspace_root: target
+                                            .workspace_root
+                                            .to_string_lossy()
+                                            .to_string(),
+                                        path: initial_file,
+                                        single_file: true,
+                                    },
+                                );
+                            } else {
+                                let _ = app.emit(
+                                    "menu://open-workspace",
+                                    OpenWorkspaceRequest {
+                                        path: target.workspace_root.to_string_lossy().to_string(),
+                                    },
+                                );
+                            }
+                        }
+                        Err(error) => {
+                            let _ = app.emit("app://error", error);
+                        }
+                    }
+                }
+                return;
+            }
+
             if id == "new_file" {
                 let _ = app.emit("menu://new-file", ());
                 return;
@@ -778,8 +821,12 @@ fn rebuild_app_menu(app: &tauri::AppHandle, state: &AppState) -> Result<(), Comm
         .map_err(|_| CommandError::UiState("ui state lock poisoned".to_string()))?
         .view
         .clone();
-    let open_folder = MenuItemBuilder::with_id("open_folder", "Open Folder...")
+    let open_file = MenuItemBuilder::with_id("open_file", "Open File...")
         .accelerator("CmdOrCtrl+O")
+        .build(app)
+        .map_err(|error| CommandError::Recent(error.to_string()))?;
+    let open_folder = MenuItemBuilder::with_id("open_folder", "Open Folder...")
+        .accelerator("CmdOrCtrl+Shift+O")
         .build(app)
         .map_err(|error| CommandError::Recent(error.to_string()))?;
     let new_file = MenuItemBuilder::with_id("new_file", "New File")
@@ -866,6 +913,7 @@ fn rebuild_app_menu(app: &tauri::AppHandle, state: &AppState) -> Result<(), Comm
         .item(&new_file)
         .item(&new_folder)
         .separator()
+        .item(&open_file)
         .item(&open_folder)
         .item(&recent_workspace_menu)
         .item(&recent_file_menu)
@@ -972,8 +1020,7 @@ fn record_recent_file_item(
         path: path.to_string(),
         name: path
             .split('/')
-            .filter(|value| !value.is_empty())
-            .last()
+            .rfind(|value| !value.is_empty())
             .unwrap_or(path)
             .to_string(),
         single_file,

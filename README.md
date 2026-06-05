@@ -12,7 +12,7 @@ Implemented:
 - React frontend.
 - File tree with package-backed coloured file icons and folder fallbacks.
 - Native folder picker for switching workspaces.
-- Native File menu with New File, New Folder, Open Folder, Recents, Save, Reload, Rename/Delete, Close Tab, and Close All.
+- Native File menu with New File, New Folder, Open File, Open Folder, Recents, Save, Reload, Rename/Delete, Close Tab, and Close All.
 - Native View menu toggles for showing dotfiles and generated/internal folders in the tree.
 - File/folder launch targets through the local runner and macOS Finder Quick Action.
 - Explicit workspace loading, empty, and load-failure retry states.
@@ -113,7 +113,7 @@ The loopback browser API is read-friendly for local terminal/browser views. Muta
 
 `run-tests.sh` runs the npm audit automatically. It also validates the Finder Quick Action generator, checks production bundle budgets for startup JavaScript, startup CSS, and the lazy editor chunk, then runs a browser smoke test against the real React/CSS app shell in light and dark mode. The smoke test uses local Chrome, Chromium, or Edge through `playwright-core`; set `IDE_SMOKE_BROWSER=/path/to/browser` if it cannot find a browser automatically.
 
-`run-tests.sh` also runs `cargo audit --deny warnings` when `cargo-audit` is installed and prints an explicit warning when that tool is missing. Current transitive Rust advisory warnings are reviewed in `src-tauri/.cargo/audit.toml`; new advisory warnings fail the local gate until reviewed.
+`run-tests.sh` also runs `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test`, `cargo check`, and `cargo audit --deny warnings` when `cargo-audit` is installed. Current transitive Rust advisory warnings are reviewed in `src-tauri/.cargo/audit.toml`; new advisory warnings fail the local gate until reviewed.
 
 ## Design Constraints
 
