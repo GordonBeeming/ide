@@ -2243,7 +2243,7 @@ export default function App() {
           </div>
         ) : null}
 
-        <nav className="file-tree" aria-label="Workspace files">
+        <nav className="file-tree" role="tree" aria-label="Workspace files">
           {workspaceLoading && files.length === 0 ? (
             <div className="tree-empty" role="status">Loading workspace</div>
           ) : workspaceLoadFailed && files.length === 0 ? (
@@ -3180,6 +3180,10 @@ function TreeItem({
     <div>
       <button
         className={`tree-row ${isActive ? "tree-row--active" : ""}`}
+        role="treeitem"
+        aria-expanded={node.isDir ? expanded : undefined}
+        aria-level={node.depth + 1}
+        aria-selected={isActive}
         style={{ paddingLeft: 8 + node.depth * 14 }}
         onClick={() => {
           onSelect(node.path);

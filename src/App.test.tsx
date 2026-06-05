@@ -427,6 +427,28 @@ describe("App shell interactions", () => {
     expect(await treeButton("App.tsx")).toBeInTheDocument();
   });
 
+  it("exposes file tree selection and folder expansion state", async () => {
+    render(<App />);
+
+    const tree = await screen.findByRole("tree", { name: "Workspace files" });
+    const srcRow = await within(tree).findByRole("treeitem", { name: "src" });
+    expect(srcRow).toHaveAttribute("aria-expanded", "false");
+    expect(srcRow).toHaveAttribute("aria-level", "1");
+    expect(srcRow).toHaveAttribute("aria-selected", "false");
+
+    fireEvent.click(srcRow);
+
+    expect(srcRow).toHaveAttribute("aria-expanded", "true");
+    expect(srcRow).toHaveAttribute("aria-selected", "true");
+    const appRow = await within(tree).findByRole("treeitem", { name: "App.tsx" });
+    expect(appRow).toHaveAttribute("aria-level", "2");
+    expect(appRow).toHaveAttribute("aria-selected", "false");
+
+    fireEvent.click(appRow);
+
+    expect(appRow).toHaveAttribute("aria-selected", "true");
+  });
+
   it("restores saved view settings, expanded folders, and open files", async () => {
     tauriMocks.getUiState.mockResolvedValueOnce({
       view: {

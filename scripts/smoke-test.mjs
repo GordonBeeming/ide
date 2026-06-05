@@ -306,9 +306,9 @@ async function runScenario(browser, url, colorScheme) {
     throw new Error("current-file search input should be collapsed on first render");
   }
 
-  await page.getByRole("button", { name: "src" }).press("ArrowRight");
+  await page.getByRole("treeitem", { name: "src" }).press("ArrowRight");
   await page.getByText("App.tsx").waitFor();
-  await page.getByRole("button", { name: "src" }).press("ArrowLeft");
+  await page.getByRole("treeitem", { name: "src" }).press("ArrowLeft");
   await page.getByText("App.tsx").waitFor({ state: "hidden" });
 
   await assertTheme(page, colorScheme);

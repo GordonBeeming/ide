@@ -10,7 +10,7 @@ Implemented:
 
 - Tauri 2 desktop shell with a Rust backend.
 - React frontend.
-- File tree with package-backed coloured file icons, keyboard expansion/opening, and folder fallbacks.
+- File tree with package-backed coloured file icons, keyboard expansion/opening, accessible selection/expanded state, and folder fallbacks.
 - Native folder picker for switching workspaces.
 - Native toolbar buttons for opening files and folders in the desktop app.
 - Native File menu with New File, New Folder, Open File, Open Folder, Recents, Save, Reload, Rename/Delete, Close Tab, and Close All.
