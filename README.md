@@ -107,7 +107,9 @@ The loopback browser API is read-friendly for local terminal/browser views. Muta
 
 `npm audit --audit-level=moderate` currently reports no known npm vulnerabilities.
 
-`run-tests.sh` runs the npm audit automatically. It also runs `cargo audit --deny warnings` when `cargo-audit` is installed and prints an explicit warning when that tool is missing. Current transitive Rust advisory warnings are reviewed in `src-tauri/.cargo/audit.toml`; new advisory warnings fail the local gate until reviewed.
+`run-tests.sh` runs the npm audit automatically. It also runs a browser smoke test against the real React/CSS app shell in light and dark mode. The smoke test uses local Chrome, Chromium, or Edge through `playwright-core`; set `IDE_SMOKE_BROWSER=/path/to/browser` if it cannot find a browser automatically.
+
+`run-tests.sh` also runs `cargo audit --deny warnings` when `cargo-audit` is installed and prints an explicit warning when that tool is missing. Current transitive Rust advisory warnings are reviewed in `src-tauri/.cargo/audit.toml`; new advisory warnings fail the local gate until reviewed.
 
 ## Design Constraints
 
