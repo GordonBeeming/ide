@@ -75,6 +75,7 @@ import {
   setLspRootUri,
   setLspStatusHandler,
 } from "./lsp";
+import { darkSchemeQuery, systemPrefersDark } from "./editorTheme";
 import {
   addPreviewTab,
   adjacentTabPath,
@@ -148,6 +149,7 @@ export default function App() {
   const [integrationsOpen, setIntegrationsOpen] = useState(false);
   const [showDotfiles, setShowDotfiles] = useState(false);
   const [showGeneratedInternal, setShowGeneratedInternal] = useState(false);
+  const [prefersDark, setPrefersDark] = useState(systemPrefersDark);
   const [uiStateLoaded, setUiStateLoaded] = useState(false);
   const [workspaceUiRestored, setWorkspaceUiRestored] = useState(false);
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(() => new Set());
@@ -230,6 +232,19 @@ export default function App() {
     () => openFiles.map((file) => file.path).join("\0"),
     [openFiles],
   );
+
+  useEffect(() => {
+    const media = window.matchMedia?.(darkSchemeQuery);
+    if (!media) return;
+
+    const handleThemeChange = (event: MediaQueryListEvent) => {
+      setPrefersDark(event.matches);
+    };
+
+    setPrefersDark(media.matches);
+    media.addEventListener("change", handleThemeChange);
+    return () => media.removeEventListener("change", handleThemeChange);
+  }, []);
 
   useEffect(() => {
     if (activeSidebarSearch === "filter") {
@@ -1355,7 +1370,7 @@ export default function App() {
   const SidebarIcon = sidebarCollapsed ? PanelLeftOpen : PanelLeftClose;
 
   return (
-    <main className={appShellClass(sidebarCollapsed)}>
+    <main className={appShellClass(sidebarCollapsed, prefersDark)}>
       <aside className="sidebar" aria-hidden={sidebarCollapsed}>
         <div className="sidebar__header">
           <div className="sidebar__title">
@@ -1687,6 +1702,7 @@ export default function App() {
               <EditorPane
                 contents={activeFile.contents}
                 path={activeFile.path}
+                prefersDark={prefersDark}
                 revealLine={
                   revealTarget?.path === activeFile.path ? revealTarget.lineNumber : undefined
                 }

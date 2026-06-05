@@ -165,11 +165,17 @@ async function assertTheme(page, expectedScheme) {
     if (!editorRegion) throw new Error("editor region missing");
     return {
       appShell: getComputedStyle(appShell).backgroundColor,
+      appShellClasses: [...appShell.classList],
       editorRegion: getComputedStyle(editorRegion).backgroundColor,
       cmScroller: cmScroller ? getComputedStyle(cmScroller).backgroundColor : undefined,
     };
   });
 
+  if (!colors.appShellClasses.includes(`app-shell--${expectedScheme}`)) {
+    throw new Error(
+      `${expectedScheme} theme class missing: ${colors.appShellClasses.join(" ")}`,
+    );
+  }
   if (colors.appShell !== colors.editorRegion) {
     throw new Error(
       `${expectedScheme} theme mismatch: shell=${colors.appShell}, editor=${colors.editorRegion}`,

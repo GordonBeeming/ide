@@ -1,5 +1,7 @@
-export function appShellClass(sidebarCollapsed: boolean): string {
-  return sidebarCollapsed ? "app-shell app-shell--sidebar-collapsed" : "app-shell";
+export function appShellClass(sidebarCollapsed: boolean, prefersDark = false): string {
+  const classes = ["app-shell", prefersDark ? "app-shell--dark" : "app-shell--light"];
+  if (sidebarCollapsed) classes.push("app-shell--sidebar-collapsed");
+  return classes.join(" ");
 }
 
 export function sidebarToggleTitle(sidebarCollapsed: boolean): string {

@@ -30,6 +30,33 @@
   }
 }
 
+.app-shell,
+.app-shell--light {
+  color-scheme: light;
+  --bg: oklch(96% 0.006 230);
+  --panel: oklch(93% 0.008 230);
+  --panel-strong: oklch(88% 0.012 230);
+  --text: oklch(18% 0.02 230);
+  --muted: oklch(43% 0.018 230);
+  --border: oklch(73% 0.018 230);
+  --accent: oklch(52% 0.19 26);
+  --accent-weak: oklch(86% 0.055 26);
+  --shadow: 0 12px 36px oklch(20% 0.02 230 / 16%);
+}
+
+.app-shell--dark {
+  color-scheme: dark;
+  --bg: oklch(15% 0.012 230);
+  --panel: oklch(19% 0.014 230);
+  --panel-strong: oklch(24% 0.016 230);
+  --text: oklch(93% 0.01 230);
+  --muted: oklch(68% 0.018 230);
+  --border: oklch(34% 0.02 230);
+  --accent: oklch(70% 0.18 31);
+  --accent-weak: oklch(28% 0.07 31);
+  --shadow: 0 18px 40px oklch(6% 0.01 230 / 42%);
+}
+
 * {
   box-sizing: border-box;
 }

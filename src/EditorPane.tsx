@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
 import { bracketMatching, defaultHighlightStyle, foldGutter, syntaxHighlighting } from "@codemirror/language";
 import { highlightSelectionMatches, searchKeymap } from "@codemirror/search";
@@ -19,15 +19,12 @@ import { languageForPath } from "./language";
 import { lspExtensionsForPath } from "./lsp";
 import type { EditorSelection } from "./tauri";
 import { clampLineNumber } from "./editorNavigation";
-import {
-  darkSchemeQuery,
-  editorThemeExtensions,
-  systemPrefersDark,
-} from "./editorTheme";
+import { editorThemeExtensions } from "./editorTheme";
 
 interface EditorPaneProps {
   path: string;
   contents: string;
+  prefersDark?: boolean;
   revealLine?: number;
   onChange: (path: string, contents: string) => void;
   onError: (message: string) => void;
@@ -38,6 +35,7 @@ interface EditorPaneProps {
 export default function EditorPane({
   path,
   contents,
+  prefersDark = false,
   revealLine,
   onChange,
   onError,
@@ -47,20 +45,6 @@ export default function EditorPane({
   const host = useRef<HTMLDivElement | null>(null);
   const viewRef = useRef<EditorView | null>(null);
   const suppressNextChangeRef = useRef(false);
-  const [prefersDark, setPrefersDark] = useState(systemPrefersDark);
-
-  useEffect(() => {
-    const media = window.matchMedia?.(darkSchemeQuery);
-    if (!media) return;
-
-    const handleThemeChange = (event: MediaQueryListEvent) => {
-      setPrefersDark(event.matches);
-    };
-
-    setPrefersDark(media.matches);
-    media.addEventListener("change", handleThemeChange);
-    return () => media.removeEventListener("change", handleThemeChange);
-  }, []);
 
   useEffect(() => {
     if (!host.current) return;
