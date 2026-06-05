@@ -477,6 +477,24 @@ async function runScenario(browser, url, colorScheme) {
   await page.getByText("Smoke workspace").waitFor();
   await assertTheme(page, colorScheme);
 
+  await page.locator('button[title="Collapse sidebar"]').click();
+  await page.locator(".app-shell--sidebar-collapsed").waitFor();
+  await page.locator('button[title="Expand sidebar"]').waitFor();
+  await page.getByText("Smoke workspace").waitFor();
+
+  const collapsedEditorVisible = await page.locator(".cm-content").isVisible();
+  if (!collapsedEditorVisible) {
+    throw new Error("collapsing the sidebar hid the active editor");
+  }
+
+  await page.locator('button[title="Expand sidebar"]').click();
+  await page.locator('button[title="Collapse sidebar"]').waitFor();
+  await page.waitForFunction(() => {
+    return !document
+      .querySelector(".app-shell")
+      ?.classList.contains("app-shell--sidebar-collapsed");
+  });
+
   await page.keyboard.press("Control+G");
   await page.getByRole("dialog", { name: "Go to line" }).waitFor();
   await page.getByLabel("Line number").fill("2");
