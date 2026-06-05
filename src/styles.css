@@ -19,23 +19,6 @@
   color: var(--text);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: oklch(15% 0.012 230);
-    --panel: oklch(19% 0.014 230);
-    --panel-strong: oklch(24% 0.016 230);
-    --text: oklch(93% 0.01 230);
-    --muted: oklch(68% 0.018 230);
-    --border: oklch(34% 0.02 230);
-    --accent: oklch(70% 0.18 31);
-    --accent-weak: oklch(28% 0.07 31);
-    --editor-bg: oklch(15% 0.012 230);
-    --editor-text: oklch(93% 0.01 230);
-    --editor-gutter-bg: oklch(19% 0.014 230);
-    --shadow: 0 18px 40px oklch(6% 0.01 230 / 42%);
-  }
-}
-
 .app-shell,
 .app-shell--light,
 .app-shell[data-ide-theme="light"],
@@ -83,6 +66,8 @@ body,
   height: 100%;
   margin: 0;
   overflow: hidden;
+  background: var(--bg);
+  color: var(--text);
 }
 
 button,
@@ -755,10 +740,12 @@ button {
 
 .editor-empty-state {
   grid-row: 1 / -1;
+  background: var(--editor-bg);
 }
 
 .editor-loading-state {
   grid-row: 2;
+  background: var(--editor-bg);
 }
 
 .statusbar {

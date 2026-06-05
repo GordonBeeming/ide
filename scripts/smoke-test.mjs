@@ -310,6 +310,22 @@ async function assertInputValue(locator, expected, label) {
   }
 }
 
+async function assertThemeTransition(page, fromScheme) {
+  const nextScheme = fromScheme === "light" ? "dark" : "light";
+
+  await page.emulateMedia({ colorScheme: nextScheme });
+  await page
+    .locator(`.app-shell[data-ide-theme="${nextScheme}"]`)
+    .waitFor({ state: "attached" });
+  await assertTheme(page, nextScheme);
+
+  await page.emulateMedia({ colorScheme: fromScheme });
+  await page
+    .locator(`.app-shell[data-ide-theme="${fromScheme}"]`)
+    .waitFor({ state: "attached" });
+  await assertTheme(page, fromScheme);
+}
+
 async function runScenario(browser, url, colorScheme) {
   const context = await browser.newContext({
     colorScheme,
@@ -348,6 +364,7 @@ async function runScenario(browser, url, colorScheme) {
   await page.getByText("App.tsx").waitFor({ state: "hidden" });
 
   await assertTheme(page, colorScheme);
+  await assertThemeTransition(page, colorScheme);
 
   const commandModifier = process.platform === "darwin" ? "Meta" : "Control";
   await page.keyboard.press(`${commandModifier}+Shift+P`);
