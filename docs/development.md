@@ -256,4 +256,4 @@ The Codex MCP endpoint exposes equivalent read-only tools with snake_case names:
 
 Write-capable tools such as `openDiff`, `saveDocument`, or code execution should not be added until the editor has a visible review/confirmation surface for those actions.
 
-Current public Codex docs confirm Codex `/ide` consumes open files and selection context in Codex-owned IDE surfaces, and that third-party tools can integrate with Codex through MCP. They do not document a Claude-style third-party IDE lockfile protocol.
+Current public Codex docs confirm Codex `/ide` consumes open files and selection context in Codex-owned IDE surfaces, that third-party tools can integrate with Codex through MCP, and that `codex app-server` is the rich-client protocol used by clients such as the Codex VS Code extension. They do not document a Claude-style third-party IDE lockfile protocol. Treat app-server support as a future integration path, not as the current editor-context bridge.

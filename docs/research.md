@@ -22,16 +22,17 @@ References:
 
 ## Codex Integration
 
-OpenAI documentation currently points to MCP as the supported extension mechanism for Codex CLI and the Codex IDE extension. I did not find a public Claude-style third-party IDE lockfile protocol for Codex.
+OpenAI documentation currently points to MCP as the supported external tool/context mechanism for Codex CLI and the Codex IDE extension. It also documents `codex app-server` as the JSON-RPC interface used for rich clients such as the Codex VS Code extension. I did not find a public Claude-style third-party IDE lockfile protocol for Codex.
 
 Current implication:
 
 - Keep the app's editor context available locally.
-- Prefer a standard MCP bridge for Codex once we add a Codex-specific adapter.
+- Keep the implemented standard MCP bridge as the supported Codex editor-context path.
+- Treat `codex app-server` as the researched future path for a deep Codex-in-editor client, with review/approval UI and transport authentication designed before any write-capable workflows.
 - Do not claim native Codex `/ide` support until OpenAI documents a compatible custom IDE protocol.
 
 References:
 
-- https://platform.openai.com/docs/docs-mcp
-- https://help.openai.com/en/articles/11096431
-- https://openai.com/index/introducing-upgrades-to-codex/
+- https://developers.openai.com/codex/mcp
+- https://developers.openai.com/codex/app-server
+- https://developers.openai.com/codex/ide/slash-commands

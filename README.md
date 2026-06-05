@@ -51,7 +51,7 @@ Implemented:
 Planned:
 
 - Diff review and write-capable Claude bridge tools with explicit editor UI review.
-- Deeper Codex IDE integration if OpenAI documents a third-party custom IDE protocol beyond MCP.
+- Deeper Codex integration through `codex app-server` research once the editor has an explicit review/approval surface for rich agent workflows.
 - PR-ready local polish and testing workflow.
 
 ## Run Locally
@@ -102,7 +102,7 @@ url = "http://127.0.0.1:17877/mcp"
 bearer_token_env_var = "IDE_CODEX_MCP_TOKEN"
 ```
 
-The public Codex docs describe `/ide` for Codex-owned IDE surfaces, but do not currently document a Claude-style third-party lockfile protocol.
+The public Codex docs describe `/ide` for Codex-owned IDE surfaces and `codex app-server` for rich clients, but do not currently document a Claude-style third-party lockfile protocol. The MCP endpoint remains the supported local context bridge for this app.
 
 The loopback browser API is read-friendly for local terminal/browser views. Mutating routes, including file writes and editor-context updates, require the same per-run bearer token.
 
