@@ -146,7 +146,7 @@ The frontend refuses to switch folders while any open tab is dirty.
 
 ## Native Menu and Recents
 
-The app stores recent folders and recent files in the OS app-data directory through Tauri's `app_data_dir`, currently as `recents.json`. This keeps configuration and history out of browser local storage and avoids leaking editor workflow state into the visible UI.
+The app stores recent folders and recent files in the OS app-data directory through Tauri's `app_data_dir`, currently as `recents.json`. This keeps configuration and history out of browser local storage and avoids leaking editor workflow state into the visible UI. Recent files also store whether the file was opened as a single-file launch target, so Finder-opened files reopen without exposing their containing folder in the tree.
 
 The File menu owns:
 

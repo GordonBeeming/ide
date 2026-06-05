@@ -120,9 +120,9 @@ export function setWorkspaceRootPath(path: string) {
   return invoke<string>("set_workspace_root", { path });
 }
 
-export function recordRecentFile(path: string) {
+export function recordRecentFile(path: string, singleFile = false) {
   if (!isNativeTauri()) return Promise.resolve();
-  return invoke<void>("record_recent_file", { path });
+  return invoke<void>("record_recent_file", { path, singleFile });
 }
 
 export function getUiState() {

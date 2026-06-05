@@ -175,6 +175,20 @@ describe("hosted Tauri API transport", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("passes single-file recent state through native commands", async () => {
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    const { invoke } = await import("@tauri-apps/api/core");
+    vi.mocked(invoke).mockResolvedValue(undefined);
+    const { recordRecentFile } = await import("./tauri");
+
+    await recordRecentFile("notes.md", true);
+
+    expect(invoke).toHaveBeenCalledWith("record_recent_file", {
+      path: "notes.md",
+      singleFile: true,
+    });
+  });
+
   it("treats malformed hosted Codex MCP status as unavailable", async () => {
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse({}));
     vi.stubGlobal("fetch", fetchMock);

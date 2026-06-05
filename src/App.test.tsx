@@ -58,6 +58,7 @@ const tauriMocks = vi.hoisted(() => ({
   listFiles: vi.fn(),
   readFile: vi.fn(),
   statFile: vi.fn(),
+  recordRecentFile: vi.fn(),
   writeFile: vi.fn(),
   createFile: vi.fn(),
   createFolder: vi.fn(),
@@ -101,6 +102,7 @@ vi.mock("./tauri", async () => {
     listFiles: tauriMocks.listFiles,
     readFile: tauriMocks.readFile,
     statFile: tauriMocks.statFile,
+    recordRecentFile: tauriMocks.recordRecentFile,
     writeFile: tauriMocks.writeFile,
     createFile: tauriMocks.createFile,
     createFolder: tauriMocks.createFolder,
@@ -195,6 +197,7 @@ describe("App shell interactions", () => {
       if (!entry) throw new Error(`missing ${path}`);
       return entry;
     });
+    tauriMocks.recordRecentFile.mockResolvedValue(undefined);
     tauriMocks.readFile.mockImplementation(async (path: string) => {
       if (path === "README.md") return "readme";
       if (path === "src/App.tsx") return "export function App() {}";
@@ -287,6 +290,7 @@ describe("App shell interactions", () => {
     render(<App />);
 
     expect(await screen.findByLabelText("Editor LICENSE")).toHaveValue("license body");
+    expect(tauriMocks.recordRecentFile).toHaveBeenCalledWith("LICENSE", true);
     expect(await treeButton("LICENSE")).toBeInTheDocument();
     expect(screen.queryByText("src")).not.toBeInTheDocument();
     expect(tauriMocks.listFiles).not.toHaveBeenCalled();
@@ -328,6 +332,7 @@ describe("App shell interactions", () => {
     });
 
     expect(await screen.findByLabelText("Editor notes.md")).toHaveValue("# Notes");
+    expect(tauriMocks.recordRecentFile).toHaveBeenCalledWith("notes.md", true);
     expect(await treeButton("notes.md")).toBeInTheDocument();
     expect(screen.queryByText("README.md")).not.toBeInTheDocument();
     expect(tauriMocks.setWorkspaceRootPath).toHaveBeenCalledWith(
@@ -572,6 +577,7 @@ describe("App shell interactions", () => {
     fireEvent.click(await treeButton("README.md"));
     const readmeTab = await findTab("README.md");
     expect(readmeTab).toHaveClass("tab--temp");
+    expect(tauriMocks.recordRecentFile).toHaveBeenCalledWith("README.md", false);
 
     fireEvent.change(await screen.findByLabelText("Editor README.md"), {
       target: { value: "changed readme" },

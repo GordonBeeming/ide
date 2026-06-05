@@ -476,7 +476,12 @@ export default function App() {
   }, [activePath, activeSelection, diagnostics, openFiles]);
 
   const openPath = useCallback(
-    async (entry: FileEntry, pinned = false, lineNumber?: number) => {
+    async (
+      entry: FileEntry,
+      pinned = false,
+      lineNumber?: number,
+      recordAsSingleFile = singleFileMode,
+    ) => {
       setSelectedPath(entry.path);
       if (lineNumber) {
         setRevealTarget({ path: entry.path, lineNumber });
@@ -495,7 +500,7 @@ export default function App() {
           setOpenFiles((current) => pinTab(current, entry.path));
         }
         setActivePath(existing.path);
-        recordRecentFile(existing.path).catch((reason) => {
+        recordRecentFile(existing.path, recordAsSingleFile).catch((reason) => {
           setError(`Unable to update recent files: ${String(reason)}`);
         });
         setStatus("Ready");
@@ -514,7 +519,7 @@ export default function App() {
           }),
         );
         setActivePath(entry.path);
-        recordRecentFile(entry.path).catch((reason) => {
+        recordRecentFile(entry.path, recordAsSingleFile).catch((reason) => {
           setError(`Unable to update recent files: ${String(reason)}`);
         });
         setStatus("Ready");
@@ -523,7 +528,7 @@ export default function App() {
         setStatus("Open failed");
       }
     },
-    [openFiles],
+    [openFiles, singleFileMode],
   );
 
   const openPathByName = useCallback(
@@ -544,7 +549,7 @@ export default function App() {
       files.find((candidate) => candidate.path === initialFile) ??
       fileEntryForDirectOpen(initialFile);
     initialFileOpenedRef.current = true;
-    openPath(entry, true);
+    openPath(entry, true, undefined, true);
   }, [files, initialFile, openPath, workspaceLoading]);
 
   useEffect(() => {
@@ -1053,7 +1058,7 @@ export default function App() {
           throw new Error(`Recent file is not in the current workspace: ${path}`);
         }
 
-        await openPath(entry, true);
+        await openPath(entry, true, undefined, singleFile);
       } catch (reason) {
         setError(String(reason));
         setStatus("Open recent file failed");

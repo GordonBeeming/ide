@@ -97,6 +97,8 @@ struct RecentFile {
     workspace_root: String,
     path: String,
     name: String,
+    #[serde(default)]
+    single_file: bool,
     last_opened: u128,
 }
 
@@ -152,6 +154,7 @@ struct OpenWorkspaceRequest {
 struct OpenFileRequest {
     workspace_root: String,
     path: String,
+    single_file: bool,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -318,9 +321,10 @@ async fn record_recent_file(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
     path: String,
+    single_file: bool,
 ) -> Result<(), CommandError> {
     let workspace_root = state.workspace_root.read().await.clone();
-    record_recent_file_item(&state, &workspace_root, &path)?;
+    record_recent_file_item(&state, &workspace_root, &path, single_file)?;
     persist_recent_items(&state)?;
     rebuild_app_menu(&app, &state)
 }
@@ -644,6 +648,7 @@ pub fn run() {
                         OpenFileRequest {
                             workspace_root: item.workspace_root,
                             path: item.path,
+                            single_file: item.single_file,
                         },
                     );
                 }
@@ -864,6 +869,7 @@ fn record_recent_file_item(
     state: &AppState,
     workspace_root: &Path,
     path: &str,
+    single_file: bool,
 ) -> Result<(), CommandError> {
     let item = RecentFile {
         workspace_root: workspace_root.to_string_lossy().to_string(),
@@ -874,6 +880,7 @@ fn record_recent_file_item(
             .last()
             .unwrap_or(path)
             .to_string(),
+        single_file,
         last_opened: now_ms(),
     };
     let mut items = state
@@ -1159,9 +1166,9 @@ mod tests {
         record_recent_workspace_item(&state, &workspace_a).unwrap();
         record_recent_workspace_item(&state, &workspace_b).unwrap();
         record_recent_workspace_item(&state, &workspace_a).unwrap();
-        record_recent_file_item(&state, &workspace_a, "src/main.ts").unwrap();
-        record_recent_file_item(&state, &workspace_a, "README.md").unwrap();
-        record_recent_file_item(&state, &workspace_a, "src/main.ts").unwrap();
+        record_recent_file_item(&state, &workspace_a, "src/main.ts", true).unwrap();
+        record_recent_file_item(&state, &workspace_a, "README.md", false).unwrap();
+        record_recent_file_item(&state, &workspace_a, "src/main.ts", true).unwrap();
         persist_recent_items(&state).unwrap();
 
         let loaded = load_recent_items(&recents_path).unwrap();
@@ -1170,7 +1177,9 @@ mod tests {
         assert_eq!(loaded.workspaces[1].path, workspace_b.to_string_lossy());
         assert_eq!(loaded.files.len(), 2);
         assert_eq!(loaded.files[0].path, "src/main.ts");
+        assert!(loaded.files[0].single_file);
         assert_eq!(loaded.files[1].path, "README.md");
+        assert!(!loaded.files[1].single_file);
     }
 
     #[test]
