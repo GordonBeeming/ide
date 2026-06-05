@@ -41,6 +41,8 @@ pub enum WorkspaceError {
     FileAlreadyExists,
     #[error("path is not a file")]
     NotAFile,
+    #[error("symbolic links are not supported for editor file operations")]
+    SymlinkUnsupported,
     #[error("file changed on disk since it was opened")]
     FileModifiedExternally,
     #[error("search query is too long")]
@@ -105,7 +107,7 @@ fn push_scan_entry(
         return Ok(());
     }
 
-    let metadata = entry.metadata()?;
+    let metadata = fs::symlink_metadata(path)?;
 
     let relative = path
         .strip_prefix(root)
@@ -167,7 +169,10 @@ pub fn search_workspace(
             continue;
         }
 
-        let metadata = entry.metadata()?;
+        let metadata = fs::symlink_metadata(path)?;
+        if metadata.file_type().is_symlink() {
+            continue;
+        }
         if metadata.is_dir() || metadata.len() > MAX_SEARCH_FILE_BYTES || is_known_binary_path(path)
         {
             continue;
@@ -206,7 +211,7 @@ pub fn search_workspace(
 }
 
 pub fn read_workspace_file(root: &Path, relative: &str) -> Result<String, WorkspaceError> {
-    let path = resolve_workspace_path(root, relative)?;
+    let path = resolve_existing_workspace_file_path(root, relative)?;
     let metadata = fs::metadata(&path)?;
     if metadata.len() > MAX_OPEN_BYTES {
         return Err(WorkspaceError::FileTooLarge);
@@ -221,7 +226,7 @@ pub fn write_workspace_file(
     contents: &str,
     expected_modified_ms: Option<u128>,
 ) -> Result<(), WorkspaceError> {
-    let path = resolve_workspace_path(root, relative)?;
+    let path = resolve_existing_workspace_file_path(root, relative)?;
     if let Some(expected_modified_ms) = expected_modified_ms {
         let current_modified_ms = fs::metadata(&path)?
             .modified()
@@ -265,11 +270,8 @@ pub fn create_workspace_folder(root: &Path, relative: &str) -> Result<(), Worksp
 }
 
 pub fn rename_workspace_file(root: &Path, from: &str, to: &str) -> Result<(), WorkspaceError> {
-    let from_path = resolve_workspace_path(root, from)?;
+    let from_path = resolve_existing_workspace_file_path(root, from)?;
     let to_path = resolve_workspace_path(root, to)?;
-    if !from_path.metadata()?.is_file() {
-        return Err(WorkspaceError::NotAFile);
-    }
     if to_path.exists() {
         return Err(WorkspaceError::FileAlreadyExists);
     }
@@ -278,10 +280,7 @@ pub fn rename_workspace_file(root: &Path, from: &str, to: &str) -> Result<(), Wo
 }
 
 pub fn delete_workspace_file(root: &Path, relative: &str) -> Result<(), WorkspaceError> {
-    let path = resolve_workspace_path(root, relative)?;
-    if !path.metadata()?.is_file() {
-        return Err(WorkspaceError::NotAFile);
-    }
+    let path = resolve_existing_workspace_file_path(root, relative)?;
 
     fs::remove_file(path).map_err(WorkspaceError::from)
 }
@@ -403,6 +402,28 @@ fn resolve_workspace_path(root: &Path, relative: &str) -> Result<PathBuf, Worksp
     Ok(candidate)
 }
 
+fn resolve_existing_workspace_file_path(
+    root: &Path,
+    relative: &str,
+) -> Result<PathBuf, WorkspaceError> {
+    let path = resolve_workspace_path(root, relative)?;
+    let metadata = fs::symlink_metadata(&path)?;
+    if metadata.file_type().is_symlink() {
+        return Err(WorkspaceError::SymlinkUnsupported);
+    }
+    if !metadata.is_file() {
+        return Err(WorkspaceError::NotAFile);
+    }
+
+    let root = root.canonicalize()?;
+    let canonical = path.canonicalize()?;
+    if !canonical.starts_with(&root) {
+        return Err(WorkspaceError::OutsideWorkspace);
+    }
+
+    Ok(canonical)
+}
+
 fn normalize_path(path: &Path) -> String {
     path.components()
         .map(|component| component.as_os_str().to_string_lossy())
@@ -414,6 +435,9 @@ fn normalize_path(path: &Path) -> String {
 mod tests {
     use super::*;
     use tempfile::tempdir;
+
+    #[cfg(unix)]
+    use std::os::unix::fs::symlink;
 
     #[test]
     fn read_workspace_file_rejects_parent_traversal() {
@@ -442,6 +466,38 @@ mod tests {
 
         assert_eq!(before, "before");
         assert_eq!(after, "after");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn read_workspace_file_rejects_symlink_sources() {
+        let dir = tempdir().unwrap();
+        let outside = tempdir().unwrap();
+        fs::write(outside.path().join("secret.txt"), "secret").unwrap();
+        symlink(
+            outside.path().join("secret.txt"),
+            dir.path().join("linked.txt"),
+        )
+        .unwrap();
+
+        let result = read_workspace_file(dir.path(), "linked.txt");
+
+        assert!(matches!(result, Err(WorkspaceError::SymlinkUnsupported)));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn write_workspace_file_rejects_symlink_sources() {
+        let dir = tempdir().unwrap();
+        let outside = tempdir().unwrap();
+        let secret_path = outside.path().join("secret.txt");
+        fs::write(&secret_path, "secret").unwrap();
+        symlink(&secret_path, dir.path().join("linked.txt")).unwrap();
+
+        let result = write_workspace_file(dir.path(), "linked.txt", "changed", None);
+
+        assert!(matches!(result, Err(WorkspaceError::SymlinkUnsupported)));
+        assert_eq!(fs::read_to_string(secret_path).unwrap(), "secret");
     }
 
     #[test]
@@ -588,6 +644,24 @@ mod tests {
         assert!(dir.path().join("note.txt").exists());
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn rename_workspace_file_rejects_symlink_sources() {
+        let dir = tempdir().unwrap();
+        let outside = tempdir().unwrap();
+        let secret_path = outside.path().join("secret.txt");
+        let linked_path = dir.path().join("linked.txt");
+        fs::write(&secret_path, "secret").unwrap();
+        symlink(&secret_path, &linked_path).unwrap();
+
+        let result = rename_workspace_file(dir.path(), "linked.txt", "renamed.txt");
+
+        assert!(matches!(result, Err(WorkspaceError::SymlinkUnsupported)));
+        assert!(fs::symlink_metadata(linked_path).is_ok());
+        assert_eq!(fs::read_to_string(secret_path).unwrap(), "secret");
+        assert!(!dir.path().join("renamed.txt").exists());
+    }
+
     #[test]
     fn delete_workspace_file_removes_file_inside_root() {
         let dir = tempdir().unwrap();
@@ -618,6 +692,23 @@ mod tests {
 
         assert!(matches!(result, Err(WorkspaceError::InvalidPath)));
         assert!(dir.path().join("note.txt").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn delete_workspace_file_rejects_symlink_sources() {
+        let dir = tempdir().unwrap();
+        let outside = tempdir().unwrap();
+        let secret_path = outside.path().join("secret.txt");
+        let linked_path = dir.path().join("linked.txt");
+        fs::write(&secret_path, "secret").unwrap();
+        symlink(&secret_path, &linked_path).unwrap();
+
+        let result = delete_workspace_file(dir.path(), "linked.txt");
+
+        assert!(matches!(result, Err(WorkspaceError::SymlinkUnsupported)));
+        assert!(fs::symlink_metadata(linked_path).is_ok());
+        assert_eq!(fs::read_to_string(secret_path).unwrap(), "secret");
     }
 
     #[test]
@@ -774,6 +865,25 @@ mod tests {
 
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].path, "README.md");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn search_workspace_skips_symlink_sources() {
+        let dir = tempdir().unwrap();
+        let outside = tempdir().unwrap();
+        fs::write(outside.path().join("secret.txt"), "needle").unwrap();
+        fs::write(dir.path().join("inside.txt"), "needle").unwrap();
+        symlink(
+            outside.path().join("secret.txt"),
+            dir.path().join("linked.txt"),
+        )
+        .unwrap();
+
+        let results = search_workspace(dir.path(), "needle", 10).unwrap();
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].path, "inside.txt");
     }
 
     #[test]
