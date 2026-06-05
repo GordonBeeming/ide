@@ -745,6 +745,100 @@ describe("App shell interactions", () => {
     expect(screen.getByText("Open a file from the tree")).toBeInTheDocument();
   });
 
+  it("opens create dialogs from the native File menu", async () => {
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    render(<App />);
+
+    expect(await treeButton("README.md")).toBeInTheDocument();
+    await waitFor(() => expect(eventMocks.listeners.has("menu://new-file")).toBe(true));
+    await waitFor(() => expect(eventMocks.listeners.has("menu://new-folder")).toBe(true));
+
+    act(() => {
+      eventMocks.listeners.get("menu://new-file")?.({ payload: undefined });
+    });
+    expect(screen.getByRole("dialog", { name: "New file" })).toBeInTheDocument();
+    fireEvent.click(screen.getByText("Cancel"));
+
+    act(() => {
+      eventMocks.listeners.get("menu://new-folder")?.({ payload: undefined });
+    });
+    expect(screen.getByRole("dialog", { name: "New folder" })).toBeInTheDocument();
+  });
+
+  it("saves dirty files from native File menu save actions", async () => {
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    render(<App />);
+
+    fireEvent.click(await treeButton("README.md"));
+    await findTab("README.md");
+    fireEvent.change(await screen.findByLabelText("Editor README.md"), {
+      target: { value: "changed readme" },
+    });
+    await waitFor(() => expect(eventMocks.listeners.has("menu://save-file")).toBe(true));
+    await waitFor(() => expect(eventMocks.listeners.has("menu://save-all")).toBe(true));
+
+    act(() => {
+      eventMocks.listeners.get("menu://save-file")?.({ payload: undefined });
+    });
+
+    await waitFor(() =>
+      expect(tauriMocks.writeFile).toHaveBeenCalledWith(
+        "README.md",
+        "changed readme",
+        101,
+      ),
+    );
+
+    fireEvent.change(screen.getByLabelText("Editor README.md"), {
+      target: { value: "changed again" },
+    });
+    act(() => {
+      eventMocks.listeners.get("menu://save-all")?.({ payload: undefined });
+    });
+
+    await waitFor(() =>
+      expect(tauriMocks.writeFile).toHaveBeenLastCalledWith(
+        "README.md",
+        "changed again",
+        101,
+      ),
+    );
+  });
+
+  it("opens reload, rename, and delete workflows from the native File menu", async () => {
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    render(<App />);
+
+    fireEvent.click(await treeButton("README.md"));
+    await findTab("README.md");
+    fireEvent.change(await screen.findByLabelText("Editor README.md"), {
+      target: { value: "changed readme" },
+    });
+    await waitFor(() => expect(eventMocks.listeners.has("menu://reload-file")).toBe(true));
+    await waitFor(() => expect(eventMocks.listeners.has("menu://rename-selected")).toBe(true));
+    await waitFor(() => expect(eventMocks.listeners.has("menu://delete-selected")).toBe(true));
+
+    act(() => {
+      eventMocks.listeners.get("menu://reload-file")?.({ payload: undefined });
+    });
+    expect(screen.getByRole("alertdialog", { name: "Reload file from disk?" }))
+      .toBeInTheDocument();
+    fireEvent.click(screen.getByText("Cancel"));
+
+    act(() => {
+      eventMocks.listeners.get("menu://rename-selected")?.({ payload: undefined });
+    });
+    expect(screen.getByRole("dialog", { name: "Rename file" })).toBeInTheDocument();
+    fireEvent.click(screen.getByText("Cancel"));
+
+    act(() => {
+      eventMocks.listeners.get("menu://delete-selected")?.({ payload: undefined });
+    });
+    expect(screen.getByRole("alertdialog", { name: "Delete file?" })).toHaveTextContent(
+      "README.md will be permanently removed from the workspace.",
+    );
+  });
+
   it("passes native Navigate menu definition requests to the active editor", async () => {
     (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
     render(<App />);

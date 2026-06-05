@@ -156,13 +156,20 @@ The app stores recent folders and recent files in the OS app-data directory thro
 
 The File menu owns:
 
+- `New File`
+- `New Folder`
 - `Open Folder...`
 - `Recent Folders`
 - `Recent Files`
+- `Save`
+- `Save All`
+- `Reload from Disk`
+- `Rename Selected`
+- `Delete Selected`
 - `Close Tab`
 - `Close All`
 
-Menu selections are delivered to the frontend through Tauri events. The frontend applies the same dirty-file guard used by the sidebar folder picker before switching workspace roots.
+Menu selections are delivered to the frontend through Tauri events. The frontend reuses the toolbar and keyboard workflow handlers, including dirty-file guards before closing or reloading files and stale-write checks before saving.
 
 ## Editor Workflow
 

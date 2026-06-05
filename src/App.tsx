@@ -1151,6 +1151,27 @@ export default function App() {
       listen("menu://close-all", () => {
         requestCloseAllFiles();
       }),
+      listen("menu://new-file", () => {
+        openNewFileDialog();
+      }),
+      listen("menu://new-folder", () => {
+        openNewFolderDialog();
+      }),
+      listen("menu://save-file", () => {
+        void saveActive();
+      }),
+      listen("menu://save-all", () => {
+        void saveAll();
+      }),
+      listen("menu://reload-file", () => {
+        requestReloadActiveFile();
+      }),
+      listen("menu://rename-selected", () => {
+        openRenameDialog();
+      }),
+      listen("menu://delete-selected", () => {
+        requestDeleteSelectedFile();
+      }),
       listen("menu://go-to-definition", () => {
         requestEditorCommand("goToDefinition");
       }),
@@ -1201,10 +1222,17 @@ export default function App() {
     };
   }, [
     openFileFromWorkspace,
+    openNewFileDialog,
+    openNewFolderDialog,
+    openRenameDialog,
     openWorkspacePath,
     requestCloseActiveFile,
     requestCloseAllFiles,
+    requestDeleteSelectedFile,
     requestEditorCommand,
+    requestReloadActiveFile,
+    saveActive,
+    saveAll,
   ]);
 
   const openWorkspace = useCallback(async () => {

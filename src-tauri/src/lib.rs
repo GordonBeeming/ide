@@ -603,6 +603,41 @@ pub fn run() {
                 return;
             }
 
+            if id == "new_file" {
+                let _ = app.emit("menu://new-file", ());
+                return;
+            }
+
+            if id == "new_folder" {
+                let _ = app.emit("menu://new-folder", ());
+                return;
+            }
+
+            if id == "save_file" {
+                let _ = app.emit("menu://save-file", ());
+                return;
+            }
+
+            if id == "save_all" {
+                let _ = app.emit("menu://save-all", ());
+                return;
+            }
+
+            if id == "reload_file" {
+                let _ = app.emit("menu://reload-file", ());
+                return;
+            }
+
+            if id == "rename_selected" {
+                let _ = app.emit("menu://rename-selected", ());
+                return;
+            }
+
+            if id == "delete_selected" {
+                let _ = app.emit("menu://delete-selected", ());
+                return;
+            }
+
             if id == "close_tab" {
                 let _ = app.emit("menu://close-tab", ());
                 return;
@@ -747,6 +782,33 @@ fn rebuild_app_menu(app: &tauri::AppHandle, state: &AppState) -> Result<(), Comm
         .accelerator("CmdOrCtrl+O")
         .build(app)
         .map_err(|error| CommandError::Recent(error.to_string()))?;
+    let new_file = MenuItemBuilder::with_id("new_file", "New File")
+        .accelerator("CmdOrCtrl+N")
+        .build(app)
+        .map_err(|error| CommandError::Recent(error.to_string()))?;
+    let new_folder = MenuItemBuilder::with_id("new_folder", "New Folder")
+        .accelerator("CmdOrCtrl+Shift+N")
+        .build(app)
+        .map_err(|error| CommandError::Recent(error.to_string()))?;
+    let save_file = MenuItemBuilder::with_id("save_file", "Save")
+        .accelerator("CmdOrCtrl+S")
+        .build(app)
+        .map_err(|error| CommandError::Recent(error.to_string()))?;
+    let save_all = MenuItemBuilder::with_id("save_all", "Save All")
+        .accelerator("CmdOrCtrl+Shift+S")
+        .build(app)
+        .map_err(|error| CommandError::Recent(error.to_string()))?;
+    let reload_file = MenuItemBuilder::with_id("reload_file", "Reload from Disk")
+        .accelerator("CmdOrCtrl+R")
+        .build(app)
+        .map_err(|error| CommandError::Recent(error.to_string()))?;
+    let rename_selected = MenuItemBuilder::with_id("rename_selected", "Rename Selected")
+        .accelerator("F2")
+        .build(app)
+        .map_err(|error| CommandError::Recent(error.to_string()))?;
+    let delete_selected = MenuItemBuilder::with_id("delete_selected", "Delete Selected")
+        .build(app)
+        .map_err(|error| CommandError::Recent(error.to_string()))?;
     let close_tab = MenuItemBuilder::with_id("close_tab", "Close Tab")
         .accelerator("CmdOrCtrl+W")
         .build(app)
@@ -801,9 +863,19 @@ fn rebuild_app_menu(app: &tauri::AppHandle, state: &AppState) -> Result<(), Comm
         .map_err(|error| CommandError::Recent(error.to_string()))?;
 
     let file_menu = SubmenuBuilder::new(app, "File")
+        .item(&new_file)
+        .item(&new_folder)
+        .separator()
         .item(&open_folder)
         .item(&recent_workspace_menu)
         .item(&recent_file_menu)
+        .separator()
+        .item(&save_file)
+        .item(&save_all)
+        .item(&reload_file)
+        .separator()
+        .item(&rename_selected)
+        .item(&delete_selected)
         .separator()
         .item(&close_tab)
         .item(&close_all)
