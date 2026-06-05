@@ -55,3 +55,9 @@ Before committing security-sensitive changes:
 - Does workspace switching clear stale context from local agent integrations?
 - Is the behavior covered by tests?
 - Have `npm audit --audit-level=moderate` and `cargo audit` been run for dependency-sensitive changes?
+
+## Dependency Advisory Policy
+
+`run-tests.sh` runs `cargo audit --deny warnings` when `cargo-audit` is installed. The policy file at `src-tauri/.cargo/audit.toml` explicitly acknowledges the current transitive warning advisories from the Tauri 2 / Wry Linux GTK stack and Tauri's `urlpattern` dependency.
+
+Do not add advisory IDs to that allowlist casually. New advisories should fail the local gate until they are reviewed, traced to the dependency tree, and either fixed by upgrading/removing the dependency or documented with a narrow rationale.
