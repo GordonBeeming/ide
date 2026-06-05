@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { iconClassForFile, iconForFile } from "./fileTypes";
+import { iconClassForFile, iconForFile, isKnownBinaryFile } from "./fileTypes";
 
 describe("file type icons", () => {
   it.each([
@@ -25,4 +25,18 @@ describe("file type icons", () => {
     expect(iconForFile("src", true).displayName).toBe("Folder");
     expect(iconForFile("docs", true).displayName).toBe("Folder");
   });
+
+  it.each(["photo.png", "demo.mp4", "font.woff2", "archive.zip", "app.dmg"])(
+    "classifies %s as binary",
+    (fileName) => {
+      expect(isKnownBinaryFile(fileName)).toBe(true);
+    },
+  );
+
+  it.each(["README.md", "src/App.tsx", "Cargo.lock", ".gitignore"])(
+    "classifies %s as editor-openable text",
+    (fileName) => {
+      expect(isKnownBinaryFile(fileName)).toBe(false);
+    },
+  );
 });

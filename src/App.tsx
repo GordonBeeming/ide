@@ -27,7 +27,7 @@ import {
   sortDiagnostics,
 } from "./diagnostics";
 import { currentFileMatches } from "./currentFileSearch";
-import { iconForFile } from "./fileTypes";
+import { iconForFile, isKnownBinaryFile } from "./fileTypes";
 import { codexMcpConfigSnippet } from "./integrations";
 import { appShellClass, sidebarToggleTitle } from "./layout";
 import {
@@ -98,8 +98,6 @@ interface RevealTarget {
 }
 
 type SidebarSearchMode = "filter" | "content";
-
-const skipOpenPattern = /\.(png|jpe?g|gif|webp|ico|pdf|zip|gz|dll|exe|dylib)$/i;
 
 function fileEntryForDirectOpen(path: string): FileEntry {
   const name = path.split("/").filter(Boolean).at(-1) ?? path;
@@ -414,7 +412,7 @@ export default function App() {
         setRevealTarget(undefined);
       }
 
-      if (entry.isDir || skipOpenPattern.test(entry.name)) return;
+      if (entry.isDir || isKnownBinaryFile(entry.name)) return;
 
       setError(undefined);
       setStatus(`Opening ${entry.path}`);
@@ -492,7 +490,7 @@ export default function App() {
     const entriesByPath = new Map(files.map((entry) => [entry.path, entry]));
     const restorePaths = workspaceState.openFiles.filter((path) => {
       const entry = entriesByPath.get(path);
-      return entry && !entry.isDir && !skipOpenPattern.test(entry.name);
+      return entry && !entry.isDir && !isKnownBinaryFile(entry.name);
     });
 
     if (restorePaths.length === 0) {

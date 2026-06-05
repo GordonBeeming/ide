@@ -324,20 +324,52 @@ fn is_known_binary_path(path: &Path) -> bool {
             .map(str::to_lowercase)
             .as_deref(),
         Some(
-            "png"
-                | "jpg"
-                | "jpeg"
-                | "gif"
-                | "webp"
-                | "ico"
-                | "pdf"
-                | "zip"
-                | "gz"
+            "7z" | "aac"
+                | "aiff"
+                | "app"
+                | "avi"
+                | "bin"
+                | "bmp"
+                | "bz2"
+                | "class"
+                | "dmg"
                 | "dll"
-                | "exe"
                 | "dylib"
+                | "eot"
+                | "exe"
+                | "flac"
+                | "gif"
+                | "gz"
+                | "heic"
+                | "icns"
+                | "ico"
+                | "iso"
+                | "jar"
+                | "jpeg"
+                | "jpg"
+                | "mov"
+                | "mp3"
+                | "mp4"
+                | "ogg"
+                | "otf"
+                | "pdf"
+                | "png"
+                | "rar"
                 | "so"
+                | "sqlite"
+                | "sqlite3"
+                | "tar"
+                | "tgz"
+                | "tiff"
+                | "ttf"
                 | "wasm"
+                | "wav"
+                | "webm"
+                | "webp"
+                | "woff"
+                | "woff2"
+                | "xz"
+                | "zip"
         )
     )
 }
@@ -734,6 +766,8 @@ mod tests {
         fs::create_dir_all(dir.path().join("node_modules/pkg")).unwrap();
         fs::write(dir.path().join("node_modules/pkg/index.js"), "needle").unwrap();
         fs::write(dir.path().join("image.png"), b"needle\0binary").unwrap();
+        fs::write(dir.path().join("demo.mp4"), "needle").unwrap();
+        fs::write(dir.path().join("font.woff2"), "needle").unwrap();
         fs::write(dir.path().join("README.md"), "needle").unwrap();
 
         let results = search_workspace(dir.path(), "needle", 10).unwrap();

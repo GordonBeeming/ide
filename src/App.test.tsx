@@ -36,6 +36,20 @@ const files: FileEntry[] = [
     depth: 0,
     size: 10,
   },
+  {
+    path: "video.mp4",
+    name: "video.mp4",
+    isDir: false,
+    depth: 0,
+    size: 10,
+  },
+  {
+    path: "font.woff2",
+    name: "font.woff2",
+    isDir: false,
+    depth: 0,
+    size: 10,
+  },
 ];
 
 const tauriMocks = vi.hoisted(() => ({
@@ -412,17 +426,22 @@ describe("App shell interactions", () => {
     expect(appWindowMocks.destroyNativeWindow).not.toHaveBeenCalled();
   });
 
-  it("selects non-text files in the tree without opening an editor tab", async () => {
-    render(<App />);
+  it.each(["image.png", "video.mp4", "font.woff2"])(
+    "selects non-text %s files in the tree without opening an editor tab",
+    async (fileName) => {
+      render(<App />);
 
-    const imageRow = await treeButton("image.png");
-    fireEvent.click(imageRow);
+      const fileRow = await treeButton(fileName);
+      fireEvent.click(fileRow);
 
-    expect(imageRow).toHaveClass("tree-row--active");
-    expect(tauriMocks.readFile).not.toHaveBeenCalled();
-    expect(screen.getByText("No file selected").closest(".editor-empty-state")).toBeInTheDocument();
-    expect(screen.getByText("Open a file from the tree")).toBeInTheDocument();
-  });
+      expect(fileRow).toHaveClass("tree-row--active");
+      expect(tauriMocks.readFile).not.toHaveBeenCalled();
+      expect(
+        screen.getByText("No file selected").closest(".editor-empty-state"),
+      ).toBeInTheDocument();
+      expect(screen.getByText("Open a file from the tree")).toBeInTheDocument();
+    },
+  );
 
   it("keeps integration details out of the default sidebar layout", async () => {
     render(<App />);

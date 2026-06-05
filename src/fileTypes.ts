@@ -21,6 +21,56 @@ type FolderIconRule = {
   names: readonly string[];
 };
 
+const binaryFileExtensions = new Set([
+  ".7z",
+  ".aac",
+  ".aiff",
+  ".app",
+  ".avi",
+  ".bin",
+  ".bmp",
+  ".bz2",
+  ".class",
+  ".dmg",
+  ".dll",
+  ".dylib",
+  ".eot",
+  ".exe",
+  ".flac",
+  ".gif",
+  ".gz",
+  ".heic",
+  ".icns",
+  ".ico",
+  ".iso",
+  ".jar",
+  ".jpeg",
+  ".jpg",
+  ".mov",
+  ".mp3",
+  ".mp4",
+  ".ogg",
+  ".otf",
+  ".pdf",
+  ".png",
+  ".rar",
+  ".so",
+  ".sqlite",
+  ".sqlite3",
+  ".tar",
+  ".tgz",
+  ".tiff",
+  ".ttf",
+  ".wasm",
+  ".wav",
+  ".webm",
+  ".webp",
+  ".woff",
+  ".woff2",
+  ".xz",
+  ".zip",
+]);
+
 const folderIconRules: readonly FolderIconRule[] = [
   { icon: FolderGit2, names: [".git", ".github"] },
 ];
@@ -37,6 +87,13 @@ export function iconForFile(name: string, isDir: boolean): FileIconComponent {
 
 export function iconClassForFile(name: string): string | undefined {
   return getClassWithColor(name) ?? undefined;
+}
+
+export function isKnownBinaryFile(name: string): boolean {
+  const lower = name.toLowerCase();
+  const dotIndex = lower.lastIndexOf(".");
+  if (dotIndex < 0) return false;
+  return binaryFileExtensions.has(lower.slice(dotIndex));
 }
 
 function iconForFolder(name: string): LucideIcon {

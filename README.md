@@ -17,8 +17,8 @@ Implemented:
 - File/folder launch targets through the local runner and macOS Finder Quick Action.
 - Explicit workspace loading, empty, and load-failure retry states.
 - Collapsible sidebar for focused editing.
-- File-name filtering and bounded text search across the current workspace.
-- Current-file search over loaded and unsaved editor contents.
+- Collapsed file-name filtering and bounded text search across the current workspace.
+- Collapsed current-file search over loaded and unsaved editor contents.
 - Keyboard quick-open palette for opening files by path, including arrow-key result selection.
 - Keyboard tab navigation and close commands.
 - Dirty-file prompts before closing tabs or the native app window.
@@ -30,6 +30,7 @@ Implemented:
 - Save active file and Save All commands.
 - Stale-save protection so externally modified files are not silently overwritten.
 - Guarded Rust-native workspace scanning, file/folder creation, rename, deletion, and file read/write commands.
+- Common binary/media/font/archive files select in the tree without attempting text-editor reads.
 - CodeMirror 6 editor.
 - Syntax highlighting for common code and config files, including Rust, TypeScript, JavaScript, React/TSX/JSX, JSON, Markdown, shell scripts, HTML, CSS/SCSS/Sass, C#, C/C++, Java/Kotlin/Scala, Python, Go, Ruby, SQL, XML/YAML/TOML, Dockerfiles, PowerShell, diffs, and .NET project files.
 - Lazy editor loading and lazy language loading for better startup performance.
@@ -86,7 +87,7 @@ Known optional language-server tools:
 
 Claude Code can discover the running editor through `/ide` after the native app starts. The app writes a user-only lock file under `~/.claude/ide/` and exposes only read-only context tools in this first bridge.
 
-Codex can consume editor context through the MCP endpoint shown in the native sidebar. Add it to Codex with the shown bearer token:
+Codex can consume editor context through the MCP endpoint shown from the native integration menu. Add it to Codex with the shown bearer token:
 
 ```toml
 [mcp_servers.ide]

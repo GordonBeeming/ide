@@ -25,7 +25,7 @@ Install the macOS Finder Quick Action:
 ./scripts/install-macos-finder-quick-action.sh
 ```
 
-The service appears under Finder's Quick Actions menu as `Open in Ide`. It starts `run.sh` with the selected file or folder and writes its launcher log to `~/Library/Logs/Ide/finder-open.log`.
+The service appears under Finder's Quick Actions menu as `Open in Ide`. It hands the selected file or folder to an already-running app through the loopback open-path endpoint when possible, otherwise it starts the local dev app in the background. Launcher logs are written to `~/Library/Logs/Ide/finder-open.log`.
 
 ## Manual Commands
 
@@ -63,7 +63,7 @@ The app is intentionally split into a small always-loaded shell and lazy-loaded 
 - `src/quickOpen.ts`: tested quick-open file matching, ranking, and keyboard selection rules.
 - `src/editorNavigation.ts`: tested line clamping for search-result reveal behavior.
 - `src/currentFileSearch.ts`: tested current-file search over loaded and unsaved editor contents.
-- `src/App.test.tsx`: rendered shell coverage for non-text file selection, preview-tab lifecycle, current-file search, new-file/folder creation, file rename/delete, reload-from-disk behavior, stale-save handling, Save All success/failure behavior, active-file-safe agent selection context, and content search result/error behavior.
+- `src/App.test.tsx`: rendered shell coverage for non-text file selection, collapsed search controls, preview-tab lifecycle, current-file search, new-file/folder creation, file rename/delete, reload-from-disk behavior, stale-save handling, Save All success/failure behavior, active-file-safe agent selection context, and content search result/error behavior.
 - `src/tauri.test.ts`: hosted browser transport coverage for bearer-token file/folder creation, file rename/delete/writes, stale-save tokens, and loopback API base selection.
 - `src/language.ts`: lazy language loaders for common code and config files, including Rust, TypeScript/JavaScript/React, JSON, Markdown, shell, HTML, CSS/SCSS/Sass, C#, C/C++, JVM languages, Python, Go, Ruby, SQL, XML/YAML/TOML, Dockerfiles, PowerShell, diffs, and .NET project files.
 - `src-tauri/src/workspace.rs`: Rust-native workspace scanning, guarded file/folder creation, guarded file rename/delete, and guarded file IO.
@@ -155,13 +155,13 @@ Supported keyboard commands:
 - `Cmd/Ctrl+Shift+S`: save all dirty files.
 - `Cmd/Ctrl+W`: close the active tab.
 - `Cmd/Ctrl+B`: toggle the sidebar.
-- `Cmd/Ctrl+F`: focus current-file search.
+- `Cmd/Ctrl+F`: open and focus current-file search.
 - `Cmd/Ctrl+N`: create a new file.
 - `Cmd/Ctrl+P`: open the quick-open palette.
 - `F2`: rename the selected file.
 - `Ctrl+Tab` / `Ctrl+Shift+Tab`: move between open tabs.
 
-Current-file search runs against the active tab contents, including unsaved edits, and can reveal a matched line in the editor. New-file and new-folder creation use the selected folder or selected file's parent as the default path and reject existing targets. New files open as persistent tabs with their first scanned `modifiedMs`, so their first save gets the same stale-write protection as opened files. File rename is file-only for now, rejects existing destination paths, and updates an open tab plus its refreshed `modifiedMs` when the renamed file is open. File deletion is file-only, requires confirmation, and closes the deleted file's open tab. Reload from disk refreshes the active file contents and modification timestamp; dirty files require confirmation before unsaved edits are discarded. Saves send the file's last known `modifiedMs`; if the disk file changed since it was opened, the backend returns a conflict and the tab remains dirty. Save All walks dirty tabs in order and stops at the first failed write so the error remains visible to the user.
+Sidebar file filtering, workspace content search, and current-file search stay collapsed until requested; they remain open while they contain query text. Current-file search runs against the active tab contents, including unsaved edits, and can reveal a matched line in the editor. Common binary, media, font, archive, and executable file types select in the tree without attempting text-editor reads. New-file and new-folder creation use the selected folder or selected file's parent as the default path and reject existing targets. New files open as persistent tabs with their first scanned `modifiedMs`, so their first save gets the same stale-write protection as opened files. File rename is file-only for now, rejects existing destination paths, and updates an open tab plus its refreshed `modifiedMs` when the renamed file is open. File deletion is file-only, requires confirmation, and closes the deleted file's open tab. Reload from disk refreshes the active file contents and modification timestamp; dirty files require confirmation before unsaved edits are discarded. Saves send the file's last known `modifiedMs`; if the disk file changed since it was opened, the backend returns a conflict and the tab remains dirty. Save All walks dirty tabs in order and stops at the first failed write so the error remains visible to the user.
 
 ## LSP Direction
 
