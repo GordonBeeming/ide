@@ -1289,7 +1289,7 @@ export default function App() {
     <main className={appShellClass(sidebarCollapsed)}>
       <aside className="sidebar" aria-hidden={sidebarCollapsed}>
         <div className="sidebar__header">
-          <div>
+          <div className="sidebar__title">
             <div className="eyebrow">Workspace</div>
             <strong>
               {lastSegment(workspaceRoot) ||

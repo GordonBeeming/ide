@@ -76,18 +76,31 @@ button {
 }
 
 .sidebar__header {
-  display: flex;
+  display: grid;
   min-height: 68px;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
+  gap: 10px;
   padding: 14px 12px 12px 14px;
   border-bottom: 1px solid var(--border);
 }
 
+.sidebar__title {
+  min-width: 0;
+}
+
+.sidebar__title strong {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .sidebar__actions {
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(3, 32px);
   align-items: center;
+  justify-content: end;
   gap: 6px;
 }
 
