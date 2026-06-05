@@ -75,10 +75,6 @@ button {
   background: var(--panel);
 }
 
-.app-shell--sidebar-collapsed .sidebar {
-  display: none;
-}
-
 .sidebar__header {
   display: flex;
   min-height: 68px;
