@@ -75,6 +75,7 @@ import {
   setLspErrorHandler,
   setLspRootUri,
   setLspStatusHandler,
+  workspacePathToFileUri,
 } from "./lsp";
 import { darkSchemeQuery, systemPrefersDark } from "./editorTheme";
 import {
@@ -335,7 +336,7 @@ export default function App() {
     try {
       const root = await getWorkspaceRoot();
       setWorkspaceRoot(root);
-      setLspRootUri(pathToFileUri(root));
+      setLspRootUri(workspacePathToFileUri(root));
       if (effectiveSingleFileMode && effectiveSingleFilePath) {
         const entry = await statFile(effectiveSingleFilePath);
         setFiles([entry]);
@@ -1007,7 +1008,7 @@ export default function App() {
         if (workspaceRootPath !== workspaceRoot) {
           const selected = await setWorkspaceRootPath(workspaceRootPath);
           setWorkspaceRoot(selected);
-          setLspRootUri(pathToFileUri(selected));
+          setLspRootUri(workspacePathToFileUri(selected));
           clearWorkspaceUi();
           if (singleFile) {
             setSingleFileMode(true);
@@ -2481,10 +2482,4 @@ function suggestNewFolderPath(selectedPath: string | undefined, files: FileEntry
   }
 
   return prefix ? `${prefix}/new-folder` : "new-folder";
-}
-
-function pathToFileUri(path: string) {
-  const normalized = path.replace(/\\/g, "/");
-  const prefix = normalized.startsWith("/") ? "file://" : "file:///";
-  return `${prefix}${normalized.split("/").map(encodeURIComponent).join("/")}`;
 }

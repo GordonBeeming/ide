@@ -126,6 +126,7 @@ vi.mock("./lsp", () => ({
   setLspErrorHandler: vi.fn(),
   setLspRootUri: vi.fn(),
   setLspStatusHandler: vi.fn(),
+  workspacePathToFileUri: (path: string) => `file://${path}`,
 }));
 
 vi.mock("./appWindow", () => ({

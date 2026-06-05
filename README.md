@@ -37,6 +37,7 @@ Implemented:
 - System light/dark mode via `prefers-color-scheme` with a high-contrast bias, including the editor surface.
 - Active file, open file, and selection context stored in backend state.
 - LSP process manager for Rust, TypeScript/React, and C# with status refresh after bridge events.
+- LSP-backed editor keymaps from CodeMirror for definition, references, hover, rename, formatting, and signature help when the matching language server is installed.
 - LSP diagnostics panel and read-only agent context.
 - Local HTTP context endpoint for terminal/browser integrations.
 - Claude Code `/ide` discovery bridge with authenticated localhost WebSocket MCP and read-only editor-context tools.

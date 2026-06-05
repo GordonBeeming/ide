@@ -102,7 +102,7 @@ export async function lspExtensionsForPath(path: string): Promise<Extension[]> {
 
   const record = await getClient(language);
   await record.ready;
-  return [record.client.plugin(fileUriForPath(path), languageIdForPath(path))];
+  return [record.client.plugin(workspaceRelativePathToFileUri(path), languageIdForPath(path))];
 }
 
 async function getClient(language: string): Promise<ClientRecord> {
@@ -224,9 +224,24 @@ export function languageIdForPath(path: string) {
   return "plaintext";
 }
 
-function fileUriForPath(path: string) {
-  const root = rootUri.replace(/\/$/, "");
-  return `${root}/${path.split("/").map(encodeURIComponent).join("/")}`;
+export function workspacePathToFileUri(path: string) {
+  const normalized = path.replace(/\\/g, "/");
+  if (/^[a-z]:\//i.test(normalized)) {
+    const [drive, ...rest] = normalized.split("/");
+    return `file:///${drive}${rest.length ? `/${rest.map(encodeURIComponent).join("/")}` : ""}`;
+  }
+
+  const prefix = normalized.startsWith("/") ? "file://" : "file:///";
+  return `${prefix}${normalized.split("/").map(encodeURIComponent).join("/")}`;
+}
+
+export function workspaceRelativePathToFileUri(path: string, root = rootUri) {
+  if (!isSafeWorkspaceRelativePath(path)) {
+    throw new Error(`LSP document path must stay inside the current workspace: ${path}`);
+  }
+
+  const normalizedRoot = normalizeRootUri(root);
+  return `${normalizedRoot}/${path.split("/").map(encodeURIComponent).join("/")}`;
 }
 
 function handleDiagnosticsMessage(message: string) {

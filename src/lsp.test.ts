@@ -7,6 +7,8 @@ import {
   languageIdForPath,
   sanitizeHtml,
   setLspRootUri,
+  workspacePathToFileUri,
+  workspaceRelativePathToFileUri,
 } from "./lsp";
 
 describe("LSP HTML sanitizer", () => {
@@ -24,6 +26,30 @@ describe("LSP HTML sanitizer", () => {
     expect(languageIdForPath("src/App.jsx")).toBe("javascriptreact");
     expect(languageIdForPath("src/Program.cs")).toBe("csharp");
     expect(languageIdForPath("src/main.rs")).toBe("rust");
+  });
+
+  it("builds workspace root file URIs for POSIX and Windows-style paths", () => {
+    expect(workspacePathToFileUri("/Users/gordon/Developer/my ide")).toBe(
+      "file:///Users/gordon/Developer/my%20ide",
+    );
+    expect(workspacePathToFileUri("C:\\Users\\gordon\\Developer\\my ide")).toBe(
+      "file:///C:/Users/gordon/Developer/my%20ide",
+    );
+  });
+
+  it("builds safe workspace-relative document URIs for LSP requests", () => {
+    expect(
+      workspaceRelativePathToFileUri(
+        "src/My Component.tsx",
+        "file:///Users/gordon/Developer/my%20ide",
+      ),
+    ).toBe("file:///Users/gordon/Developer/my%20ide/src/My%20Component.tsx");
+  });
+
+  it("rejects unsafe workspace-relative document URIs", () => {
+    expect(() =>
+      workspaceRelativePathToFileUri("../secret.ts", "file:///workspace"),
+    ).toThrow("LSP document path must stay inside the current workspace");
   });
 
   it("disconnects cached clients when the workspace root changes", () => {
