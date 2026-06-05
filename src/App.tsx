@@ -290,6 +290,7 @@ export default function App() {
     openFiles: [],
   });
   const persistedFilesRestoredRef = useRef(false);
+  const skipNextUiStatePersistRef = useRef(false);
   const uiPersistTimerRef = useRef<number | undefined>(undefined);
   const editorCommandNonceRef = useRef(0);
 
@@ -416,6 +417,7 @@ export default function App() {
   const applyPersistedUiSnapshot = useCallback((snapshot: PersistedUiSnapshot) => {
     persistedWorkspaceRef.current = snapshot.workspace;
     persistedFilesRestoredRef.current = false;
+    skipNextUiStatePersistRef.current = false;
     setWorkspaceUiRestored(false);
     setShowDotfiles(snapshot.view.showDotfiles);
     setShowGeneratedInternal(snapshot.view.showGeneratedInternal);
@@ -752,6 +754,7 @@ export default function App() {
         }
 
         if (failures.length > 0) {
+          skipNextUiStatePersistRef.current = true;
           setError(
             failures.length === 1
               ? `Unable to restore ${failures[0].path}: ${failures[0].reason}`
@@ -803,6 +806,10 @@ export default function App() {
   useEffect(() => {
     if (!uiStateLoaded || !workspaceUiRestored) return;
     if (singleFileMode) return;
+    if (skipNextUiStatePersistRef.current) {
+      skipNextUiStatePersistRef.current = false;
+      return;
+    }
 
     window.clearTimeout(uiPersistTimerRef.current);
     uiPersistTimerRef.current = window.setTimeout(() => {

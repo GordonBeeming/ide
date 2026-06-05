@@ -570,6 +570,58 @@ describe("App shell interactions", () => {
     ).toBeInTheDocument();
   });
 
+  it("does not overwrite saved tabs immediately after a restore failure", async () => {
+    tauriMocks.getUiState.mockResolvedValueOnce({
+      view: {
+        showDotfiles: false,
+        showGeneratedInternal: false,
+      },
+      workspace: {
+        expandedFolders: ["src"],
+        openFiles: ["README.md", "src/App.tsx"],
+        activeFile: "src/App.tsx",
+        selectedPath: "src/App.tsx",
+      },
+    });
+    tauriMocks.readFile.mockImplementation(async (path: string) => {
+      if (path === "README.md") throw new Error("temporary read failure");
+      if (path === "src/App.tsx") return "export function App() {}";
+      return "";
+    });
+
+    render(<App />);
+
+    expect(await screen.findByLabelText("Editor src/App.tsx")).toHaveValue(
+      "export function App() {}",
+    );
+    expect(
+      screen.getByText("Unable to restore README.md: Error: temporary read failure"),
+    ).toBeInTheDocument();
+
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 350));
+    });
+
+    expect(tauriMocks.updateUiState).not.toHaveBeenCalled();
+
+    fireEvent.click(await treeButton("src"));
+
+    await waitFor(() =>
+      expect(tauriMocks.updateUiState).toHaveBeenCalledWith(
+        {
+          showDotfiles: false,
+          showGeneratedInternal: false,
+        },
+        expect.objectContaining({
+          expandedFolders: [],
+          openFiles: ["src/App.tsx"],
+          activeFile: "src/App.tsx",
+          selectedPath: "src",
+        }),
+      ),
+    );
+  });
+
   it("reloads the tree with dotfiles when the native menu toggle is used", async () => {
     (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
     tauriMocks.listFiles
