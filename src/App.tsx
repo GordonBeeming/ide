@@ -116,6 +116,7 @@ import {
   type EditorCommandName,
   type EditorCommandRequest,
 } from "./editorCommands";
+import { cursorStatus, type EditorCursor } from "./editorCursor";
 
 const EditorPane = lazy(() => import("./EditorPane"));
 
@@ -209,6 +210,7 @@ export default function App() {
   const [error, setError] = useState<string>();
   const [status, setStatus] = useState("Ready");
   const [selection, setSelection] = useState<EditorSelection>();
+  const [cursor, setCursor] = useState<EditorCursor>();
   const [lspServers, setLspServers] = useState<LspServerStatus[]>([]);
   const [diagnosticsByPath, setDiagnosticsByPath] = useState<
     Record<string, EditorDiagnostic[]>
@@ -239,11 +241,7 @@ export default function App() {
   const activeFileIsDirty = Boolean(activeFile?.dirty);
   const hasDirtyFiles = dirtyFiles.length > 0;
   const activeSelection = selection?.filePath === activePath ? selection : undefined;
-  const cursorPosition = activeSelection
-    ? `${activeSelection.startLine}:${activeSelection.startColumn}`
-    : revealTarget && revealTarget.path === activePath
-      ? `${revealTarget.lineNumber}:1`
-      : "";
+  const cursorPosition = cursorStatus(activePath, cursor, revealTarget);
   const sidebarFiles = useMemo(() => {
     if (!singleFileMode || !singleFilePath) return files;
     const entry =
@@ -2334,6 +2332,7 @@ export default function App() {
                   revealTarget?.path === activeFile.path ? revealTarget.lineNumber : undefined
                 }
                 onChange={updateContents}
+                onCursor={setCursor}
                 onError={setError}
                 onNotice={setStatus}
                 onSelection={setSelection}

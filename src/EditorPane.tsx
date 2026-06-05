@@ -25,6 +25,7 @@ import {
   editorCommandLabel,
   type EditorCommandRequest,
 } from "./editorCommands";
+import type { EditorCursor } from "./editorCursor";
 
 interface EditorPaneProps {
   path: string;
@@ -35,6 +36,7 @@ interface EditorPaneProps {
   onChange: (path: string, contents: string) => void;
   onError: (message: string) => void;
   onNotice?: (message: string) => void;
+  onCursor?: (cursor: EditorCursor | undefined) => void;
   onSelection: (selection: EditorSelection | undefined) => void;
 }
 
@@ -46,6 +48,7 @@ export default function EditorPane({
   revealLine,
   onChange,
   onError,
+  onCursor,
   onNotice,
   onSelection,
 }: EditorPaneProps) {
@@ -100,22 +103,7 @@ export default function EditorPane({
               }
 
               if (update.selectionSet || update.docChanged) {
-                const range = update.state.selection.main;
-                const from = update.state.doc.lineAt(range.from);
-                const to = update.state.doc.lineAt(range.to);
-                const text = update.state.sliceDoc(range.from, range.to);
-                onSelection(
-                  text.length
-                    ? {
-                        filePath: path,
-                        text,
-                        startLine: from.number,
-                        startColumn: range.from - from.from + 1,
-                        endLine: to.number,
-                        endColumn: range.to - to.from + 1,
-                      }
-                    : undefined,
-                );
+                emitCursorAndSelection(update.view, path, onCursor, onSelection);
               }
             }),
             ...editorThemeExtensions(prefersDark),
@@ -124,6 +112,7 @@ export default function EditorPane({
       });
 
       viewRef.current = view;
+      emitCursorAndSelection(view, path, onCursor, onSelection);
       revealLineInView(view, revealLine);
     }).catch((error) => {
       if (!cancelled) {
@@ -183,6 +172,35 @@ export default function EditorPane({
   }, [editorCommand, onError, onNotice, path]);
 
   return <div className="editor-host" ref={host} />;
+}
+
+function emitCursorAndSelection(
+  view: EditorView,
+  path: string,
+  onCursor: ((cursor: EditorCursor | undefined) => void) | undefined,
+  onSelection: (selection: EditorSelection | undefined) => void,
+) {
+  const range = view.state.selection.main;
+  const from = view.state.doc.lineAt(range.from);
+  const to = view.state.doc.lineAt(range.to);
+  const text = view.state.sliceDoc(range.from, range.to);
+  onCursor?.({
+    filePath: path,
+    line: from.number,
+    column: range.from - from.from + 1,
+  });
+  onSelection(
+    text.length
+      ? {
+          filePath: path,
+          text,
+          startLine: from.number,
+          startColumn: range.from - from.from + 1,
+          endLine: to.number,
+          endColumn: range.to - to.from + 1,
+        }
+      : undefined,
+  );
 }
 
 function revealLineInView(view: EditorView, lineNumber: number | undefined) {

@@ -3,6 +3,7 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
 import type { EditorCommandRequest } from "./editorCommands";
+import type { EditorCursor } from "./editorCursor";
 import type { EditorSelection, FileEntry } from "./tauri";
 
 const files: FileEntry[] = [
@@ -142,6 +143,7 @@ vi.mock("./EditorPane", () => ({
     contents,
     editorCommand,
     onChange,
+    onCursor,
     onSelection,
     path,
     revealLine,
@@ -149,6 +151,7 @@ vi.mock("./EditorPane", () => ({
     contents: string;
     editorCommand?: EditorCommandRequest;
     onChange: (path: string, contents: string) => void;
+    onCursor?: (cursor: EditorCursor | undefined) => void;
     onSelection: (selection: EditorSelection | undefined) => void;
     path: string;
     revealLine?: number;
@@ -158,6 +161,7 @@ vi.mock("./EditorPane", () => ({
         aria-label={`Editor ${path}`}
         value={contents}
         onChange={(event) => onChange(path, event.target.value)}
+        onFocus={() => onCursor?.({ filePath: path, line: 1, column: 1 })}
         onSelect={() =>
           onSelection({
             filePath: path,
@@ -1369,6 +1373,22 @@ describe("App shell interactions", () => {
     await waitFor(() =>
       expect(latestAgentContext()).toMatchObject({
         activeFile: "src/App.tsx",
+        selection: undefined,
+      }),
+    );
+  });
+
+  it("shows caret position in the status bar without sending empty selection context", async () => {
+    render(<App />);
+
+    fireEvent.click(await treeButton("README.md"));
+    const editor = await screen.findByLabelText("Editor README.md");
+    fireEvent.focus(editor);
+
+    expect(screen.getByText("1:1")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(latestAgentContext()).toMatchObject({
+        activeFile: "README.md",
         selection: undefined,
       }),
     );
