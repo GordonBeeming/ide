@@ -557,6 +557,8 @@ export default function App() {
     }
 
     setSearching(true);
+    setSearchResults([]);
+    setError(undefined);
     let cancelled = false;
     const timeout = window.setTimeout(() => {
       const searchPromise = singleFileMode && singleFilePath

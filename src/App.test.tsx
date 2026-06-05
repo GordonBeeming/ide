@@ -1919,6 +1919,54 @@ describe("App shell interactions", () => {
     expect(screen.getByText("Reveal line 4")).toBeInTheDocument();
   });
 
+  it("clears stale content search results while a new query is searching", async () => {
+    tauriMocks.searchFiles
+      .mockResolvedValueOnce([
+        {
+          path: "src/App.tsx",
+          lineNumber: 4,
+          lineText: "const needle = true;",
+          matchStart: 6,
+          matchEnd: 12,
+        },
+      ])
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) =>
+            window.setTimeout(
+              () =>
+                resolve([
+                  {
+                    path: "README.md",
+                    lineNumber: 1,
+                    lineText: "thread",
+                    matchStart: 0,
+                    matchEnd: 6,
+                  },
+                ]),
+              250,
+            ),
+          ),
+      );
+    render(<App />);
+
+    const input = await openContentSearch();
+    fireEvent.change(input, { target: { value: "needle" } });
+
+    expect(await screen.findByText("src/App.tsx:4")).toBeInTheDocument();
+
+    fireEvent.change(input, { target: { value: "thread" } });
+
+    await waitFor(() =>
+      expect(screen.getByLabelText("Content search results")).toHaveTextContent(
+        "Searching0",
+      ),
+    );
+    expect(screen.queryByText("src/App.tsx:4")).not.toBeInTheDocument();
+
+    expect(await screen.findByText("README.md:1")).toBeInTheDocument();
+  });
+
   it("surfaces content search failures", async () => {
     tauriMocks.searchFiles.mockRejectedValueOnce(new Error("index unavailable"));
     render(<App />);
@@ -1930,6 +1978,35 @@ describe("App shell interactions", () => {
     await screen.findByText("Search failed: Error: index unavailable");
     expect(tauriMocks.searchFiles).toHaveBeenCalledWith("needle");
     expect(screen.getByText("No matches")).toBeInTheDocument();
+  });
+
+  it("clears stale content search errors when a new query starts", async () => {
+    tauriMocks.searchFiles
+      .mockRejectedValueOnce(new Error("index unavailable"))
+      .mockResolvedValueOnce([
+        {
+          path: "README.md",
+          lineNumber: 1,
+          lineText: "thread",
+          matchStart: 0,
+          matchEnd: 6,
+        },
+      ]);
+    render(<App />);
+
+    const input = await openContentSearch();
+    fireEvent.change(input, { target: { value: "needle" } });
+
+    await screen.findByText("Search failed: Error: index unavailable");
+
+    fireEvent.change(input, { target: { value: "thread" } });
+
+    await waitFor(() =>
+      expect(
+        screen.queryByText("Search failed: Error: index unavailable"),
+      ).not.toBeInTheDocument(),
+    );
+    expect(await screen.findByText("README.md:1")).toBeInTheDocument();
   });
 
   it("finds text in the active file and reveals the matched line", async () => {
