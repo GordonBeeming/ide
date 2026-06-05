@@ -635,6 +635,11 @@ button {
   height: 100%;
 }
 
+.editor-host {
+  grid-row: 2;
+  min-height: 0;
+}
+
 .empty-state {
   display: grid;
   height: 100%;

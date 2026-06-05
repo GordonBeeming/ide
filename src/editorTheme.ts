@@ -19,12 +19,17 @@ const highContrastTheme = EditorView.theme({
     backgroundColor: "var(--bg)",
     color: "var(--text)",
   },
+  ".cm-content": {
+    minHeight: "100%",
+  },
   ".cm-scroller": {
     fontFamily:
       "'SF Mono', 'Cascadia Code', 'JetBrains Mono', ui-monospace, monospace",
     lineHeight: "1.55",
+    backgroundColor: "var(--bg)",
   },
   ".cm-gutters": {
+    minHeight: "100%",
     borderRight: "1px solid var(--border)",
     backgroundColor: "var(--panel)",
     color: "var(--muted)",
