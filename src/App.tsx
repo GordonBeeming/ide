@@ -77,6 +77,7 @@ import {
   getWorkspaceRoot,
   isNativeTauri,
   listFiles,
+  pickOpenFile,
   pickWorkspaceFolder,
   readFile,
   recordRecentFile,
@@ -1331,6 +1332,32 @@ export default function App() {
     }
   }, [applyPersistedUiSnapshot, clearWorkspaceUi, openFiles, refreshFiles]);
 
+  const openFileFromDialog = useCallback(async () => {
+    if (openFiles.some((file) => file.dirty)) {
+      setError("Save or close modified files before opening another file.");
+      return;
+    }
+
+    setError(undefined);
+    setStatus("Opening file");
+    try {
+      const selected = await pickOpenFile();
+      if (!selected) {
+        setStatus("Ready");
+        return;
+      }
+
+      await openFileFromWorkspace(
+        selected.workspaceRoot,
+        selected.path,
+        selected.singleFile,
+      );
+    } catch (reason) {
+      setError(String(reason));
+      setStatus("Open file failed");
+    }
+  }, [openFileFromWorkspace, openFiles]);
+
   const commandPaletteCommands = useMemo<AppCommand[]>(
     () => [
       {
@@ -1381,6 +1408,16 @@ export default function App() {
         enabled: true,
         run: () => {
           void openWorkspace();
+        },
+      },
+      {
+        id: "open_file",
+        title: "Open File",
+        detail: "Open a file with the native picker",
+        keywords: ["file picker"],
+        enabled: isNativeTauri(),
+        run: () => {
+          void openFileFromDialog();
         },
       },
       {
@@ -1508,6 +1545,7 @@ export default function App() {
       openCurrentFileFind,
       openNewFileDialog,
       openNewFolderDialog,
+      openFileFromDialog,
       openQuickOpen,
       openRenameDialog,
       openWorkspace,

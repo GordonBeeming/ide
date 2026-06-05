@@ -72,6 +72,12 @@ export interface SearchMatch {
   matchEnd: number;
 }
 
+export interface OpenFileRequest {
+  workspaceRoot: string;
+  path: string;
+  singleFile: boolean;
+}
+
 export interface PersistedViewSettings {
   showDotfiles: boolean;
   showGeneratedInternal: boolean;
@@ -224,6 +230,13 @@ export function pickWorkspaceFolder() {
     return Promise.reject(new Error("Folder picker is only available in the native Tauri app"));
   }
   return invoke<string | undefined>("pick_workspace_folder");
+}
+
+export function pickOpenFile() {
+  if (!isNativeTauri()) {
+    return Promise.reject(new Error("File picker is only available in the native Tauri app"));
+  }
+  return invoke<OpenFileRequest | undefined>("pick_open_file");
 }
 
 export function updateAgentContext(context: AgentContext) {

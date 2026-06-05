@@ -66,6 +66,7 @@ const tauriMocks = vi.hoisted(() => ({
   renameFile: vi.fn(),
   deleteFile: vi.fn(),
   searchFiles: vi.fn(),
+  pickOpenFile: vi.fn(),
   pickWorkspaceFolder: vi.fn(),
   setWorkspaceRootPath: vi.fn(),
   getUiState: vi.fn(),
@@ -110,6 +111,7 @@ vi.mock("./tauri", async () => {
     renameFile: tauriMocks.renameFile,
     deleteFile: tauriMocks.deleteFile,
     searchFiles: tauriMocks.searchFiles,
+    pickOpenFile: tauriMocks.pickOpenFile,
     pickWorkspaceFolder: tauriMocks.pickWorkspaceFolder,
     setWorkspaceRootPath: tauriMocks.setWorkspaceRootPath,
     getUiState: tauriMocks.getUiState,
@@ -218,6 +220,7 @@ describe("App shell interactions", () => {
     tauriMocks.renameFile.mockResolvedValue(undefined);
     tauriMocks.deleteFile.mockResolvedValue(undefined);
     tauriMocks.searchFiles.mockResolvedValue([]);
+    tauriMocks.pickOpenFile.mockResolvedValue(undefined);
     tauriMocks.setWorkspaceRootPath.mockResolvedValue("/workspace");
     tauriMocks.getUiState.mockResolvedValue({
       view: {
@@ -660,6 +663,48 @@ describe("App shell interactions", () => {
     });
 
     expect(screen.getByRole("dialog", { name: "Command palette" })).toBeInTheDocument();
+  });
+
+  it("opens a native file picker result from the command palette", async () => {
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    tauriMocks.pickOpenFile.mockResolvedValueOnce({
+      workspaceRoot: "/Users/gordonbeeming/Developer",
+      path: "notes.md",
+      singleFile: true,
+    });
+    tauriMocks.statFile.mockResolvedValueOnce({
+      path: "notes.md",
+      name: "notes.md",
+      isDir: false,
+      depth: 0,
+      size: 11,
+      modifiedMs: 505,
+    });
+    tauriMocks.readFile.mockImplementation(async (path: string) => {
+      if (path === "notes.md") return "# Notes";
+      if (path === "README.md") return "readme";
+      if (path === "src/App.tsx") return "export function App() {}";
+      return "";
+    });
+
+    render(<App />);
+
+    expect(await treeButton("README.md")).toBeInTheDocument();
+    fireEvent.keyDown(window, { key: "p", metaKey: true, shiftKey: true });
+
+    const palette = screen.getByRole("dialog", { name: "Command palette" });
+    const input = within(palette).getByPlaceholderText("Run command");
+    fireEvent.change(input, { target: { value: "file picker" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    expect(await screen.findByLabelText("Editor notes.md")).toHaveValue("# Notes");
+    expect(tauriMocks.pickOpenFile).toHaveBeenCalledTimes(1);
+    expect(tauriMocks.setWorkspaceRootPath).toHaveBeenCalledWith(
+      "/Users/gordonbeeming/Developer",
+    );
+    expect(tauriMocks.recordRecentFile).toHaveBeenCalledWith("notes.md", true);
+    expect(screen.queryByRole("dialog", { name: "Command palette" }))
+      .not.toBeInTheDocument();
   });
 
   it("keeps unavailable command palette actions disabled", async () => {

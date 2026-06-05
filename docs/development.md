@@ -77,8 +77,8 @@ The app is intentionally split into a small always-loaded shell and lazy-loaded 
 - `src/commandPalette.ts`: tested command palette matching, ranking, and keyboard selection rules.
 - `src/editorNavigation.ts`: tested line clamping for search-result reveal behavior.
 - `src/currentFileSearch.ts`: tested current-file search over loaded and unsaved editor contents.
-- `src/App.test.tsx`: rendered shell coverage for non-text file selection, collapsed search controls, preview-tab lifecycle, dirty-tab save-and-close prompts, native Close Tab/Close All/Search menu handling, keyboard tab switching, current-file search, new-file/folder creation, file/folder rename/delete, reload-from-disk behavior, stale-save handling, Save All success/failure behavior, active-file-safe agent selection context, and content search result/error behavior.
-- `src/tauri.test.ts`: hosted browser transport coverage for bearer-token file/folder creation, file rename/delete/writes, stale-save tokens, and loopback API base selection.
+- `src/App.test.tsx`: rendered shell coverage for non-text file selection, collapsed search controls, preview-tab lifecycle, dirty-tab save-and-close prompts, native Close Tab/Close All/Search menu handling, command-palette file opening, keyboard tab switching, current-file search, new-file/folder creation, file/folder rename/delete, reload-from-disk behavior, stale-save handling, Save All success/failure behavior, active-file-safe agent selection context, and content search result/error behavior.
+- `src/tauri.test.ts`: hosted browser transport coverage for bearer-token file/folder creation, native-only file picking, file rename/delete/writes, stale-save tokens, and loopback API base selection.
 - `scripts/bundle-budget.mjs`: production bundle budget coverage for startup assets and the lazy editor chunk.
 - `scripts/validate-finder-quick-action.mjs`: non-installing QA for the macOS Finder Quick Action service and generated runner.
 - `scripts/smoke-test.mjs`: browser smoke coverage for empty-pane and loaded-editor theme alignment plus core UI flows that are hard to trust from jsdom alone.
@@ -181,6 +181,8 @@ The Search menu owns:
 - `Find in Files`
 
 Menu selections are delivered to the frontend through Tauri events. The frontend reuses the toolbar and keyboard workflow handlers, including dirty-file guards before closing or reloading files, stale-write checks before saving, and collapsed search controls that open only when requested.
+
+The command palette exposes the same daily-driver actions from the keyboard. Native-only actions such as `Open File` use Rust-owned Tauri dialog commands and stay disabled in hosted browser mode.
 
 ## Editor Workflow
 

@@ -305,6 +305,27 @@ async fn pick_workspace_folder(
 }
 
 #[tauri::command]
+async fn pick_open_file(app: tauri::AppHandle) -> Result<Option<OpenFileRequest>, CommandError> {
+    let Some(path) = app
+        .dialog()
+        .file()
+        .set_title("Open File")
+        .blocking_pick_file()
+    else {
+        return Ok(None);
+    };
+
+    let path = path
+        .into_path()
+        .map_err(|error| CommandError::Dialog(error.to_string()))?;
+    let target =
+        launch_target_for_path(path).map_err(|error| CommandError::Dialog(error.to_string()))?;
+    open_file_request_for_launch_target(target)
+        .ok_or_else(|| CommandError::Dialog("selected path is not a file".to_string()))
+        .map(Some)
+}
+
+#[tauri::command]
 async fn set_workspace_root(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
@@ -617,18 +638,10 @@ pub fn run() {
                             launch_target_for_path(path).map_err(|error| error.to_string())
                         }) {
                         Ok(target) => {
-                            if let Some(initial_file) = target.initial_file {
-                                let _ = app.emit(
-                                    "menu://open-file",
-                                    OpenFileRequest {
-                                        workspace_root: target
-                                            .workspace_root
-                                            .to_string_lossy()
-                                            .to_string(),
-                                        path: initial_file,
-                                        single_file: true,
-                                    },
-                                );
+                            if let Some(request) =
+                                open_file_request_for_launch_target(target.clone())
+                            {
+                                let _ = app.emit("menu://open-file", request);
                             } else {
                                 let _ = app.emit(
                                     "menu://open-workspace",
@@ -791,6 +804,7 @@ pub fn run() {
             delete_file,
             search_files,
             pick_workspace_folder,
+            pick_open_file,
             set_workspace_root,
             record_recent_file,
             get_ui_state,
@@ -1262,6 +1276,14 @@ fn launch_target_for_path(path: PathBuf) -> Result<LaunchTarget, std::io::Error>
     Ok(LaunchTarget {
         workspace_root,
         initial_file,
+    })
+}
+
+fn open_file_request_for_launch_target(target: LaunchTarget) -> Option<OpenFileRequest> {
+    target.initial_file.map(|path| OpenFileRequest {
+        workspace_root: target.workspace_root.to_string_lossy().to_string(),
+        path,
+        single_file: true,
     })
 }
 

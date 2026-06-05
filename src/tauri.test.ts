@@ -189,6 +189,35 @@ describe("hosted Tauri API transport", () => {
     });
   });
 
+  it("opens native file picker launch requests only through Tauri", async () => {
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    const { invoke } = await import("@tauri-apps/api/core");
+    vi.mocked(invoke).mockResolvedValue({
+      workspaceRoot: "/workspace",
+      path: "notes.md",
+      singleFile: true,
+    });
+    const { pickOpenFile } = await import("./tauri");
+
+    await expect(pickOpenFile()).resolves.toEqual({
+      workspaceRoot: "/workspace",
+      path: "notes.md",
+      singleFile: true,
+    });
+    expect(invoke).toHaveBeenCalledWith("pick_open_file");
+  });
+
+  it("rejects native file picking from hosted browser mode", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const { pickOpenFile } = await import("./tauri");
+
+    await expect(pickOpenFile()).rejects.toThrow(
+      "File picker is only available in the native Tauri app",
+    );
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("treats malformed hosted Codex MCP status as unavailable", async () => {
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse({}));
     vi.stubGlobal("fetch", fetchMock);
