@@ -144,6 +144,11 @@ interface RevealTarget {
   preserveFocus?: boolean;
 }
 
+interface OpenFailure {
+  path: string;
+  reason: string;
+}
+
 type SidebarSearchMode = "filter" | "content";
 
 function fileEntryForDirectOpen(path: string): FileEntry {
@@ -177,6 +182,38 @@ function positiveWholeNumber(value: string) {
   if (!/^\d+$/.test(trimmed)) return undefined;
   const parsed = Number(trimmed);
   return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : undefined;
+}
+
+function emptyEditorStateForSelection(
+  selectedEntry: FileEntry | undefined,
+  openFailure: OpenFailure | undefined,
+) {
+  if (!selectedEntry || selectedEntry.isDir) {
+    return {
+      title: "No file selected",
+      detail: undefined,
+    };
+  }
+
+  if (isKnownBinaryFile(selectedEntry.name)) {
+    return {
+      title: "Non-text file selected",
+      detail: `${selectedEntry.path} is selected but is not editable as text.`,
+    };
+  }
+
+  if (openFailure?.path === selectedEntry.path) {
+    const isEncodingError = openFailure.reason.includes("not valid UTF-8");
+    return {
+      title: isEncodingError ? "File is not valid text" : "File did not open",
+      detail: openFailure.reason,
+    };
+  }
+
+  return {
+    title: "No file selected",
+    detail: undefined,
+  };
 }
 
 export default function App() {
@@ -230,6 +267,7 @@ export default function App() {
   const [uiStateLoaded, setUiStateLoaded] = useState(false);
   const [workspaceUiRestored, setWorkspaceUiRestored] = useState(false);
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(() => new Set());
+  const [openFailure, setOpenFailure] = useState<OpenFailure>();
   const [error, setError] = useState<string>();
   const [status, setStatus] = useState("Ready");
   const [selection, setSelection] = useState<EditorSelection>();
@@ -324,6 +362,7 @@ export default function App() {
     ? lastSegment(singleFilePath)
     : lastSegment(workspaceRoot);
   const nativePickerAvailable = isNativeTauri();
+  const emptyEditorState = emptyEditorStateForSelection(selectedEntry, openFailure);
 
   useEffect(() => {
     const media = window.matchMedia?.(darkSchemeQuery);
@@ -576,13 +615,18 @@ export default function App() {
       recordAsSingleFile = singleFileMode,
     ) => {
       setSelectedPath(entry.path);
+      setOpenFailure(undefined);
       if (lineNumber) {
         setRevealTarget({ path: entry.path, lineNumber });
       } else {
         setRevealTarget(undefined);
       }
 
-      if (entry.isDir || isKnownBinaryFile(entry.name)) return;
+      if (entry.isDir) return;
+      if (isKnownBinaryFile(entry.name)) {
+        setStatus(`${entry.path} selected`);
+        return;
+      }
 
       setError(undefined);
       setStatus(`Opening ${entry.path}`);
@@ -617,7 +661,9 @@ export default function App() {
         });
         setStatus("Ready");
       } catch (reason) {
-        setError(String(reason));
+        const message = String(reason);
+        setOpenFailure({ path: entry.path, reason: message });
+        setError(message);
         setStatus("Open failed");
       }
     },
@@ -2590,7 +2636,10 @@ export default function App() {
           ) : (
             <div className="empty-state editor-empty-state">
               <FileCog size={30} />
-              <strong>No file selected</strong>
+              <strong>{emptyEditorState.title}</strong>
+              {emptyEditorState.detail ? (
+                <span className="empty-state__detail">{emptyEditorState.detail}</span>
+              ) : null}
             </div>
           )}
         </div>

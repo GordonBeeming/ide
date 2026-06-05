@@ -726,6 +726,14 @@ button {
   color: var(--muted);
 }
 
+.empty-state__detail {
+  max-width: min(420px, calc(100% - 48px));
+  overflow-wrap: anywhere;
+  text-align: center;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
 .editor-empty-state {
   grid-row: 1 / -1;
   background: var(--editor-bg);

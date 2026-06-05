@@ -47,6 +47,8 @@ pub enum WorkspaceError {
     SymlinkUnsupported,
     #[error("file changed on disk since it was opened")]
     FileModifiedExternally,
+    #[error("file is not valid UTF-8 text")]
+    UnsupportedEncoding,
     #[error("search query is too long")]
     SearchQueryTooLong,
     #[error("io error: {0}")]
@@ -205,29 +207,35 @@ pub fn search_workspace(
             continue;
         }
 
-        let contents = String::from_utf8_lossy(&bytes);
-        for (index, line) in contents.lines().enumerate() {
+        let Ok(contents) = std::str::from_utf8(&bytes) else {
+            continue;
+        };
+        'line_matches: for (index, line) in contents.lines().enumerate() {
             if matches.len() >= max_results {
                 break;
             }
 
-            let Some(match_start) = case_insensitive_match_start_byte(line, &normalized_query)
-            else {
-                continue;
-            };
-            let match_start = utf16_offset_for_byte_index(line, match_start);
-            let match_end = match_start + utf16_len(query);
-
             let relative = path
                 .strip_prefix(root)
                 .map_err(|_| WorkspaceError::OutsideWorkspace)?;
-            matches.push(SearchMatch {
-                path: normalize_path(relative),
-                line_number: index + 1,
-                line_text: line.trim_end().to_string(),
-                match_start,
-                match_end,
-            });
+            let relative_path = normalize_path(relative);
+            let line_text = line.trim_end().to_string();
+
+            for (match_start, match_end) in
+                case_insensitive_match_byte_ranges(line, &normalized_query)
+            {
+                if matches.len() >= max_results {
+                    break 'line_matches;
+                }
+
+                matches.push(SearchMatch {
+                    path: relative_path.clone(),
+                    line_number: index + 1,
+                    line_text: line_text.clone(),
+                    match_start: utf16_offset_for_byte_index(line, match_start),
+                    match_end: utf16_offset_for_byte_index(line, match_end),
+                });
+            }
         }
     }
 
@@ -241,7 +249,10 @@ pub fn read_workspace_file(root: &Path, relative: &str) -> Result<String, Worksp
         return Err(WorkspaceError::FileTooLarge);
     }
 
-    fs::read_to_string(path).map_err(WorkspaceError::from)
+    fs::read_to_string(path).map_err(|error| match error.kind() {
+        std::io::ErrorKind::InvalidData => WorkspaceError::UnsupportedEncoding,
+        _ => WorkspaceError::Io(error),
+    })
 }
 
 pub fn write_workspace_file(
@@ -412,29 +423,40 @@ fn utf16_offset_for_byte_index(value: &str, byte_index: usize) -> usize {
         .sum()
 }
 
-fn utf16_len(value: &str) -> usize {
-    value.chars().map(char::len_utf16).sum()
-}
-
-fn case_insensitive_match_start_byte(line: &str, normalized_query: &str) -> Option<usize> {
+fn case_insensitive_match_byte_ranges(line: &str, normalized_query: &str) -> Vec<(usize, usize)> {
     if normalized_query.is_empty() {
-        return Some(0);
+        return vec![(0, 0)];
     }
 
-    for byte_start in line
-        .char_indices()
+    line.char_indices()
         .map(|(index, _)| index)
-        .chain(std::iter::once(line.len()))
-    {
-        if line[byte_start..]
-            .to_lowercase()
-            .starts_with(normalized_query)
-        {
-            return Some(byte_start);
+        .filter_map(|byte_start| {
+            case_insensitive_match_end_byte(line, byte_start, normalized_query)
+                .map(|byte_end| (byte_start, byte_end))
+        })
+        .collect()
+}
+
+fn case_insensitive_match_end_byte(
+    line: &str,
+    byte_start: usize,
+    normalized_query: &str,
+) -> Option<usize> {
+    let mut lowered = String::new();
+
+    for (offset, character) in line[byte_start..].char_indices() {
+        lowered.extend(character.to_lowercase());
+        let byte_end = byte_start + offset + character.len_utf8();
+
+        if lowered.starts_with(normalized_query) {
+            return Some(byte_end);
+        }
+        if !normalized_query.starts_with(&lowered) {
+            return None;
         }
     }
 
-    None
+    lowered.starts_with(normalized_query).then_some(line.len())
 }
 
 fn resolve_workspace_path(root: &Path, relative: &str) -> Result<PathBuf, WorkspaceError> {
@@ -611,6 +633,16 @@ mod tests {
 
         assert_eq!(before, "before");
         assert_eq!(after, "after");
+    }
+
+    #[test]
+    fn read_workspace_file_rejects_invalid_utf8_text() {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join("invalid.txt"), b"valid prefix \xFF").unwrap();
+
+        let result = read_workspace_file(dir.path(), "invalid.txt");
+
+        assert!(matches!(result, Err(WorkspaceError::UnsupportedEncoding)));
     }
 
     #[cfg(unix)]
@@ -1075,6 +1107,50 @@ mod tests {
     }
 
     #[test]
+    fn search_workspace_returns_each_match_on_the_same_line() {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join("README.md"), "Needle then needle again\n").unwrap();
+
+        let results = search_workspace(dir.path(), "needle", 10).unwrap();
+
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].path, "README.md");
+        assert_eq!(results[0].line_number, 1);
+        assert_eq!(results[0].match_start, 0);
+        assert_eq!(results[0].match_end, 6);
+        assert_eq!(results[1].path, "README.md");
+        assert_eq!(results[1].line_number, 1);
+        assert_eq!(results[1].match_start, 12);
+        assert_eq!(results[1].match_end, 18);
+    }
+
+    #[test]
+    fn search_workspace_stops_at_max_results_with_same_line_matches() {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join("README.md"), "needle needle needle\n").unwrap();
+
+        let results = search_workspace(dir.path(), "needle", 2).unwrap();
+
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].match_start, 0);
+        assert_eq!(results[1].match_start, 7);
+    }
+
+    #[test]
+    fn search_workspace_uses_original_unicode_match_width() {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join("README.md"), "İ and i\n").unwrap();
+
+        let results = search_workspace(dir.path(), "i", 10).unwrap();
+
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].match_start, 0);
+        assert_eq!(results[0].match_end, 1);
+        assert_eq!(results[1].match_start, 6);
+        assert_eq!(results[1].match_end, 7);
+    }
+
+    #[test]
     fn workspace_file_entry_returns_single_file_metadata() {
         let dir = tempdir().unwrap();
         let src = dir.path().join("src");
@@ -1099,6 +1175,18 @@ mod tests {
         fs::write(dir.path().join("image.png"), b"needle\0binary").unwrap();
         fs::write(dir.path().join("demo.mp4"), "needle").unwrap();
         fs::write(dir.path().join("font.woff2"), "needle").unwrap();
+        fs::write(dir.path().join("README.md"), "needle").unwrap();
+
+        let results = search_workspace(dir.path(), "needle", 10).unwrap();
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].path, "README.md");
+    }
+
+    #[test]
+    fn search_workspace_skips_invalid_utf8_text_files() {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join("invalid.txt"), b"needle \xFF").unwrap();
         fs::write(dir.path().join("README.md"), "needle").unwrap();
 
         let results = search_workspace(dir.path(), "needle", 10).unwrap();

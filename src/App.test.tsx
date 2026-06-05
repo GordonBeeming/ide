@@ -664,11 +664,33 @@ describe("App shell interactions", () => {
       expect(fileRow).toHaveClass("tree-row--active");
       expect(tauriMocks.readFile).not.toHaveBeenCalled();
       expect(
-        screen.getByText("No file selected").closest(".editor-empty-state"),
+        screen.getByText("Non-text file selected").closest(".editor-empty-state"),
       ).toBeInTheDocument();
+      expect(
+        screen.getByText(`${fileName} is selected but is not editable as text.`),
+      ).toBeInTheDocument();
+      expect(screen.getByText(`${fileName} selected`)).toBeInTheDocument();
       expect(screen.getByText("Open a file from the tree")).toBeInTheDocument();
     },
   );
+
+  it("keeps invalid UTF-8 files selected while explaining why they did not open", async () => {
+    tauriMocks.readFile.mockImplementation(async (path: string) => {
+      if (path === "README.md") throw new Error("file is not valid UTF-8 text");
+      return "";
+    });
+
+    render(<App />);
+
+    const readmeRow = await treeButton("README.md");
+    fireEvent.click(readmeRow);
+
+    expect(readmeRow).toHaveClass("tree-row--active");
+    expect(await screen.findByText("File is not valid text")).toBeInTheDocument();
+    expect(screen.getAllByText("Error: file is not valid UTF-8 text")).toHaveLength(2);
+    expect(screen.getByText("Open failed")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Editor README.md")).not.toBeInTheDocument();
+  });
 
   it("keeps integration details out of the default sidebar layout", async () => {
     render(<App />);
