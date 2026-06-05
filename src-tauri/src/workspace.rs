@@ -309,9 +309,9 @@ pub fn create_workspace_folder(root: &Path, relative: &str) -> Result<(), Worksp
 
 pub fn rename_workspace_file(root: &Path, from: &str, to: &str) -> Result<(), WorkspaceError> {
     let from_path = resolve_existing_workspace_entry_path(root, from)?;
-    let to_path = resolve_workspace_path(root, to)?;
-    if to_path.exists() {
-        return Err(WorkspaceError::FileAlreadyExists);
+    let to_path = resolve_new_workspace_entry_path(root, to)?;
+    if let Some(parent) = to_path.parent() {
+        fs::create_dir_all(parent)?;
     }
 
     fs::rename(from_path, to_path).map_err(WorkspaceError::from)
@@ -829,6 +829,20 @@ mod tests {
     }
 
     #[test]
+    fn rename_workspace_file_creates_missing_destination_parent_directories() {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join("note.txt"), "contents").unwrap();
+
+        rename_workspace_file(dir.path(), "note.txt", "src/features/renamed.txt").unwrap();
+
+        assert!(!dir.path().join("note.txt").exists());
+        assert_eq!(
+            fs::read_to_string(dir.path().join("src/features/renamed.txt")).unwrap(),
+            "contents"
+        );
+    }
+
+    #[test]
     fn rename_workspace_file_rejects_existing_destination() {
         let dir = tempdir().unwrap();
         fs::write(dir.path().join("note.txt"), "contents").unwrap();
@@ -889,6 +903,24 @@ mod tests {
         assert!(fs::symlink_metadata(linked_path).is_ok());
         assert_eq!(fs::read_to_string(secret_path).unwrap(), "secret");
         assert!(!dir.path().join("renamed.txt").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rename_workspace_file_rejects_symlink_parent_destinations() {
+        let dir = tempdir().unwrap();
+        let outside = tempdir().unwrap();
+        fs::write(dir.path().join("note.txt"), "contents").unwrap();
+        symlink(outside.path(), dir.path().join("linked")).unwrap();
+
+        let result = rename_workspace_file(dir.path(), "note.txt", "linked/renamed.txt");
+
+        assert!(matches!(result, Err(WorkspaceError::SymlinkUnsupported)));
+        assert_eq!(
+            fs::read_to_string(dir.path().join("note.txt")).unwrap(),
+            "contents"
+        );
+        assert!(!outside.path().join("renamed.txt").exists());
     }
 
     #[test]
