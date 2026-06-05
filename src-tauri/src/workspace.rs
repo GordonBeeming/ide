@@ -58,9 +58,10 @@ pub fn scan_workspace(
     root: &Path,
     max_entries: usize,
     show_dotfiles: bool,
+    show_generated_internal: bool,
 ) -> Result<Vec<FileEntry>, WorkspaceError> {
     let mut entries = Vec::new();
-    let walker = workspace_walker(root, show_dotfiles).build();
+    let walker = workspace_walker(root, show_dotfiles, show_generated_internal).build();
 
     for result in walker {
         if entries.len() >= max_entries {
@@ -125,7 +126,7 @@ pub fn search_workspace(
 
     let normalized_query = query.to_lowercase();
     let mut matches = Vec::new();
-    let walker = workspace_walker(root, false).build();
+    let walker = workspace_walker(root, false, false).build();
 
     for result in walker {
         if matches.len() >= max_results {
@@ -261,7 +262,11 @@ pub fn delete_workspace_file(root: &Path, relative: &str) -> Result<(), Workspac
     fs::remove_file(path).map_err(WorkspaceError::from)
 }
 
-fn workspace_walker(root: &Path, show_dotfiles: bool) -> WalkBuilder {
+fn workspace_walker(
+    root: &Path,
+    show_dotfiles: bool,
+    show_generated_internal: bool,
+) -> WalkBuilder {
     let mut builder = WalkBuilder::new(root);
     builder
         .hidden(false)
@@ -269,8 +274,10 @@ fn workspace_walker(root: &Path, show_dotfiles: bool) -> WalkBuilder {
         .git_exclude(true)
         .parents(true)
         .filter_entry(move |entry| {
-            !is_generated_name(entry.file_name())
-                && (show_dotfiles || !is_dot_name(entry.file_name()))
+            if is_generated_name(entry.file_name()) {
+                return show_generated_internal;
+            }
+            show_dotfiles || !is_dot_name(entry.file_name())
         });
     builder
 }
@@ -560,7 +567,7 @@ mod tests {
         fs::write(dir.path().join("node_modules/pkg/index.js"), "").unwrap();
         fs::write(dir.path().join("src/main.rs"), "fn main() {}").unwrap();
 
-        let entries = scan_workspace(dir.path(), 100, false).unwrap();
+        let entries = scan_workspace(dir.path(), 100, false, false).unwrap();
         let paths = entries
             .iter()
             .map(|entry| entry.path.as_str())
@@ -585,7 +592,7 @@ mod tests {
         fs::write(dir.path().join(".vscode/settings.json"), "{}").unwrap();
         fs::write(dir.path().join(".gitignore"), "").unwrap();
 
-        let entries = scan_workspace(dir.path(), 100, true).unwrap();
+        let entries = scan_workspace(dir.path(), 100, true, false).unwrap();
         let paths = entries
             .iter()
             .map(|entry| entry.path.as_str())
@@ -603,13 +610,42 @@ mod tests {
     }
 
     #[test]
+    fn scan_workspace_can_include_generated_directories_without_dotfiles() {
+        let dir = tempdir().unwrap();
+        fs::create_dir_all(dir.path().join(".git/objects")).unwrap();
+        fs::create_dir_all(dir.path().join("node_modules/pkg")).unwrap();
+        fs::create_dir_all(dir.path().join("target/debug")).unwrap();
+        fs::create_dir_all(dir.path().join(".github/workflows")).unwrap();
+        fs::write(dir.path().join(".git/config"), "").unwrap();
+        fs::write(dir.path().join("node_modules/pkg/index.js"), "").unwrap();
+        fs::write(dir.path().join("target/debug/app"), "").unwrap();
+        fs::write(dir.path().join(".github/workflows/test.yml"), "").unwrap();
+        fs::write(dir.path().join(".gitignore"), "").unwrap();
+
+        let entries = scan_workspace(dir.path(), 100, false, true).unwrap();
+        let paths = entries
+            .iter()
+            .map(|entry| entry.path.as_str())
+            .collect::<Vec<_>>();
+
+        assert!(paths.contains(&".git"));
+        assert!(paths.contains(&".git/config"));
+        assert!(paths.contains(&"node_modules"));
+        assert!(paths.contains(&"node_modules/pkg/index.js"));
+        assert!(paths.contains(&"target"));
+        assert!(paths.contains(&"target/debug/app"));
+        assert!(!paths.contains(&".github"));
+        assert!(!paths.contains(&".gitignore"));
+    }
+
+    #[test]
     fn scan_workspace_respects_entry_limit() {
         let dir = tempdir().unwrap();
         for index in 0..10 {
             fs::write(dir.path().join(format!("{index}.txt")), "").unwrap();
         }
 
-        let entries = scan_workspace(dir.path(), 3, false).unwrap();
+        let entries = scan_workspace(dir.path(), 3, false, false).unwrap();
 
         assert_eq!(entries.len(), 3);
     }

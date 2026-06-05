@@ -253,8 +253,42 @@ describe("App shell interactions", () => {
 
     eventMocks.listeners.get("menu://toggle-dotfiles")?.({ payload: undefined });
 
-    await waitFor(() => expect(tauriMocks.listFiles).toHaveBeenLastCalledWith(true));
+    await waitFor(() =>
+      expect(tauriMocks.listFiles).toHaveBeenLastCalledWith(true, false),
+    );
     expect(await treeButton(".gitignore")).toBeInTheDocument();
+  });
+
+  it("reloads the tree with generated folders when the native menu toggle is used", async () => {
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    tauriMocks.listFiles
+      .mockResolvedValueOnce(files)
+      .mockResolvedValueOnce([
+        ...files,
+        {
+          path: "node_modules",
+          name: "node_modules",
+          isDir: true,
+          depth: 0,
+          size: 0,
+        },
+      ]);
+
+    render(<App />);
+
+    expect(await treeButton("README.md")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(eventMocks.listeners.has("menu://toggle-generated-internal")).toBe(true),
+    );
+
+    eventMocks.listeners
+      .get("menu://toggle-generated-internal")
+      ?.({ payload: undefined });
+
+    await waitFor(() =>
+      expect(tauriMocks.listFiles).toHaveBeenLastCalledWith(false, true),
+    );
+    expect(await treeButton("node_modules")).toBeInTheDocument();
   });
 
   it("closes the native window immediately when there are no unsaved files", async () => {

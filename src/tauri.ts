@@ -97,10 +97,14 @@ export function recordRecentFile(path: string) {
   return invoke<void>("record_recent_file", { path });
 }
 
-export function listFiles(showDotfiles = false) {
-  const path = showDotfiles ? "/api/files?showDotfiles=true" : "/api/files";
+export function listFiles(showDotfiles = false, showGeneratedInternal = false) {
+  const params = new URLSearchParams();
+  if (showDotfiles) params.set("showDotfiles", "true");
+  if (showGeneratedInternal) params.set("showGeneratedInternal", "true");
+  const query = params.toString();
+  const path = query ? `/api/files?${query}` : "/api/files";
   return callApi<FileEntry[]>("list_files", path, {
-    invokeArgs: { showDotfiles },
+    invokeArgs: { showDotfiles, showGeneratedInternal },
   });
 }
 

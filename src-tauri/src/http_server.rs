@@ -55,6 +55,7 @@ struct FileQuery {
 #[serde(rename_all = "camelCase")]
 struct FilesQuery {
     show_dotfiles: Option<bool>,
+    show_generated_internal: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -241,6 +242,7 @@ async fn files(
         &workspace_root,
         4_000,
         query.show_dotfiles.unwrap_or(false),
+        query.show_generated_internal.unwrap_or(false),
     )?))
 }
 

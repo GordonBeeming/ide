@@ -126,6 +126,7 @@ export default function App() {
   const [pendingAppClose, setPendingAppClose] = useState(false);
   const [integrationsOpen, setIntegrationsOpen] = useState(false);
   const [showDotfiles, setShowDotfiles] = useState(false);
+  const [showGeneratedInternal, setShowGeneratedInternal] = useState(false);
   const [error, setError] = useState<string>();
   const [status, setStatus] = useState("Ready");
   const [selection, setSelection] = useState<EditorSelection>();
@@ -192,7 +193,7 @@ export default function App() {
     try {
       const [root, entries] = await Promise.all([
         getWorkspaceRoot(),
-        listFiles(showDotfiles),
+        listFiles(showDotfiles, showGeneratedInternal),
       ]);
       setWorkspaceRoot(root);
       setLspRootUri(pathToFileUri(root));
@@ -213,7 +214,7 @@ export default function App() {
     } finally {
       setWorkspaceLoading(false);
     }
-  }, [showDotfiles]);
+  }, [showDotfiles, showGeneratedInternal]);
 
   useEffect(() => {
     getInitialFile()
@@ -720,6 +721,17 @@ export default function App() {
         setShowDotfiles((current) => {
           const next = !current;
           setStatus(next ? "Showing dotfiles" : "Hiding dotfiles");
+          return next;
+        });
+      }),
+      listen("menu://toggle-generated-internal", () => {
+        setShowGeneratedInternal((current) => {
+          const next = !current;
+          setStatus(
+            next
+              ? "Showing generated/internal folders"
+              : "Hiding generated/internal folders",
+          );
           return next;
         });
       }),

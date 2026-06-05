@@ -182,9 +182,17 @@ describe("hosted Tauri API transport", () => {
 
     await listFiles();
     await listFiles(true);
+    await listFiles(false, true);
+    await listFiles(true, true);
 
     expect(fetchMock.mock.calls[0][0]).toBe("/api/files");
     expect(fetchMock.mock.calls[1][0]).toBe("/api/files?showDotfiles=true");
+    expect(fetchMock.mock.calls[2][0]).toBe(
+      "/api/files?showGeneratedInternal=true",
+    );
+    expect(fetchMock.mock.calls[3][0]).toBe(
+      "/api/files?showDotfiles=true&showGeneratedInternal=true",
+    );
   });
 
   it("passes dotfile visibility through native file listing commands", async () => {
@@ -193,8 +201,11 @@ describe("hosted Tauri API transport", () => {
     vi.mocked(invoke).mockResolvedValue([]);
     const { listFiles } = await import("./tauri");
 
-    await listFiles(true);
+    await listFiles(true, true);
 
-    expect(invoke).toHaveBeenCalledWith("list_files", { showDotfiles: true });
+    expect(invoke).toHaveBeenCalledWith("list_files", {
+      showDotfiles: true,
+      showGeneratedInternal: true,
+    });
   });
 });

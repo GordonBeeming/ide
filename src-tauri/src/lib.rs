@@ -156,9 +156,16 @@ async fn get_initial_file(state: State<'_, AppState>) -> Result<Option<String>, 
 async fn list_files(
     state: State<'_, AppState>,
     show_dotfiles: bool,
+    show_generated_internal: bool,
 ) -> Result<Vec<workspace::FileEntry>, CommandError> {
     let workspace_root = state.workspace_root.read().await.clone();
-    scan_workspace(&workspace_root, 4_000, show_dotfiles).map_err(CommandError::from)
+    scan_workspace(
+        &workspace_root,
+        4_000,
+        show_dotfiles,
+        show_generated_internal,
+    )
+    .map_err(CommandError::from)
 }
 
 #[tauri::command]
@@ -512,6 +519,11 @@ pub fn run() {
 
             if id == "toggle_dotfiles" {
                 let _ = app.emit("menu://toggle-dotfiles", ());
+                return;
+            }
+
+            if id == "toggle_generated_internal" {
+                let _ = app.emit("menu://toggle-generated-internal", ());
             }
         })
         .plugin(tauri_plugin_dialog::init())
@@ -632,9 +644,19 @@ fn rebuild_app_menu(app: &tauri::AppHandle, state: &AppState) -> Result<(), Comm
     let toggle_dotfiles =
         CheckMenuItem::with_id(app, "toggle_dotfiles", "Show Dotfiles", true, false, None::<&str>)
             .map_err(|error| CommandError::Recent(error.to_string()))?;
+    let toggle_generated_internal = CheckMenuItem::with_id(
+        app,
+        "toggle_generated_internal",
+        "Show Generated/Internal Folders",
+        true,
+        false,
+        None::<&str>,
+    )
+    .map_err(|error| CommandError::Recent(error.to_string()))?;
     let view_menu = SubmenuBuilder::new(app, "View")
         .item(&show_integrations)
         .item(&toggle_dotfiles)
+        .item(&toggle_generated_internal)
         .build()
         .map_err(|error| CommandError::Recent(error.to_string()))?;
     let edit_menu = SubmenuBuilder::new(app, "Edit")
