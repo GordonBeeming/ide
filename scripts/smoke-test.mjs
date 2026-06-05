@@ -159,13 +159,19 @@ async function fulfillApi(route) {
 async function assertTheme(page, expectedScheme) {
   const colors = await page.evaluate(() => {
     const appShell = document.querySelector(".app-shell");
+    const sidebar = document.querySelector(".sidebar");
+    const topbar = document.querySelector(".topbar");
     const editorRegion = document.querySelector(".editor-region");
     const cmScroller = document.querySelector(".cm-scroller");
     if (!appShell) throw new Error("app shell missing");
+    if (!sidebar) throw new Error("sidebar missing");
+    if (!topbar) throw new Error("topbar missing");
     if (!editorRegion) throw new Error("editor region missing");
     return {
       appShell: getComputedStyle(appShell).backgroundColor,
       appShellClasses: [...appShell.classList],
+      sidebar: getComputedStyle(sidebar).backgroundColor,
+      topbar: getComputedStyle(topbar).backgroundColor,
       editorRegion: getComputedStyle(editorRegion).backgroundColor,
       cmScroller: cmScroller ? getComputedStyle(cmScroller).backgroundColor : undefined,
     };
@@ -186,6 +192,40 @@ async function assertTheme(page, expectedScheme) {
       `${expectedScheme} editor mismatch: region=${colors.editorRegion}, scroller=${colors.cmScroller}`,
     );
   }
+
+  const expectedLight = expectedScheme === "light";
+  for (const [name, value] of Object.entries({
+    appShell: colors.appShell,
+    sidebar: colors.sidebar,
+    topbar: colors.topbar,
+    editorRegion: colors.editorRegion,
+    ...(colors.cmScroller ? { cmScroller: colors.cmScroller } : {}),
+  })) {
+    const luminance = relativeLuminance(value);
+    if (expectedLight && luminance < 0.55) {
+      throw new Error(`${expectedScheme} ${name} is too dark: ${value}`);
+    }
+    if (!expectedLight && luminance > 0.3) {
+      throw new Error(`${expectedScheme} ${name} is too light: ${value}`);
+    }
+  }
+}
+
+function relativeLuminance(cssColor) {
+  const oklchMatch = cssColor.match(/^oklch\(([\d.]+)/);
+  if (oklchMatch) {
+    return Number(oklchMatch[1]);
+  }
+
+  const match = cssColor.match(/^rgba?\((\d+),\s*(\d+),\s*(\d+)/);
+  if (!match) throw new Error(`Unsupported computed color format: ${cssColor}`);
+  const [red, green, blue] = match.slice(1, 4).map((value) => {
+    const channel = Number(value) / 255;
+    return channel <= 0.03928
+      ? channel / 12.92
+      : ((channel + 0.055) / 1.055) ** 2.4;
+  });
+  return 0.2126 * red + 0.7152 * green + 0.0722 * blue;
 }
 
 async function runScenario(browser, url, colorScheme) {

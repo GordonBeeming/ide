@@ -5,7 +5,7 @@ import type { Extension } from "@codemirror/state";
 export const darkSchemeQuery = "(prefers-color-scheme: dark)";
 
 export function editorThemeExtensions(prefersDark: boolean): Extension[] {
-  return prefersDark ? [highContrastTheme, oneDark] : [highContrastTheme];
+  return prefersDark ? [oneDark, highContrastTheme] : [highContrastTheme];
 }
 
 export function systemPrefersDark(): boolean {
@@ -16,8 +16,8 @@ const highContrastTheme = EditorView.theme({
   "&": {
     height: "100%",
     fontSize: "13px",
-    backgroundColor: "var(--bg)",
-    color: "var(--text)",
+    backgroundColor: "var(--editor-bg)",
+    color: "var(--editor-text)",
   },
   ".cm-content": {
     minHeight: "100%",
@@ -26,12 +26,12 @@ const highContrastTheme = EditorView.theme({
     fontFamily:
       "'SF Mono', 'Cascadia Code', 'JetBrains Mono', ui-monospace, monospace",
     lineHeight: "1.55",
-    backgroundColor: "var(--bg)",
+    backgroundColor: "var(--editor-bg)",
   },
   ".cm-gutters": {
     minHeight: "100%",
     borderRight: "1px solid var(--border)",
-    backgroundColor: "var(--panel)",
+    backgroundColor: "var(--editor-gutter-bg)",
     color: "var(--muted)",
   },
   ".cm-activeLine": {
