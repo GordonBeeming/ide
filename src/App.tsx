@@ -89,6 +89,11 @@ import {
   updateTabContents,
   type EditorTab,
 } from "./tabs";
+import {
+  editorCommandLabel,
+  type EditorCommandName,
+  type EditorCommandRequest,
+} from "./editorCommands";
 
 const EditorPane = lazy(() => import("./EditorPane"));
 
@@ -133,6 +138,7 @@ export default function App() {
   const [activeSidebarSearch, setActiveSidebarSearch] =
     useState<SidebarSearchMode>();
   const [currentFindOpen, setCurrentFindOpen] = useState(false);
+  const [editorCommand, setEditorCommand] = useState<EditorCommandRequest>();
   const [searchResults, setSearchResults] = useState<SearchMatch[]>([]);
   const [searching, setSearching] = useState(false);
   const [quickOpenVisible, setQuickOpenVisible] = useState(false);
@@ -178,6 +184,7 @@ export default function App() {
   });
   const persistedFilesRestoredRef = useRef(false);
   const uiPersistTimerRef = useRef<number | undefined>(undefined);
+  const editorCommandNonceRef = useRef(0);
 
   const activeFile = openFiles.find((file) => file.path === activePath);
   const pendingCloseFile = openFiles.find((file) => file.path === pendingClosePath);
@@ -897,6 +904,23 @@ export default function App() {
     reloadFileFromDisk(activeFile.path);
   }, [activeFile, reloadFileFromDisk]);
 
+  const requestEditorCommand = useCallback(
+    (name: EditorCommandName) => {
+      if (!activeFile) {
+        setStatus(`${editorCommandLabel(name)} requires an open file`);
+        return;
+      }
+
+      editorCommandNonceRef.current += 1;
+      setEditorCommand({
+        filePath: activeFile.path,
+        name,
+        nonce: editorCommandNonceRef.current,
+      });
+    },
+    [activeFile],
+  );
+
   const cancelReloadActiveFile = useCallback(() => {
     setPendingReloadPath(undefined);
   }, []);
@@ -1098,6 +1122,12 @@ export default function App() {
       listen("menu://close-all", () => {
         requestCloseAllFiles();
       }),
+      listen("menu://go-to-definition", () => {
+        requestEditorCommand("goToDefinition");
+      }),
+      listen("menu://find-references", () => {
+        requestEditorCommand("findReferences");
+      }),
       listen<string>("app://error", (event) => {
         setError(event.payload);
       }),
@@ -1145,6 +1175,7 @@ export default function App() {
     openWorkspacePath,
     requestCloseActiveFile,
     requestCloseAllFiles,
+    requestEditorCommand,
   ]);
 
   const openWorkspace = useCallback(async () => {
@@ -1809,6 +1840,7 @@ export default function App() {
             <Suspense fallback={<div className="empty-state editor-loading-state">Loading editor</div>}>
               <EditorPane
                 contents={activeFile.contents}
+                editorCommand={editorCommand}
                 path={activeFile.path}
                 prefersDark={prefersDark}
                 revealLine={

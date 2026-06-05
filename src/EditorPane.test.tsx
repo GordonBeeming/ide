@@ -72,6 +72,44 @@ describe("EditorPane", () => {
     expect(onError).not.toHaveBeenCalled();
     expect(onNotice).toHaveBeenCalledWith("Language server unavailable for src/App.tsx");
   });
+
+  it("reports unavailable LSP navigation commands without breaking editing", async () => {
+    const onNotice = vi.fn();
+    const onError = vi.fn();
+    const { container, rerender } = render(
+      <EditorPane
+        contents="export function App() {}"
+        onChange={vi.fn()}
+        onError={onError}
+        onNotice={onNotice}
+        onSelection={vi.fn()}
+        path="src/App.tsx"
+      />,
+    );
+
+    await waitFor(() => {
+      expect(editorText(container)).toContain("export function App() {}");
+    });
+
+    rerender(
+      <EditorPane
+        contents="export function App() {}"
+        editorCommand={{ filePath: "src/App.tsx", name: "goToDefinition", nonce: 1 }}
+        onChange={vi.fn()}
+        onError={onError}
+        onNotice={onNotice}
+        onSelection={vi.fn()}
+        path="src/App.tsx"
+      />,
+    );
+
+    await waitFor(() =>
+      expect(onNotice).toHaveBeenCalledWith(
+        "Go to definition is not available for src/App.tsx",
+      ),
+    );
+    expect(onError).not.toHaveBeenCalled();
+  });
 });
 
 function editorText(container: HTMLElement) {

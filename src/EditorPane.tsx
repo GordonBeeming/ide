@@ -15,17 +15,23 @@ import {
   lineNumbers,
   rectangularSelection,
 } from "@codemirror/view";
+import { findReferences, jumpToDefinition } from "@codemirror/lsp-client";
 import { languageForPath } from "./language";
 import { lspExtensionsForPath } from "./lsp";
 import type { EditorSelection } from "./tauri";
 import { clampLineNumber } from "./editorNavigation";
 import { editorThemeExtensions } from "./editorTheme";
+import {
+  editorCommandLabel,
+  type EditorCommandRequest,
+} from "./editorCommands";
 
 interface EditorPaneProps {
   path: string;
   contents: string;
   prefersDark?: boolean;
   revealLine?: number;
+  editorCommand?: EditorCommandRequest;
   onChange: (path: string, contents: string) => void;
   onError: (message: string) => void;
   onNotice?: (message: string) => void;
@@ -35,6 +41,7 @@ interface EditorPaneProps {
 export default function EditorPane({
   path,
   contents,
+  editorCommand,
   prefersDark = false,
   revealLine,
   onChange,
@@ -153,6 +160,27 @@ export default function EditorPane({
       revealLineInView(viewRef.current, revealLine);
     }
   }, [revealLine]);
+
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view || !editorCommand) return;
+    if (editorCommand.filePath !== path) return;
+
+    const label = editorCommandLabel(editorCommand.name);
+    try {
+      const handled =
+        editorCommand.name === "goToDefinition"
+          ? jumpToDefinition(view)
+          : findReferences(view);
+      onNotice?.(
+        handled
+          ? `${label} requested`
+          : `${label} is not available for ${path}`,
+      );
+    } catch (error) {
+      onError(`${label} failed for ${path}: ${String(error)}`);
+    }
+  }, [editorCommand, onError, onNotice, path]);
 
   return <div className="editor-host" ref={host} />;
 }

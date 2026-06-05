@@ -613,6 +613,16 @@ pub fn run() {
                 return;
             }
 
+            if id == "go_to_definition" {
+                let _ = app.emit("menu://go-to-definition", ());
+                return;
+            }
+
+            if id == "find_references" {
+                let _ = app.emit("menu://find-references", ());
+                return;
+            }
+
             if let Some(index) = id.strip_prefix("recent_workspace:") {
                 let Ok(index) = index.parse::<usize>() else {
                     return;
@@ -837,9 +847,23 @@ fn rebuild_app_menu(app: &tauri::AppHandle, state: &AppState) -> Result<(), Comm
         .paste()
         .build()
         .map_err(|error| CommandError::Recent(error.to_string()))?;
+    let go_to_definition = MenuItemBuilder::with_id("go_to_definition", "Go to Definition")
+        .accelerator("F12")
+        .build(app)
+        .map_err(|error| CommandError::Recent(error.to_string()))?;
+    let find_references = MenuItemBuilder::with_id("find_references", "Find References")
+        .accelerator("Shift+F12")
+        .build(app)
+        .map_err(|error| CommandError::Recent(error.to_string()))?;
+    let navigate_menu = SubmenuBuilder::new(app, "Navigate")
+        .item(&go_to_definition)
+        .item(&find_references)
+        .build()
+        .map_err(|error| CommandError::Recent(error.to_string()))?;
     let menu = MenuBuilder::new(app)
         .item(&file_menu)
         .item(&edit_menu)
+        .item(&navigate_menu)
         .item(&view_menu)
         .build()
         .map_err(|error| CommandError::Recent(error.to_string()))?;

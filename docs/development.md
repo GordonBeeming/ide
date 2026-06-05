@@ -67,7 +67,7 @@ The app is intentionally split into a small always-loaded shell and lazy-loaded 
 
 - `src/App.tsx`: workspace shell, tree view, tabs, keyboard navigation, file/folder create, file delete/open/rename/save orchestration.
 - `src/EditorPane.tsx`: CodeMirror editor. Loaded only after a file is opened.
-- `src/EditorPane.test.tsx`: real CodeMirror component coverage for programmatic content sync, including reload-from-disk updates that must not report a user edit.
+- `src/EditorPane.test.tsx`: real CodeMirror component coverage for programmatic content sync, including reload-from-disk updates that must not report a user edit and unavailable LSP navigation command handling.
 - `src/editorTheme.ts`: system-aware CodeMirror theme selection and high-contrast editor styling.
 - `src/appWindow.ts`: guarded Tauri window-close integration.
 - `src/fileTypes.ts`: package-backed coloured file icon resolution with explicit folder fallbacks.
@@ -191,7 +191,7 @@ The planned LSP support is:
 
 The editor should use the official `@codemirror/lsp-client` transport interface. The Rust backend should own language-server process management so the UI can stay browser-safe and avoid spawning processes from the frontend.
 
-`@codemirror/lsp-client` currently provides the editor-side keymaps for definition/declaration/type-definition/implementation jumps, references, rename, formatting, completion, hover, and signature help through `languageServerExtensions()`. LSP workspace roots and document paths must be encoded as file URIs with tests for spaces, Windows-style drive roots, and rejected workspace escapes. Diagnostics are persisted for bridge access and shown in the sidebar diagnostics panel.
+`@codemirror/lsp-client` currently provides the editor-side keymaps for definition/declaration/type-definition/implementation jumps, references, rename, formatting, completion, hover, and signature help through `languageServerExtensions()`. The native Navigate menu also forwards Go to Definition and Find References to the active lazy-loaded editor so those actions are discoverable without loading editor code into the shell. LSP workspace roots and document paths must be encoded as file URIs with tests for spaces, Windows-style drive roots, and rejected workspace escapes. Diagnostics are persisted for bridge access and shown in the sidebar diagnostics panel.
 
 The TypeScript language server is reused for `.ts`, `.tsx`, `.js`, and `.jsx` files, but editor documents must still use path-specific language IDs: `typescript`, `typescriptreact`, `javascript`, and `javascriptreact`. This keeps React and JavaScript files aligned with TypeScript server expectations without launching separate servers.
 

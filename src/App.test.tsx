@@ -1,7 +1,8 @@
 import "@testing-library/jest-dom/vitest";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
+import type { EditorCommandRequest } from "./editorCommands";
 import type { EditorSelection, FileEntry } from "./tauri";
 
 const files: FileEntry[] = [
@@ -137,12 +138,14 @@ vi.mock("./appWindow", () => ({
 vi.mock("./EditorPane", () => ({
   default: ({
     contents,
+    editorCommand,
     onChange,
     onSelection,
     path,
     revealLine,
   }: {
     contents: string;
+    editorCommand?: EditorCommandRequest;
     onChange: (path: string, contents: string) => void;
     onSelection: (selection: EditorSelection | undefined) => void;
     path: string;
@@ -164,6 +167,11 @@ vi.mock("./EditorPane", () => ({
           })
         }
       />
+      {editorCommand ? (
+        <span data-testid="editor-command">
+          {editorCommand.name}:{editorCommand.nonce}
+        </span>
+      ) : null}
       {revealLine ? <span>Reveal line {revealLine}</span> : null}
     </div>
   ),
@@ -735,6 +743,59 @@ describe("App shell interactions", () => {
     expect(tabButton("src/App.tsx")).toBeUndefined();
     expect(screen.getByText("Closed all files")).toBeInTheDocument();
     expect(screen.getByText("Open a file from the tree")).toBeInTheDocument();
+  });
+
+  it("passes native Navigate menu definition requests to the active editor", async () => {
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    render(<App />);
+
+    fireEvent.doubleClick(await treeButton("README.md"));
+    await findTab("README.md");
+    await waitFor(() =>
+      expect(eventMocks.listeners.has("menu://go-to-definition")).toBe(true),
+    );
+
+    act(() => {
+      eventMocks.listeners.get("menu://go-to-definition")?.({ payload: undefined });
+    });
+
+    expect(await screen.findByTestId("editor-command")).toHaveTextContent(
+      "goToDefinition:1",
+    );
+  });
+
+  it("passes native Navigate menu reference requests to the active editor", async () => {
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    render(<App />);
+
+    fireEvent.doubleClick(await treeButton("README.md"));
+    await findTab("README.md");
+    await waitFor(() =>
+      expect(eventMocks.listeners.has("menu://find-references")).toBe(true),
+    );
+
+    act(() => {
+      eventMocks.listeners.get("menu://find-references")?.({ payload: undefined });
+    });
+
+    expect(await screen.findByTestId("editor-command")).toHaveTextContent(
+      "findReferences:1",
+    );
+  });
+
+  it("does not issue native Navigate menu commands without an active file", async () => {
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    render(<App />);
+
+    await waitFor(() =>
+      expect(eventMocks.listeners.has("menu://go-to-definition")).toBe(true),
+    );
+    act(() => {
+      eventMocks.listeners.get("menu://go-to-definition")?.({ payload: undefined });
+    });
+
+    expect(screen.queryByTestId("editor-command")).not.toBeInTheDocument();
+    expect(await screen.findByText("Go to definition requires an open file")).toBeInTheDocument();
   });
 
   it("prompts before closing all dirty tabs from the native File menu", async () => {
