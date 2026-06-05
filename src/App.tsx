@@ -8,6 +8,7 @@ import {
   FileCog,
   FolderOpen,
   FolderPlus,
+  ListFilter,
   PanelLeftClose,
   PanelLeftOpen,
   Pencil,
@@ -96,6 +97,8 @@ interface RevealTarget {
   lineNumber: number;
 }
 
+type SidebarSearchMode = "filter" | "content";
+
 const skipOpenPattern = /\.(png|jpe?g|gif|webp|ico|pdf|zip|gz|dll|exe|dylib)$/i;
 
 function fileEntryForDirectOpen(path: string): FileEntry {
@@ -122,6 +125,9 @@ export default function App() {
   const [filter, setFilter] = useState("");
   const [contentQuery, setContentQuery] = useState("");
   const [currentFileQuery, setCurrentFileQuery] = useState("");
+  const [activeSidebarSearch, setActiveSidebarSearch] =
+    useState<SidebarSearchMode>();
+  const [currentFindOpen, setCurrentFindOpen] = useState(false);
   const [searchResults, setSearchResults] = useState<SearchMatch[]>([]);
   const [searching, setSearching] = useState(false);
   const [quickOpenVisible, setQuickOpenVisible] = useState(false);
@@ -155,6 +161,8 @@ export default function App() {
   const [httpEndpoint, setHttpEndpoint] = useState<string>();
   const [codexMcp, setCodexMcp] = useState<CodexMcpStatus>();
   const [claudeBridge, setClaudeBridge] = useState<ClaudeBridgeStatus>();
+  const sidebarFilterInputRef = useRef<HTMLInputElement | null>(null);
+  const sidebarContentSearchInputRef = useRef<HTMLInputElement | null>(null);
   const currentFindInputRef = useRef<HTMLInputElement | null>(null);
   const initialFileOpenedRef = useRef(false);
   const persistedWorkspaceRef = useRef<WorkspaceUiState>({
@@ -203,6 +211,11 @@ export default function App() {
     () => (codexMcp ? codexMcpConfigSnippet(codexMcp) : ""),
     [codexMcp],
   );
+  const filterExpanded = activeSidebarSearch === "filter" || filter.trim().length > 0;
+  const contentSearchExpanded =
+    activeSidebarSearch === "content" || contentQuery.trim().length > 0;
+  const currentFindExpanded =
+    Boolean(activeFile) && (currentFindOpen || currentFileQuery.trim().length > 0);
   const suggestedNewFilePath = useMemo(
     () => suggestNewFilePath(selectedPath, files),
     [files, selectedPath],
@@ -215,6 +228,26 @@ export default function App() {
     () => openFiles.map((file) => file.path).join("\0"),
     [openFiles],
   );
+
+  useEffect(() => {
+    if (activeSidebarSearch === "filter") {
+      sidebarFilterInputRef.current?.focus();
+    } else if (activeSidebarSearch === "content") {
+      sidebarContentSearchInputRef.current?.focus();
+    }
+  }, [activeSidebarSearch]);
+
+  useEffect(() => {
+    if (currentFindExpanded) {
+      currentFindInputRef.current?.focus();
+    }
+  }, [currentFindExpanded]);
+
+  useEffect(() => {
+    if (!activeFile) {
+      setCurrentFindOpen(false);
+    }
+  }, [activeFile]);
 
   const applyPersistedUiSnapshot = useCallback((snapshot: PersistedUiSnapshot) => {
     persistedWorkspaceRef.current = snapshot.workspace;
@@ -1190,7 +1223,9 @@ export default function App() {
         setQuickOpenVisible(true);
       } else if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "f") {
         event.preventDefault();
-        currentFindInputRef.current?.focus();
+        if (activeFile) {
+          setCurrentFindOpen(true);
+        }
       } else if (event.key === "Escape" && newFileDialogOpen) {
         event.preventDefault();
         closeNewFileDialog();
@@ -1223,6 +1258,7 @@ export default function App() {
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
   }, [
+    activeFile,
     closeQuickOpen,
     closeNewFileDialog,
     closeNewFolderDialog,
@@ -1284,23 +1320,68 @@ export default function App() {
           </div>
         </div>
 
-        <label className="search-box">
-          <Search size={15} />
-          <input
-            value={filter}
-            onChange={(event) => setFilter(event.target.value)}
-            placeholder="Filter files"
-          />
-        </label>
+        <div className="search-tools" aria-label="Workspace search controls">
+          <button
+            className={[
+              "icon-button",
+              filterExpanded ? "icon-button--active" : "",
+            ].join(" ")}
+            title="Filter files"
+            aria-label="Filter files"
+            onClick={() => setActiveSidebarSearch("filter")}
+          >
+            <ListFilter size={16} />
+          </button>
+          <button
+            className={[
+              "icon-button",
+              contentSearchExpanded ? "icon-button--active" : "",
+            ].join(" ")}
+            title="Search contents"
+            aria-label="Search contents"
+            onClick={() => setActiveSidebarSearch("content")}
+          >
+            <Search size={16} />
+          </button>
+        </div>
 
-        <label className="search-box">
-          <Search size={15} />
-          <input
-            value={contentQuery}
-            onChange={(event) => setContentQuery(event.target.value)}
-            placeholder="Search contents"
-          />
-        </label>
+        {filterExpanded ? (
+          <label className="search-box">
+            <ListFilter size={15} />
+            <input
+              ref={sidebarFilterInputRef}
+              value={filter}
+              onBlur={() => {
+                if (!filter.trim()) {
+                  setActiveSidebarSearch((current) =>
+                    current === "filter" ? undefined : current,
+                  );
+                }
+              }}
+              onChange={(event) => setFilter(event.target.value)}
+              placeholder="Filter files"
+            />
+          </label>
+        ) : null}
+
+        {contentSearchExpanded ? (
+          <label className="search-box">
+            <Search size={15} />
+            <input
+              ref={sidebarContentSearchInputRef}
+              value={contentQuery}
+              onBlur={() => {
+                if (!contentQuery.trim()) {
+                  setActiveSidebarSearch((current) =>
+                    current === "content" ? undefined : current,
+                  );
+                }
+              }}
+              onChange={(event) => setContentQuery(event.target.value)}
+              placeholder="Search contents"
+            />
+          </label>
+        ) : null}
 
         {contentQuery.trim().length >= 2 ? (
           <div className="search-results" aria-label="Content search results">
@@ -1447,17 +1528,35 @@ export default function App() {
             )}
           </div>
           <div className="topbar__actions">
-            <label className="topbar-find">
-              <Search size={14} />
-              <input
-                ref={currentFindInputRef}
-                value={currentFileQuery}
-                onChange={(event) => setCurrentFileQuery(event.target.value)}
-                placeholder="Find in file"
+            {currentFindExpanded ? (
+              <label className="topbar-find">
+                <Search size={14} />
+                <input
+                  ref={currentFindInputRef}
+                  value={currentFileQuery}
+                  onBlur={() => {
+                    if (!currentFileQuery.trim()) {
+                      setCurrentFindOpen(false);
+                    }
+                  }}
+                  onChange={(event) => setCurrentFileQuery(event.target.value)}
+                  placeholder="Find in file"
+                />
+                <span>
+                  {activeFile && currentFileQuery.trim() ? currentFindResults.length : ""}
+                </span>
+              </label>
+            ) : (
+              <button
+                className="icon-button"
+                title="Find in file"
+                aria-label="Find in file"
                 disabled={!activeFile}
-              />
-              <span>{activeFile && currentFileQuery.trim() ? currentFindResults.length : ""}</span>
-            </label>
+                onClick={() => setCurrentFindOpen(true)}
+              >
+                <Search size={17} />
+              </button>
+            )}
             <button className="icon-button" title="Save" onClick={saveActive}>
               <Save size={17} />
             </button>

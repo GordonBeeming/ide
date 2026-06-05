@@ -434,6 +434,26 @@ describe("App shell interactions", () => {
     expect(screen.queryByText("Language Servers")).not.toBeInTheDocument();
   });
 
+  it("keeps search fields collapsed until the search controls are used", async () => {
+    render(<App />);
+
+    expect(await treeButton("README.md")).toBeInTheDocument();
+    expect(screen.queryByPlaceholderText("Filter files")).not.toBeInTheDocument();
+    expect(screen.queryByPlaceholderText("Search contents")).not.toBeInTheDocument();
+    expect(screen.queryByPlaceholderText("Find in file")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByTitle("Filter files"));
+    expect(await screen.findByPlaceholderText("Filter files")).toHaveFocus();
+
+    fireEvent.click(screen.getByTitle("Search contents"));
+    expect(await screen.findByPlaceholderText("Search contents")).toHaveFocus();
+
+    fireEvent.click(await treeButton("README.md"));
+    await findTab("README.md");
+    fireEvent.click(screen.getByTitle("Find in file"));
+    expect(await screen.findByPlaceholderText("Find in file")).toHaveFocus();
+  });
+
   it("keeps preview tabs temporary until the file is edited", async () => {
     render(<App />);
 
@@ -675,7 +695,7 @@ describe("App shell interactions", () => {
     ]);
     render(<App />);
 
-    fireEvent.change(screen.getByPlaceholderText("Search contents"), {
+    fireEvent.change(await openContentSearch(), {
       target: { value: "needle" },
     });
 
@@ -694,7 +714,7 @@ describe("App shell interactions", () => {
     tauriMocks.searchFiles.mockRejectedValueOnce(new Error("index unavailable"));
     render(<App />);
 
-    fireEvent.change(screen.getByPlaceholderText("Search contents"), {
+    fireEvent.change(await openContentSearch(), {
       target: { value: "needle" },
     });
 
@@ -709,7 +729,7 @@ describe("App shell interactions", () => {
     fireEvent.click(await treeButton("src"));
     fireEvent.click(await treeButton("App.tsx"));
     await findTab("src/App.tsx");
-    fireEvent.change(screen.getByPlaceholderText("Find in file"), {
+    fireEvent.change(await openCurrentFileFind(), {
       target: { value: "function" },
     });
 
@@ -730,7 +750,7 @@ describe("App shell interactions", () => {
     fireEvent.change(await screen.findByLabelText("Editor README.md"), {
       target: { value: "draft line\nunsaved needle" },
     });
-    fireEvent.change(screen.getByPlaceholderText("Find in file"), {
+    fireEvent.change(await openCurrentFileFind(), {
       target: { value: "needle" },
     });
 
@@ -942,6 +962,16 @@ function tabButton(path: string) {
   return [...document.querySelectorAll<HTMLButtonElement>(".tab")].find((button) =>
     button.textContent?.includes(path),
   );
+}
+
+async function openContentSearch() {
+  fireEvent.click(screen.getByTitle("Search contents"));
+  return screen.findByPlaceholderText("Search contents");
+}
+
+async function openCurrentFileFind() {
+  fireEvent.click(screen.getByTitle("Find in file"));
+  return screen.findByPlaceholderText("Find in file");
 }
 
 function latestAgentContext() {

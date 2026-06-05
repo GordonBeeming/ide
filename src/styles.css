@@ -115,6 +115,17 @@ button {
   border-color: var(--accent);
 }
 
+.icon-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+
+.icon-button--active {
+  border-color: var(--accent);
+  background: var(--accent-weak);
+  color: var(--text);
+}
+
 .tiny-icon-button {
   display: inline-grid;
   width: 24px;
@@ -135,12 +146,18 @@ button {
   outline: 0;
 }
 
+.search-tools {
+  display: flex;
+  gap: 6px;
+  padding: 10px 10px 0;
+}
+
 .search-box {
   display: grid;
   grid-template-columns: 18px 1fr;
   align-items: center;
   gap: 6px;
-  margin: 10px;
+  margin: 8px 10px 0;
   padding: 7px 9px;
   border: 1px solid var(--border);
   border-radius: 6px;
