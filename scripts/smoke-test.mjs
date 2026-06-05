@@ -238,6 +238,71 @@ async function assertTheme(page, expectedScheme) {
     );
   }
 
+  const staleDocumentThemeColors = await page.evaluate((scheme) => {
+    const appShell = document.querySelector(".app-shell");
+    const sidebar = document.querySelector(".sidebar");
+    const topbar = document.querySelector(".topbar");
+    const workbench = document.querySelector(".workbench");
+    const editorRegion = document.querySelector(".editor-region");
+    const cmScroller = document.querySelector(".cm-scroller");
+    if (!appShell) throw new Error("app shell missing");
+    if (!sidebar) throw new Error("sidebar missing");
+    if (!topbar) throw new Error("topbar missing");
+    if (!workbench) throw new Error("workbench missing");
+    if (!editorRegion) throw new Error("editor region missing");
+
+    const originalDocumentTheme = document.documentElement.dataset.ideTheme;
+    const originalColorScheme = document.documentElement.style.colorScheme;
+    const oppositeScheme = scheme === "light" ? "dark" : "light";
+    document.documentElement.dataset.ideTheme = oppositeScheme;
+    document.documentElement.style.colorScheme = oppositeScheme;
+
+    const result = {
+      appShell: getComputedStyle(appShell).backgroundColor,
+      sidebar: getComputedStyle(sidebar).backgroundColor,
+      topbar: getComputedStyle(topbar).backgroundColor,
+      workbench: getComputedStyle(workbench).backgroundColor,
+      editorRegion: getComputedStyle(editorRegion).backgroundColor,
+      cmScroller: cmScroller ? getComputedStyle(cmScroller).backgroundColor : undefined,
+    };
+
+    if (originalDocumentTheme === undefined) {
+      delete document.documentElement.dataset.ideTheme;
+    } else {
+      document.documentElement.dataset.ideTheme = originalDocumentTheme;
+    }
+    document.documentElement.style.colorScheme = originalColorScheme;
+    return result;
+  }, expectedScheme);
+
+  if (staleDocumentThemeColors.workbench !== staleDocumentThemeColors.editorRegion) {
+    throw new Error(
+      `${expectedScheme} stale document theme can desync workbench and editor: workbench=${staleDocumentThemeColors.workbench}, editor=${staleDocumentThemeColors.editorRegion}`,
+    );
+  }
+  if (
+    staleDocumentThemeColors.cmScroller &&
+    staleDocumentThemeColors.cmScroller !== staleDocumentThemeColors.editorRegion
+  ) {
+    throw new Error(
+      `${expectedScheme} stale document theme can desync editor scroller: region=${staleDocumentThemeColors.editorRegion}, scroller=${staleDocumentThemeColors.cmScroller}`,
+    );
+  }
+  for (const [name, value] of Object.entries(staleDocumentThemeColors)) {
+    if (!value) continue;
+    const luminance = relativeLuminance(value);
+    if (expectedScheme === "light" && luminance < 0.55) {
+      throw new Error(
+        `${expectedScheme} ${name} followed stale dark document theme: ${value}`,
+      );
+    }
+    if (expectedScheme === "dark" && luminance > 0.3) {
+      throw new Error(
+        `${expectedScheme} ${name} followed stale light document theme: ${value}`,
+      );
+    }
+  }
+
   const forcedLocalThemeMarkers = await page.evaluate((scheme) => {
     const appShell = document.querySelector(".app-shell");
     const editorRegion = document.querySelector(".editor-region");

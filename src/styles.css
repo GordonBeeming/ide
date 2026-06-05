@@ -19,7 +19,8 @@
   color: var(--text);
 }
 
-:root[data-ide-theme="light"] {
+:root[data-ide-theme="light"],
+.app-shell[data-ide-theme="light"] {
   color-scheme: light;
   --bg: oklch(96% 0.006 230);
   --panel: oklch(93% 0.008 230);
@@ -35,7 +36,8 @@
   --shadow: 0 12px 36px oklch(20% 0.02 230 / 16%);
 }
 
-:root[data-ide-theme="dark"] {
+:root[data-ide-theme="dark"],
+.app-shell[data-ide-theme="dark"] {
   color-scheme: dark;
   --bg: oklch(15% 0.012 230);
   --panel: oklch(19% 0.014 230);
