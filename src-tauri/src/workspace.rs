@@ -54,9 +54,13 @@ const MAX_OPEN_BYTES: u64 = 5 * 1024 * 1024;
 const MAX_SEARCH_QUERY_CHARS: usize = 128;
 const MAX_SEARCH_FILE_BYTES: u64 = 1_000_000;
 
-pub fn scan_workspace(root: &Path, max_entries: usize) -> Result<Vec<FileEntry>, WorkspaceError> {
+pub fn scan_workspace(
+    root: &Path,
+    max_entries: usize,
+    show_dotfiles: bool,
+) -> Result<Vec<FileEntry>, WorkspaceError> {
     let mut entries = Vec::new();
-    let walker = workspace_walker(root).build();
+    let walker = workspace_walker(root, show_dotfiles).build();
 
     for result in walker {
         if entries.len() >= max_entries {
@@ -121,7 +125,7 @@ pub fn search_workspace(
 
     let normalized_query = query.to_lowercase();
     let mut matches = Vec::new();
-    let walker = workspace_walker(root).build();
+    let walker = workspace_walker(root, false).build();
 
     for result in walker {
         if matches.len() >= max_results {
@@ -257,15 +261,22 @@ pub fn delete_workspace_file(root: &Path, relative: &str) -> Result<(), Workspac
     fs::remove_file(path).map_err(WorkspaceError::from)
 }
 
-fn workspace_walker(root: &Path) -> WalkBuilder {
+fn workspace_walker(root: &Path, show_dotfiles: bool) -> WalkBuilder {
     let mut builder = WalkBuilder::new(root);
     builder
         .hidden(false)
         .git_ignore(true)
         .git_exclude(true)
         .parents(true)
-        .filter_entry(|entry| !is_generated_name(entry.file_name()));
+        .filter_entry(move |entry| {
+            !is_generated_name(entry.file_name())
+                && (show_dotfiles || !is_dot_name(entry.file_name()))
+        });
     builder
+}
+
+fn is_dot_name(name: &OsStr) -> bool {
+    name.to_string_lossy().starts_with('.')
 }
 
 fn is_generated_name(name: &OsStr) -> bool {
@@ -540,13 +551,16 @@ mod tests {
     fn scan_workspace_skips_generated_and_git_directories() {
         let dir = tempdir().unwrap();
         fs::create_dir_all(dir.path().join(".git")).unwrap();
+        fs::create_dir_all(dir.path().join(".github/workflows")).unwrap();
         fs::create_dir_all(dir.path().join("node_modules/pkg")).unwrap();
         fs::create_dir_all(dir.path().join("src")).unwrap();
         fs::write(dir.path().join(".git/config"), "").unwrap();
+        fs::write(dir.path().join(".github/workflows/test.yml"), "").unwrap();
+        fs::write(dir.path().join(".gitignore"), "").unwrap();
         fs::write(dir.path().join("node_modules/pkg/index.js"), "").unwrap();
         fs::write(dir.path().join("src/main.rs"), "fn main() {}").unwrap();
 
-        let entries = scan_workspace(dir.path(), 100).unwrap();
+        let entries = scan_workspace(dir.path(), 100, false).unwrap();
         let paths = entries
             .iter()
             .map(|entry| entry.path.as_str())
@@ -555,7 +569,37 @@ mod tests {
         assert!(paths.contains(&"src"));
         assert!(paths.contains(&"src/main.rs"));
         assert!(!paths.iter().any(|path| path.starts_with(".git")));
+        assert!(!paths.iter().any(|path| path.starts_with(".github")));
+        assert!(!paths.iter().any(|path| path == &".gitignore"));
         assert!(!paths.iter().any(|path| path.starts_with("node_modules")));
+    }
+
+    #[test]
+    fn scan_workspace_can_include_dotfiles_without_generated_directories() {
+        let dir = tempdir().unwrap();
+        fs::create_dir_all(dir.path().join(".git")).unwrap();
+        fs::create_dir_all(dir.path().join(".github/workflows")).unwrap();
+        fs::create_dir_all(dir.path().join(".vscode")).unwrap();
+        fs::write(dir.path().join(".git/config"), "").unwrap();
+        fs::write(dir.path().join(".github/workflows/test.yml"), "").unwrap();
+        fs::write(dir.path().join(".vscode/settings.json"), "{}").unwrap();
+        fs::write(dir.path().join(".gitignore"), "").unwrap();
+
+        let entries = scan_workspace(dir.path(), 100, true).unwrap();
+        let paths = entries
+            .iter()
+            .map(|entry| entry.path.as_str())
+            .collect::<Vec<_>>();
+
+        assert!(paths.contains(&".github"));
+        assert!(paths.contains(&".github/workflows"));
+        assert!(paths.contains(&".github/workflows/test.yml"));
+        assert!(paths.contains(&".vscode"));
+        assert!(paths.contains(&".vscode/settings.json"));
+        assert!(paths.contains(&".gitignore"));
+        assert!(!paths
+            .iter()
+            .any(|path| *path == ".git" || path.starts_with(".git/")));
     }
 
     #[test]
@@ -565,7 +609,7 @@ mod tests {
             fs::write(dir.path().join(format!("{index}.txt")), "").unwrap();
         }
 
-        let entries = scan_workspace(dir.path(), 3).unwrap();
+        let entries = scan_workspace(dir.path(), 3, false).unwrap();
 
         assert_eq!(entries.len(), 3);
     }

@@ -10,9 +10,10 @@ Implemented:
 
 - Tauri 2 desktop shell with a Rust backend.
 - React frontend.
-- File tree with file and folder icons.
+- File tree with package-backed coloured file icons and folder fallbacks.
 - Native folder picker for switching workspaces.
 - Native File menu with Open Folder, Recent Folders, and Recent Files.
+- Native View menu toggle for showing dotfiles and dot folders in the tree.
 - File/folder launch targets through the local runner and macOS Finder Quick Action.
 - Explicit workspace loading, empty, and load-failure retry states.
 - Collapsible sidebar for focused editing.

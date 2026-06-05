@@ -97,8 +97,11 @@ export function recordRecentFile(path: string) {
   return invoke<void>("record_recent_file", { path });
 }
 
-export function listFiles() {
-  return callApi<FileEntry[]>("list_files", "/api/files");
+export function listFiles(showDotfiles = false) {
+  const path = showDotfiles ? "/api/files?showDotfiles=true" : "/api/files";
+  return callApi<FileEntry[]>("list_files", path, {
+    invokeArgs: { showDotfiles },
+  });
 }
 
 export function readFile(path: string) {

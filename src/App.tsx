@@ -125,6 +125,7 @@ export default function App() {
   const [pendingClosePath, setPendingClosePath] = useState<string>();
   const [pendingAppClose, setPendingAppClose] = useState(false);
   const [integrationsOpen, setIntegrationsOpen] = useState(false);
+  const [showDotfiles, setShowDotfiles] = useState(false);
   const [error, setError] = useState<string>();
   const [status, setStatus] = useState("Ready");
   const [selection, setSelection] = useState<EditorSelection>();
@@ -189,7 +190,10 @@ export default function App() {
   const refreshFiles = useCallback(async () => {
     setWorkspaceLoading(true);
     try {
-      const [root, entries] = await Promise.all([getWorkspaceRoot(), listFiles()]);
+      const [root, entries] = await Promise.all([
+        getWorkspaceRoot(),
+        listFiles(showDotfiles),
+      ]);
       setWorkspaceRoot(root);
       setLspRootUri(pathToFileUri(root));
       setFiles(entries);
@@ -209,7 +213,7 @@ export default function App() {
     } finally {
       setWorkspaceLoading(false);
     }
-  }, []);
+  }, [showDotfiles]);
 
   useEffect(() => {
     getInitialFile()
@@ -712,6 +716,13 @@ export default function App() {
       listen("menu://show-integrations", () => {
         setIntegrationsOpen(true);
       }),
+      listen("menu://toggle-dotfiles", () => {
+        setShowDotfiles((current) => {
+          const next = !current;
+          setStatus(next ? "Showing dotfiles" : "Hiding dotfiles");
+          return next;
+        });
+      }),
     ])
       .then((callbacks) => {
         if (disposed) {
@@ -913,9 +924,13 @@ export default function App() {
     let unlisten: (() => void) | undefined;
 
     onNativeWindowCloseRequested((event) => {
-      if (!hasDirtyFiles) return;
       event.preventDefault();
-      setPendingAppClose(true);
+      if (hasDirtyFiles) {
+        setPendingAppClose(true);
+        return;
+      }
+
+      closeApplication();
     })
       .then((listener) => {
         if (disposed) {
@@ -934,7 +949,7 @@ export default function App() {
       disposed = true;
       unlisten?.();
     };
-  }, [dirtyFiles.length]);
+  }, [closeApplication, dirtyFiles.length]);
 
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {

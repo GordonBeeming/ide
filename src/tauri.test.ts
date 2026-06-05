@@ -174,4 +174,27 @@ describe("hosted Tauri API transport", () => {
 
     expect(fetchMock).not.toHaveBeenCalled();
   });
+
+  it("passes dotfile visibility through hosted file listing requests", async () => {
+    const fetchMock = vi.fn().mockImplementation(async () => jsonResponse([]));
+    vi.stubGlobal("fetch", fetchMock);
+    const { listFiles } = await import("./tauri");
+
+    await listFiles();
+    await listFiles(true);
+
+    expect(fetchMock.mock.calls[0][0]).toBe("/api/files");
+    expect(fetchMock.mock.calls[1][0]).toBe("/api/files?showDotfiles=true");
+  });
+
+  it("passes dotfile visibility through native file listing commands", async () => {
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    const { invoke } = await import("@tauri-apps/api/core");
+    vi.mocked(invoke).mockResolvedValue([]);
+    const { listFiles } = await import("./tauri");
+
+    await listFiles(true);
+
+    expect(invoke).toHaveBeenCalledWith("list_files", { showDotfiles: true });
+  });
 });

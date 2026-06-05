@@ -59,6 +59,7 @@ The app is intentionally split into a small always-loaded shell and lazy-loaded 
 - `src/EditorPane.test.tsx`: real CodeMirror component coverage for programmatic content sync, including reload-from-disk updates that must not report a user edit.
 - `src/editorTheme.ts`: system-aware CodeMirror theme selection and high-contrast editor styling.
 - `src/appWindow.ts`: guarded Tauri window-close integration.
+- `src/fileTypes.ts`: package-backed coloured file icon resolution with explicit folder fallbacks.
 - `src/quickOpen.ts`: tested quick-open file matching, ranking, and keyboard selection rules.
 - `src/editorNavigation.ts`: tested line clamping for search-result reveal behavior.
 - `src/currentFileSearch.ts`: tested current-file search over loaded and unsaved editor contents.
@@ -79,7 +80,8 @@ Current constraints:
 
 - No Monaco editor.
 - No filesystem plugin for broad client-side filesystem access.
-- Ignore `node_modules`, `target`, `dist`, `.git`, and common generated folders during tree scans.
+- Hide dotfiles and dot folders by default, with a native View menu toggle to reveal them.
+- Always ignore `node_modules`, `target`, `dist`, `.git`, and common generated folders during tree scans.
 - Workspace content search runs in Rust, skips generated folders and binary-looking files, caps searched file size, and limits returned matches.
 - Keep syntax language packages dynamically imported by extension.
 - Keep the editor theme tied to `prefers-color-scheme`; the app shell and CodeMirror surface should not drift into different light/dark modes.

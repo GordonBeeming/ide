@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
-use tauri::menu::{MenuBuilder, MenuItemBuilder, SubmenuBuilder};
+use tauri::menu::{CheckMenuItem, MenuBuilder, MenuItemBuilder, SubmenuBuilder};
 use tauri::{Emitter, Manager, State};
 use tauri_plugin_dialog::DialogExt;
 use tokio::sync::RwLock;
@@ -153,9 +153,12 @@ async fn get_initial_file(state: State<'_, AppState>) -> Result<Option<String>, 
 }
 
 #[tauri::command]
-async fn list_files(state: State<'_, AppState>) -> Result<Vec<workspace::FileEntry>, CommandError> {
+async fn list_files(
+    state: State<'_, AppState>,
+    show_dotfiles: bool,
+) -> Result<Vec<workspace::FileEntry>, CommandError> {
     let workspace_root = state.workspace_root.read().await.clone();
-    scan_workspace(&workspace_root, 4_000).map_err(CommandError::from)
+    scan_workspace(&workspace_root, 4_000, show_dotfiles).map_err(CommandError::from)
 }
 
 #[tauri::command]
@@ -504,6 +507,11 @@ pub fn run() {
 
             if id == "show_integrations" {
                 let _ = app.emit("menu://show-integrations", ());
+                return;
+            }
+
+            if id == "toggle_dotfiles" {
+                let _ = app.emit("menu://toggle-dotfiles", ());
             }
         })
         .plugin(tauri_plugin_dialog::init())
@@ -621,8 +629,12 @@ fn rebuild_app_menu(app: &tauri::AppHandle, state: &AppState) -> Result<(), Comm
     let show_integrations = MenuItemBuilder::with_id("show_integrations", "Integrations...")
         .build(app)
         .map_err(|error| CommandError::Recent(error.to_string()))?;
+    let toggle_dotfiles =
+        CheckMenuItem::with_id(app, "toggle_dotfiles", "Show Dotfiles", true, false, None::<&str>)
+            .map_err(|error| CommandError::Recent(error.to_string()))?;
     let view_menu = SubmenuBuilder::new(app, "View")
         .item(&show_integrations)
+        .item(&toggle_dotfiles)
         .build()
         .map_err(|error| CommandError::Recent(error.to_string()))?;
     let edit_menu = SubmenuBuilder::new(app, "Edit")

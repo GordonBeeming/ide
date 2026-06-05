@@ -1,6 +1,6 @@
 import "@testing-library/jest-dom/vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
 import type { EditorSelection, FileEntry } from "./tauri";
 
@@ -40,6 +40,7 @@ const files: FileEntry[] = [
 
 const tauriMocks = vi.hoisted(() => ({
   getWorkspaceRoot: vi.fn(),
+  getInitialFile: vi.fn(),
   listFiles: vi.fn(),
   readFile: vi.fn(),
   writeFile: vi.fn(),
@@ -56,11 +57,29 @@ const tauriMocks = vi.hoisted(() => ({
   getCodexMcpStatus: vi.fn(),
 }));
 
+const appWindowMocks = vi.hoisted(() => ({
+  closeHandler: undefined as ((event: { preventDefault: () => void }) => void) | undefined,
+  destroyNativeWindow: vi.fn(),
+  onNativeWindowCloseRequested: vi.fn(),
+  unlisten: vi.fn(),
+}));
+
+const eventMocks = vi.hoisted(() => ({
+  listeners: new Map<string, (event: { payload: unknown }) => void>(),
+  listen: vi.fn(),
+  unlisten: vi.fn(),
+}));
+
+vi.mock("@tauri-apps/api/event", () => ({
+  listen: eventMocks.listen,
+}));
+
 vi.mock("./tauri", async () => {
   const actual = await vi.importActual<typeof import("./tauri")>("./tauri");
   return {
     ...actual,
     getWorkspaceRoot: tauriMocks.getWorkspaceRoot,
+    getInitialFile: tauriMocks.getInitialFile,
     listFiles: tauriMocks.listFiles,
     readFile: tauriMocks.readFile,
     writeFile: tauriMocks.writeFile,
@@ -86,8 +105,8 @@ vi.mock("./lsp", () => ({
 }));
 
 vi.mock("./appWindow", () => ({
-  destroyNativeWindow: vi.fn(async () => false),
-  onNativeWindowCloseRequested: vi.fn(async () => undefined),
+  destroyNativeWindow: appWindowMocks.destroyNativeWindow,
+  onNativeWindowCloseRequested: appWindowMocks.onNativeWindowCloseRequested,
 }));
 
 vi.mock("./EditorPane", () => ({
@@ -130,7 +149,24 @@ describe("App shell interactions", () => {
     for (const mock of Object.values(tauriMocks)) {
       mock.mockReset();
     }
+    appWindowMocks.closeHandler = undefined;
+    appWindowMocks.destroyNativeWindow.mockReset();
+    appWindowMocks.destroyNativeWindow.mockResolvedValue(false);
+    appWindowMocks.onNativeWindowCloseRequested.mockReset();
+    appWindowMocks.onNativeWindowCloseRequested.mockImplementation(async (handler) => {
+      appWindowMocks.closeHandler = handler;
+      return appWindowMocks.unlisten;
+    });
+    appWindowMocks.unlisten.mockReset();
+    eventMocks.listeners.clear();
+    eventMocks.listen.mockReset();
+    eventMocks.listen.mockImplementation(async (eventName, handler) => {
+      eventMocks.listeners.set(eventName, handler);
+      return eventMocks.unlisten;
+    });
+    eventMocks.unlisten.mockReset();
     tauriMocks.getWorkspaceRoot.mockResolvedValue("/workspace");
+    tauriMocks.getInitialFile.mockResolvedValue(undefined);
     tauriMocks.listFiles.mockResolvedValue(files);
     tauriMocks.readFile.mockImplementation(async (path: string) => {
       if (path === "README.md") return "readme";
@@ -148,6 +184,10 @@ describe("App shell interactions", () => {
     tauriMocks.getHttpEndpoint.mockResolvedValue("http://127.0.0.1:1420");
     tauriMocks.getClaudeBridgeStatus.mockResolvedValue(undefined);
     tauriMocks.getCodexMcpStatus.mockResolvedValue(undefined);
+  });
+
+  afterEach(() => {
+    delete (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
   });
 
   it("shows a loading workspace state before the initial scan completes", () => {
@@ -186,6 +226,68 @@ describe("App shell interactions", () => {
 
     expect(await screen.findByText("Empty workspace")).toBeInTheDocument();
     expect(screen.queryByText("Workspace load failed")).not.toBeInTheDocument();
+  });
+
+  it("reloads the tree with dotfiles when the native menu toggle is used", async () => {
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    tauriMocks.listFiles
+      .mockResolvedValueOnce(files)
+      .mockResolvedValueOnce([
+        ...files,
+        {
+          path: ".gitignore",
+          name: ".gitignore",
+          isDir: false,
+          depth: 0,
+          size: 8,
+          modifiedMs: 303,
+        },
+      ]);
+
+    render(<App />);
+
+    expect(await treeButton("README.md")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(eventMocks.listeners.has("menu://toggle-dotfiles")).toBe(true),
+    );
+
+    eventMocks.listeners.get("menu://toggle-dotfiles")?.({ payload: undefined });
+
+    await waitFor(() => expect(tauriMocks.listFiles).toHaveBeenLastCalledWith(true));
+    expect(await treeButton(".gitignore")).toBeInTheDocument();
+  });
+
+  it("closes the native window immediately when there are no unsaved files", async () => {
+    render(<App />);
+
+    expect(await treeButton("README.md")).toBeInTheDocument();
+    await waitFor(() => expect(appWindowMocks.closeHandler).toBeDefined());
+
+    const preventDefault = vi.fn();
+    appWindowMocks.closeHandler?.({ preventDefault });
+
+    expect(preventDefault).toHaveBeenCalledTimes(1);
+    await waitFor(() =>
+      expect(appWindowMocks.destroyNativeWindow).toHaveBeenCalledTimes(1),
+    );
+    expect(screen.queryByText("Close IDE?")).not.toBeInTheDocument();
+  });
+
+  it("prompts before native window close when there are unsaved files", async () => {
+    render(<App />);
+
+    fireEvent.click(await treeButton("README.md"));
+    fireEvent.change(await screen.findByLabelText("Editor README.md"), {
+      target: { value: "changed readme" },
+    });
+    await waitFor(() => expect(appWindowMocks.closeHandler).toBeDefined());
+
+    const preventDefault = vi.fn();
+    appWindowMocks.closeHandler?.({ preventDefault });
+
+    expect(preventDefault).toHaveBeenCalledTimes(1);
+    expect(await screen.findByText("Close IDE?")).toBeInTheDocument();
+    expect(appWindowMocks.destroyNativeWindow).not.toHaveBeenCalled();
   });
 
   it("selects non-text files in the tree without opening an editor tab", async () => {

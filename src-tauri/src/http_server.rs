@@ -53,6 +53,12 @@ struct FileQuery {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct FilesQuery {
+    show_dotfiles: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct WriteFileRequest {
     path: String,
     contents: String,
@@ -226,9 +232,16 @@ async fn workspace_root(State(state): State<HttpServerState>) -> Json<String> {
     )
 }
 
-async fn files(State(state): State<HttpServerState>) -> Result<Json<Vec<FileEntry>>, ApiError> {
+async fn files(
+    State(state): State<HttpServerState>,
+    Query(query): Query<FilesQuery>,
+) -> Result<Json<Vec<FileEntry>>, ApiError> {
     let workspace_root = state.workspace_root.read().await.clone();
-    Ok(Json(scan_workspace(&workspace_root, 4_000)?))
+    Ok(Json(scan_workspace(
+        &workspace_root,
+        4_000,
+        query.show_dotfiles.unwrap_or(false),
+    )?))
 }
 
 async fn read_file(
