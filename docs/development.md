@@ -47,6 +47,7 @@ npm run build
 npm run budget
 npm test
 npm run finder:check
+npm run menu:check
 npm run tauri:check
 npm run smoke
 npm audit --audit-level=moderate
@@ -61,6 +62,8 @@ npm run tauri:dev
 `npm run budget` checks the production `dist/` output after `npm run build`. Current raw-size limits are 600 KB for startup JavaScript, 80 KB for startup CSS, and 90 KB for the lazy editor chunk. These are deliberately above the current app size, but low enough to catch accidental heavy runtime dependencies.
 
 `npm run finder:check` runs the macOS Finder Quick Action installer against temporary service/support directories, lints the generated workflow on macOS, and checks that the runner uses the authenticated loopback open-path handoff. It does not touch the real `~/Library/Services` directory.
+
+`npm run menu:check` validates the native menu contract. It checks that every declared Tauri menu item has a Rust route, every expected native event is emitted by Rust, and every emitted app/menu event has a React listener.
 
 `npm run tauri:check` validates the Tauri bundle metadata that affects native daily-driver behavior. It checks the developer-tool category, file association shape, required common editor extensions, text-only MIME types, duplicate extensions, and rejects obvious binary/media/archive associations.
 
@@ -86,6 +89,7 @@ The app is intentionally split into a small always-loaded shell and lazy-loaded 
 - `src/tauri.test.ts`: hosted browser transport coverage for bearer-token file/folder creation, native-only file picking, file rename/delete/writes, stale-save tokens, and loopback API base selection.
 - `scripts/bundle-budget.mjs`: production bundle budget coverage for startup assets and the lazy editor chunk.
 - `scripts/validate-finder-quick-action.mjs`: non-installing QA for the macOS Finder Quick Action service and generated runner.
+- `scripts/validate-native-menu-contract.mjs`: contract coverage that keeps Tauri menu items, Rust emitted events, and React native-event listeners aligned.
 - `scripts/smoke-test.mjs`: browser smoke coverage for empty-pane and loaded-editor theme alignment plus core UI flows that are hard to trust from jsdom alone.
 - `src/language.ts`: lazy language loaders for common code and config files, including Rust, TypeScript/JavaScript/React, JSON, Markdown, shell, HTML, CSS/SCSS/Sass, C#, C/C++, JVM languages, Python, Go, Ruby, SQL, XML/YAML/TOML, Dockerfiles, PowerShell, diffs, and .NET project files.
 - `src-tauri/src/workspace.rs`: Rust-native workspace scanning, guarded file/folder creation, guarded file/folder rename/delete, and guarded file IO.
