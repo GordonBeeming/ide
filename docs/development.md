@@ -88,7 +88,7 @@ The app is intentionally split into a small always-loaded shell and lazy-loaded 
 - `src/editorTheme.ts`: system-aware CodeMirror theme selection and high-contrast editor styling.
 - `src/appWindow.ts`: guarded Tauri window-close integration.
 - `src/fileTypes.ts`: package-backed coloured file icon resolution with explicit folder fallbacks.
-- `src/quickOpen.ts`: tested quick-open file matching, ranking, editor-openable filtering, and keyboard selection rules.
+- `src/quickOpen.ts`: tested quick-open file matching, ranking, editor-openable filtering, and keyboard selection rules. The app feeds it both loaded tree entries and SQLite-indexed workspace metadata so lazily loaded files can still be found when they have already been indexed.
 - `src/commandPalette.ts`: tested command palette matching, ranking, and keyboard selection rules.
 - `src/editorNavigation.ts`: tested line clamping for search-result reveal behavior.
 - `src/currentFileSearch.ts`: tested current-file search over loaded and unsaved editor contents.
@@ -116,7 +116,7 @@ Current constraints:
 - No Monaco editor.
 - No filesystem plugin for broad client-side filesystem access.
 - Hide dotfiles, dot folders, and generated/internal folders by default, with the native Settings dialog controlling tree visibility, initial tree scan entries, search caps, and UI result counts.
-- Store tree metadata in the app-local SQLite index instead of keeping an unbounded in-memory tree. The index is disposable and can be rebuilt when the workspace reopens.
+- Store tree metadata in the app-local SQLite index instead of keeping an unbounded in-memory tree. The index is disposable and can be rebuilt when the workspace reopens. Quick open queries this metadata using the Settings-backed quick-open result cap; it does not keep a second hidden limit.
 - Always ignore `node_modules`, `target`, `dist`, `.git`, and common generated folders during content search.
 - Workspace content search runs in Rust, skips generated folders and binary-looking files, and applies the Settings-backed result/file-size caps before scanning.
 - Keep syntax language packages dynamically imported by extension.

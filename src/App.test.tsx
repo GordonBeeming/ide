@@ -69,6 +69,7 @@ const tauriMocks = vi.hoisted(() => ({
   renameFile: vi.fn(),
   deleteFile: vi.fn(),
   searchFiles: vi.fn(),
+  searchIndexedFiles: vi.fn(),
   pickOpenFile: vi.fn(),
   pickWorkspaceFolder: vi.fn(),
   setWorkspaceRootPath: vi.fn(),
@@ -126,6 +127,7 @@ vi.mock("./tauri", async () => {
     renameFile: tauriMocks.renameFile,
     deleteFile: tauriMocks.deleteFile,
     searchFiles: tauriMocks.searchFiles,
+    searchIndexedFiles: tauriMocks.searchIndexedFiles,
     pickOpenFile: tauriMocks.pickOpenFile,
     pickWorkspaceFolder: tauriMocks.pickWorkspaceFolder,
     setWorkspaceRootPath: tauriMocks.setWorkspaceRootPath,
@@ -250,6 +252,7 @@ describe("App shell interactions", () => {
     tauriMocks.renameFile.mockResolvedValue(undefined);
     tauriMocks.deleteFile.mockResolvedValue(undefined);
     tauriMocks.searchFiles.mockResolvedValue([]);
+    tauriMocks.searchIndexedFiles.mockResolvedValue([]);
     tauriMocks.pickOpenFile.mockResolvedValue(undefined);
     tauriMocks.setWorkspaceRootPath.mockResolvedValue("/workspace");
     tauriMocks.getUiState.mockResolvedValue({
@@ -1022,6 +1025,58 @@ describe("App shell interactions", () => {
       eventMocks.listeners.get("menu://go-to-line")?.({ payload: undefined });
     });
     expect(screen.getByRole("dialog", { name: "Go to line" })).toBeInTheDocument();
+  });
+
+  it("opens indexed quick-open results that are not loaded in the tree", async () => {
+    const indexedFile: FileEntry = {
+      path: "deep/Nested.ts",
+      name: "Nested.ts",
+      parent: "deep",
+      isDir: false,
+      depth: 1,
+      size: 42,
+      modifiedMs: 303,
+    };
+    tauriMocks.searchIndexedFiles.mockImplementation(async (query: string) =>
+      query === "nested" ? [indexedFile] : [],
+    );
+    tauriMocks.readFile.mockImplementation(async (path: string) => {
+      if (path === "deep/Nested.ts") return "export const nested = true;";
+      if (path === "README.md") return "readme";
+      if (path === "src/App.tsx") return "export function App() {}";
+      return "";
+    });
+    render(<App />);
+
+    expect(await treeButton("README.md")).toBeInTheDocument();
+    fireEvent.keyDown(window, { key: "p", metaKey: true });
+    const input = await screen.findByPlaceholderText("Open file");
+    fireEvent.change(input, { target: { value: "nested" } });
+
+    await waitFor(() =>
+      expect(tauriMocks.searchIndexedFiles).toHaveBeenCalledWith("nested", 12),
+    );
+    expect(await screen.findByText("deep/Nested.ts")).toBeInTheDocument();
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    expect(await screen.findByLabelText("Editor deep/Nested.ts")).toHaveValue(
+      "export const nested = true;",
+    );
+  });
+
+  it("surfaces indexed quick-open failures", async () => {
+    tauriMocks.searchIndexedFiles.mockRejectedValue(new Error("index unavailable"));
+    render(<App />);
+
+    expect(await treeButton("README.md")).toBeInTheDocument();
+    fireEvent.keyDown(window, { key: "p", metaKey: true });
+    const input = await screen.findByPlaceholderText("Open file");
+    fireEvent.change(input, { target: { value: "needle" } });
+
+    expect(
+      await screen.findByText("Indexed file search failed: Error: index unavailable"),
+    ).toBeInTheDocument();
+    expect(await screen.findByText("File search failed")).toBeInTheDocument();
   });
 
   it("reports when native Find in File is used without an active file", async () => {

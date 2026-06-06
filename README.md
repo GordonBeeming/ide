@@ -23,7 +23,7 @@ Implemented:
 - Collapsed file-name filtering and bounded text search across the current workspace.
 - Collapsed current-file search over loaded and unsaved editor contents, with Enter/Shift+Enter match navigation.
 - Lightweight command palette for discoverable editor and workspace commands, including native file/folder open actions in the desktop app.
-- Keyboard quick-open palette for opening editor-supported files by path, including arrow-key result selection.
+- Keyboard quick-open palette for opening editor-supported files by path, including arrow-key result selection and SQLite-backed candidates from indexed workspace metadata.
 - Keyboard file/folder creation, tab navigation, numbered tab selection, and close commands.
 - Native Search menu with Go to File, Go to Line, Find in File, and Find in Files actions.
 - Native Navigate menu actions for LSP-backed Go to Definition and Find References.

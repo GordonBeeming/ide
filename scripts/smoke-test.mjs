@@ -56,6 +56,7 @@ const fileContents = new Map([
     "# Smoke workspace\n\nThis smoke markdown file proves editor loading.\n",
   ],
   ["src/App.tsx", "export function App() {\n  return <main>Smoke</main>;\n}\n"],
+  ["deep/Nested.ts", "export const nested = 'indexed smoke file';\n"],
   ["package.json", "{\n  \"name\": \"ide-smoke\"\n}\n"],
 ]);
 
@@ -140,6 +141,28 @@ async function fulfillApi(route) {
           matchEnd: 10,
         },
       ]),
+    );
+    return;
+  }
+
+  if (url.pathname === "/api/file-search") {
+    const query = (url.searchParams.get("query") ?? "").toLowerCase();
+    await route.fulfill(
+      json(
+        query === "nested"
+          ? [
+              {
+                path: "deep/Nested.ts",
+                name: "Nested.ts",
+                parent: "deep",
+                isDir: false,
+                depth: 1,
+                size: 42,
+                modifiedMs: 5,
+              },
+            ]
+          : [],
+      ),
     );
     return;
   }
@@ -444,6 +467,14 @@ async function runScenario(browser, url, colorScheme) {
   await assertThemeTransition(page, colorScheme);
 
   const commandModifier = process.platform === "darwin" ? "Meta" : "Control";
+  await page.keyboard.press(`${commandModifier}+P`);
+  await page.getByRole("dialog", { name: "Quick open" }).waitFor();
+  await page.locator('input[placeholder="Open file"]').fill("nested");
+  await page.getByText("deep/Nested.ts").waitFor();
+  await page.keyboard.press("Enter");
+  await page.locator(".cm-content").waitFor();
+  await page.getByText("indexed smoke file").waitFor();
+
   await page.keyboard.press(`${commandModifier}+Shift+P`);
   await page.getByRole("dialog", { name: "Command palette" }).waitFor();
   await page.locator('input[placeholder="Run command"]').fill("workspace");

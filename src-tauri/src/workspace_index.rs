@@ -105,6 +105,64 @@ impl WorkspaceIndex {
         Ok(())
     }
 
+    pub fn search_files(
+        &self,
+        root: &Path,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<FileEntry>, WorkspaceIndexError> {
+        let root_key = root_key(root);
+        let query = query.trim().to_lowercase();
+        let limit = i64::try_from(limit).unwrap_or(i64::MAX);
+        let connection = self.connection()?;
+        let mut entries = Vec::new();
+
+        if query.is_empty() {
+            let mut statement = connection.prepare(
+                "SELECT path, name, parent, is_dir, depth, size, modified_ms
+                 FROM workspace_entries
+                 WHERE root = ?1 AND is_dir = 0
+                 ORDER BY lower(path), path
+                 LIMIT ?2",
+            )?;
+            let rows = statement.query_map(params![root_key, limit], file_entry_from_row)?;
+            for row in rows {
+                entries.push(row?);
+            }
+            return Ok(entries);
+        }
+
+        let exact = query.as_str();
+        let starts_with = format!("{}%", escape_like(&query));
+        let contains = format!("%{}%", escape_like(&query));
+        let mut statement = connection.prepare(
+            "SELECT path, name, parent, is_dir, depth, size, modified_ms
+             FROM workspace_entries
+             WHERE root = ?1
+                AND is_dir = 0
+                AND (lower(path) LIKE ?2 ESCAPE '\\' OR lower(name) LIKE ?2 ESCAPE '\\')
+             ORDER BY
+                CASE
+                    WHEN lower(name) = ?3 THEN 0
+                    WHEN lower(path) = ?3 THEN 1
+                    WHEN lower(name) LIKE ?4 ESCAPE '\\' THEN 2
+                    WHEN lower(path) LIKE ?4 ESCAPE '\\' THEN 3
+                    ELSE 4
+                END,
+                lower(path),
+                path
+             LIMIT ?5",
+        )?;
+        let rows = statement.query_map(
+            params![root_key, contains, exact, starts_with, limit],
+            file_entry_from_row,
+        )?;
+        for row in rows {
+            entries.push(row?);
+        }
+        Ok(entries)
+    }
+
     #[cfg(test)]
     pub fn entries_for_root(&self, root: &Path) -> Result<Vec<FileEntry>, WorkspaceIndexError> {
         let root_key = root_key(root);
@@ -132,6 +190,13 @@ impl WorkspaceIndex {
             .ok_or(WorkspaceIndexError::NotInitialized)?;
         open_database(&path)
     }
+}
+
+fn escape_like(value: &str) -> String {
+    value
+        .replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_")
 }
 
 fn open_database(path: &Path) -> Result<Connection, WorkspaceIndexError> {
@@ -207,7 +272,6 @@ fn insert_entries(
     Ok(())
 }
 
-#[cfg(test)]
 fn file_entry_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<FileEntry> {
     let is_dir: i64 = row.get(3)?;
     let depth: i64 = row.get(4)?;
@@ -328,5 +392,94 @@ mod tests {
         let entries = index.entries_for_root(dir.path()).unwrap();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].path, "README.md");
+    }
+
+    #[test]
+    fn search_files_matches_indexed_file_paths_and_names() {
+        let dir = tempdir().unwrap();
+        let index = WorkspaceIndex::new();
+        index
+            .set_database_path(dir.path().join("workspace-index.sqlite"))
+            .unwrap();
+
+        index
+            .replace_root_entries(
+                dir.path(),
+                &[
+                    entry("src", None, true),
+                    entry("src/App.tsx", Some("src"), false),
+                    entry("src/appWindow.ts", Some("src"), false),
+                    entry("README.md", None, false),
+                ],
+            )
+            .unwrap();
+
+        let paths = index
+            .search_files(dir.path(), "app", 10)
+            .unwrap()
+            .into_iter()
+            .map(|entry| entry.path)
+            .collect::<Vec<_>>();
+
+        assert_eq!(paths, vec!["src/App.tsx", "src/appWindow.ts"]);
+    }
+
+    #[test]
+    fn search_files_respects_limit_and_excludes_directories() {
+        let dir = tempdir().unwrap();
+        let index = WorkspaceIndex::new();
+        index
+            .set_database_path(dir.path().join("workspace-index.sqlite"))
+            .unwrap();
+
+        index
+            .replace_root_entries(
+                dir.path(),
+                &[
+                    entry("a", None, true),
+                    entry("a/one.ts", Some("a"), false),
+                    entry("a/two.ts", Some("a"), false),
+                    entry("a/three.ts", Some("a"), false),
+                ],
+            )
+            .unwrap();
+
+        let paths = index
+            .search_files(dir.path(), "", 2)
+            .unwrap()
+            .into_iter()
+            .map(|entry| entry.path)
+            .collect::<Vec<_>>();
+
+        assert_eq!(paths, vec!["a/one.ts", "a/three.ts"]);
+    }
+
+    #[test]
+    fn search_files_escapes_like_wildcards() {
+        let dir = tempdir().unwrap();
+        let index = WorkspaceIndex::new();
+        index
+            .set_database_path(dir.path().join("workspace-index.sqlite"))
+            .unwrap();
+
+        index
+            .replace_root_entries(
+                dir.path(),
+                &[
+                    entry("100_percent.txt", None, false),
+                    entry("100% literal.txt", None, false),
+                    entry("100a literal.txt", None, false),
+                ],
+            )
+            .unwrap();
+
+        let paths = index
+            .search_files(dir.path(), "100%", 10)
+            .unwrap()
+            .into_iter()
+            .map(|entry| entry.path)
+            .collect::<Vec<_>>();
+
+        assert_eq!(paths, vec!["100% literal.txt"]);
     }
 }

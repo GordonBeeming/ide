@@ -90,6 +90,7 @@ import {
   readFile,
   recordRecentFile,
   renameFile,
+  searchIndexedFiles,
   searchFiles,
   setWorkspaceRootPath,
   statFile,
@@ -284,6 +285,8 @@ export default function App() {
   const [quickOpenVisible, setQuickOpenVisible] = useState(false);
   const [quickOpenQuery, setQuickOpenQuery] = useState("");
   const [quickOpenIndex, setQuickOpenIndex] = useState(0);
+  const [quickOpenIndexedResults, setQuickOpenIndexedResults] = useState<FileEntry[]>([]);
+  const [quickOpenSearching, setQuickOpenSearching] = useState(false);
   const [commandPaletteVisible, setCommandPaletteVisible] = useState(false);
   const [commandPaletteQuery, setCommandPaletteQuery] = useState("");
   const [commandPaletteIndex, setCommandPaletteIndex] = useState(0);
@@ -382,9 +385,13 @@ export default function App() {
     () => filterTree(tree, filter.trim().toLowerCase()),
     [filter, tree],
   );
+  const quickOpenCandidates = useMemo(
+    () => mergeFileEntries(sidebarFiles, quickOpenIndexedResults),
+    [quickOpenIndexedResults, sidebarFiles],
+  );
   const quickOpenResults = useMemo(
-    () => quickOpenMatches(sidebarFiles, quickOpenQuery, quickOpenResultLimit),
-    [quickOpenQuery, quickOpenResultLimit, sidebarFiles],
+    () => quickOpenMatches(quickOpenCandidates, quickOpenQuery, quickOpenResultLimit),
+    [quickOpenCandidates, quickOpenQuery, quickOpenResultLimit],
   );
   const currentFindResults = useMemo(
     () =>
@@ -822,14 +829,13 @@ export default function App() {
 
   const openPathByName = useCallback(
     async (path: string, pinned = false, lineNumber?: number) => {
-      const entry = files.find((candidate) => candidate.path === path);
-      if (!entry) {
-        setError(`File is not in the current workspace: ${path}`);
-        return;
-      }
+      const entry =
+        files.find((candidate) => candidate.path === path) ??
+        quickOpenIndexedResults.find((candidate) => candidate.path === path) ??
+        fileEntryForDirectOpen(path);
       await openPath(entry, pinned, lineNumber);
     },
-    [files, openPath],
+    [files, openPath, quickOpenIndexedResults],
   );
 
   useEffect(() => {
@@ -1003,7 +1009,41 @@ export default function App() {
     setQuickOpenVisible(false);
     setQuickOpenQuery("");
     setQuickOpenIndex(0);
+    setQuickOpenIndexedResults([]);
+    setQuickOpenSearching(false);
   }, []);
+
+  useEffect(() => {
+    if (!quickOpenVisible || singleFileMode) {
+      setQuickOpenIndexedResults([]);
+      setQuickOpenSearching(false);
+      return;
+    }
+
+    let disposed = false;
+    setQuickOpenSearching(true);
+    const timeout = window.setTimeout(() => {
+      searchIndexedFiles(quickOpenQuery, quickOpenResultLimit)
+        .then((entries) => {
+          if (disposed) return;
+          setQuickOpenIndexedResults(entries);
+        })
+        .catch((reason) => {
+          if (disposed) return;
+          setQuickOpenIndexedResults([]);
+          setError(`Indexed file search failed: ${String(reason)}`);
+          setStatus("File search failed");
+        })
+        .finally(() => {
+          if (!disposed) setQuickOpenSearching(false);
+        });
+    }, 120);
+
+    return () => {
+      disposed = true;
+      window.clearTimeout(timeout);
+    };
+  }, [quickOpenQuery, quickOpenResultLimit, quickOpenVisible, singleFileMode]);
 
   const closeCommandPalette = useCallback(() => {
     setCommandPaletteVisible(false);
@@ -2885,7 +2925,9 @@ export default function App() {
                 );
               })}
               {quickOpenResults.length === 0 ? (
-                <div className="quick-open__empty">No matching files</div>
+                <div className="quick-open__empty">
+                  {quickOpenSearching ? "Searching files" : "No matching files"}
+                </div>
               ) : null}
             </div>
           </div>

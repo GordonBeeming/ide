@@ -292,6 +292,28 @@ export function searchFiles(
   });
 }
 
+export function searchIndexedFiles(query: string, limit?: number) {
+  const params = new URLSearchParams();
+  const trimmedQuery = query.trim();
+  if (trimmedQuery) params.set("query", trimmedQuery);
+  if (limit !== undefined) params.set("limit", String(limit));
+  const requestPath = params.toString()
+    ? `/api/file-search?${params.toString()}`
+    : "/api/file-search";
+  return callApi<unknown>("search_indexed_files", requestPath, {
+    method: "GET",
+    invokeArgs: {
+      query,
+      ...(limit === undefined ? {} : { limit }),
+    },
+  }).then((entries) => {
+    if (!Array.isArray(entries)) {
+      throw new Error("Indexed file search response was not valid JSON");
+    }
+    return entries as FileEntry[];
+  });
+}
+
 export function pickWorkspaceFolder() {
   if (!isNativeTauri()) {
     return Promise.reject(new Error("Folder picker is only available in the native Tauri app"));

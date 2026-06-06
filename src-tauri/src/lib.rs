@@ -30,6 +30,7 @@ struct AppState {
     tree_scan_limit: Arc<std::sync::RwLock<usize>>,
     workspace_search_result_limit: Arc<std::sync::RwLock<usize>>,
     workspace_search_max_file_bytes: Arc<std::sync::RwLock<u64>>,
+    quick_open_result_limit: Arc<std::sync::RwLock<usize>>,
     workspace_index: workspace_index::WorkspaceIndex,
     agent_context: Arc<RwLock<AgentContext>>,
     lsp_manager: lsp::LspManager,
@@ -383,6 +384,22 @@ async fn list_directory(
     Ok(entries)
 }
 
+#[tauri::command]
+async fn search_indexed_files(
+    state: State<'_, AppState>,
+    query: String,
+    limit: Option<usize>,
+) -> Result<Vec<workspace::FileEntry>, CommandError> {
+    let workspace_root = state.workspace_root.read().await.clone();
+    let limit = limit
+        .unwrap_or_else(default_quick_open_result_limit)
+        .clamp(MIN_QUICK_OPEN_RESULT_LIMIT, MAX_QUICK_OPEN_RESULT_LIMIT);
+    state
+        .workspace_index
+        .search_files(&workspace_root, &query, limit)
+        .map_err(CommandError::from)
+}
+
 fn refresh_indexed_entry(
     index: &workspace_index::WorkspaceIndex,
     root: &Path,
@@ -606,6 +623,9 @@ async fn update_ui_state(
     *state.workspace_search_max_file_bytes.write().map_err(|_| {
         CommandError::UiState("workspace search file limit lock poisoned".to_string())
     })? = view.workspace_search_max_file_kb.saturating_mul(1024);
+    *state.quick_open_result_limit.write().map_err(|_| {
+        CommandError::UiState("quick-open result limit lock poisoned".to_string())
+    })? = view.quick_open_result_limit;
     ui_state.view = view;
     let persisted = PersistedWorkspaceUiState {
         workspace_root: workspace_root.clone(),
@@ -725,6 +745,9 @@ pub fn run() {
         workspace_search_max_file_bytes: Arc::new(std::sync::RwLock::new(
             default_workspace_search_max_file_kb().saturating_mul(1024),
         )),
+        quick_open_result_limit: Arc::new(
+            std::sync::RwLock::new(default_quick_open_result_limit()),
+        ),
         workspace_index: workspace_index::WorkspaceIndex::new(),
         agent_context,
         lsp_manager,
@@ -789,6 +812,11 @@ pub fn run() {
                 .workspace_search_max_file_kb
                 .saturating_mul(1024);
             *http_state
+                .quick_open_result_limit
+                .write()
+                .map_err(|_| std::io::Error::other("quick-open limit lock poisoned"))? =
+                loaded_ui_state.view.quick_open_result_limit;
+            *http_state
                 .ui_state
                 .write()
                 .map_err(|_| std::io::Error::other("ui state lock poisoned"))? = loaded_ui_state;
@@ -814,6 +842,7 @@ pub fn run() {
             let workspace_search_result_limit = http_state.workspace_search_result_limit.clone();
             let workspace_search_max_file_bytes =
                 http_state.workspace_search_max_file_bytes.clone();
+            let quick_open_result_limit = http_state.quick_open_result_limit.clone();
             let workspace_index = http_state.workspace_index.clone();
             let agent_context = http_state.agent_context.clone();
             let lsp_manager = http_state.lsp_manager.clone();
@@ -831,6 +860,7 @@ pub fn run() {
                     tree_scan_limit,
                     workspace_search_result_limit,
                     workspace_search_max_file_bytes,
+                    quick_open_result_limit,
                     workspace_index,
                     agent_context,
                     lsp_manager,
@@ -1072,6 +1102,7 @@ pub fn run() {
             take_opened_launch_targets,
             list_files,
             list_directory,
+            search_indexed_files,
             read_file,
             stat_file,
             write_file,
@@ -1863,6 +1894,9 @@ mod tests {
             )),
             workspace_search_max_file_bytes: Arc::new(std::sync::RwLock::new(
                 default_workspace_search_max_file_kb().saturating_mul(1024),
+            )),
+            quick_open_result_limit: Arc::new(std::sync::RwLock::new(
+                default_quick_open_result_limit(),
             )),
             workspace_index: workspace_index::WorkspaceIndex::new(),
             agent_context: Arc::new(RwLock::new(AgentContext::default())),

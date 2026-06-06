@@ -363,6 +363,16 @@ describe("hosted Tauri API transport", () => {
     );
   });
 
+  it("passes explicit quick-open limits through hosted indexed file search", async () => {
+    const fetchMock = vi.fn().mockImplementation(async () => jsonResponse([]));
+    vi.stubGlobal("fetch", fetchMock);
+    const { searchIndexedFiles } = await import("./tauri");
+
+    await searchIndexedFiles("app", 20);
+
+    expect(fetchMock.mock.calls[0][0]).toBe("/api/file-search?query=app&limit=20");
+  });
+
   it("passes dotfile visibility through hosted file listing requests", async () => {
     const fetchMock = vi.fn().mockImplementation(async () => jsonResponse([]));
     vi.stubGlobal("fetch", fetchMock);
@@ -482,6 +492,20 @@ describe("hosted Tauri API transport", () => {
       query: "needle",
       maxResults: 500,
       maxFileBytes: 512 * 1024,
+    });
+  });
+
+  it("passes explicit quick-open limits through native indexed file search", async () => {
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    const { invoke } = await import("@tauri-apps/api/core");
+    vi.mocked(invoke).mockResolvedValue([]);
+    const { searchIndexedFiles } = await import("./tauri");
+
+    await searchIndexedFiles("app", 20);
+
+    expect(invoke).toHaveBeenCalledWith("search_indexed_files", {
+      query: "app",
+      limit: 20,
     });
   });
 
