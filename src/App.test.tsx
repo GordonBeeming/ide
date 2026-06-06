@@ -716,6 +716,26 @@ describe("App shell interactions", () => {
     );
   });
 
+  it("groups settings into selectable categories", async () => {
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    render(<App />);
+
+    expect(await treeButton("README.md")).toBeInTheDocument();
+    await openSettingsDialog();
+
+    expect(screen.getByRole("tab", { name: /View/ })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(screen.getByLabelText("Show dotfiles and dot folders")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Initial tree scan entries")).not.toBeInTheDocument();
+
+    selectSettingsTab("Indexing");
+
+    expect(screen.getByLabelText("Initial tree scan entries")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Show dotfiles and dot folders")).not.toBeInTheDocument();
+  });
+
   it("reloads the tree with dotfiles when changed from Settings", async () => {
     (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
     tauriMocks.listFiles
@@ -735,11 +755,7 @@ describe("App shell interactions", () => {
     render(<App />);
 
     expect(await treeButton("README.md")).toBeInTheDocument();
-    await waitFor(() =>
-      expect(eventMocks.listeners.has("menu://show-settings")).toBe(true),
-    );
-
-    eventMocks.listeners.get("menu://show-settings")?.({ payload: undefined });
+    await openSettingsDialog();
     fireEvent.click(await screen.findByLabelText("Show dotfiles and dot folders"));
 
     await waitFor(() =>
@@ -776,11 +792,7 @@ describe("App shell interactions", () => {
     render(<App />);
 
     expect(await treeButton("README.md")).toBeInTheDocument();
-    await waitFor(() =>
-      expect(eventMocks.listeners.has("menu://show-settings")).toBe(true),
-    );
-
-    eventMocks.listeners.get("menu://show-settings")?.({ payload: undefined });
+    await openSettingsDialog();
     fireEvent.click(await screen.findByLabelText("Show generated and internal folders"));
 
     await waitFor(() =>
@@ -806,11 +818,9 @@ describe("App shell interactions", () => {
     render(<App />);
 
     expect(await treeButton("README.md")).toBeInTheDocument();
-    await waitFor(() =>
-      expect(eventMocks.listeners.has("menu://show-settings")).toBe(true),
-    );
+    await openSettingsDialog();
+    selectSettingsTab("Indexing");
 
-    eventMocks.listeners.get("menu://show-settings")?.({ payload: undefined });
     fireEvent.change(await screen.findByLabelText("Initial tree scan entries"), {
       target: { value: "8000" },
     });
@@ -837,11 +847,9 @@ describe("App shell interactions", () => {
     render(<App />);
 
     expect(await treeButton("README.md")).toBeInTheDocument();
-    await waitFor(() =>
-      expect(eventMocks.listeners.has("menu://show-settings")).toBe(true),
-    );
+    await openSettingsDialog();
+    selectSettingsTab("Search");
 
-    eventMocks.listeners.get("menu://show-settings")?.({ payload: undefined });
     fireEvent.change(await screen.findByLabelText("Workspace search results"), {
       target: { value: "500" },
     });
@@ -874,11 +882,9 @@ describe("App shell interactions", () => {
     render(<App />);
 
     expect(await treeButton("README.md")).toBeInTheDocument();
-    await waitFor(() =>
-      expect(eventMocks.listeners.has("menu://show-settings")).toBe(true),
-    );
+    await openSettingsDialog();
+    selectSettingsTab("Indexing");
 
-    eventMocks.listeners.get("menu://show-settings")?.({ payload: undefined });
     fireEvent.change(await screen.findByLabelText("Max editable file KB"), {
       target: { value: "2048" },
     });
@@ -912,11 +918,9 @@ describe("App shell interactions", () => {
     render(<App />);
 
     expect(await treeButton("README.md")).toBeInTheDocument();
-    await waitFor(() =>
-      expect(eventMocks.listeners.has("menu://show-settings")).toBe(true),
-    );
+    await openSettingsDialog();
+    selectSettingsTab("Search");
 
-    eventMocks.listeners.get("menu://show-settings")?.({ payload: undefined });
     fireEvent.change(await screen.findByLabelText("Current-file result rows"), {
       target: { value: "3" },
     });
@@ -2692,6 +2696,20 @@ async function openContentSearch() {
 async function openCurrentFileFind() {
   fireEvent.click(screen.getByTitle("Find in file"));
   return screen.findByPlaceholderText("Find in file");
+}
+
+async function openSettingsDialog() {
+  await waitFor(() =>
+    expect(eventMocks.listeners.has("menu://show-settings")).toBe(true),
+  );
+  act(() => {
+    eventMocks.listeners.get("menu://show-settings")?.({ payload: undefined });
+  });
+  return screen.findByRole("dialog", { name: "Settings" });
+}
+
+function selectSettingsTab(name: string) {
+  fireEvent.click(screen.getByRole("tab", { name: new RegExp(name) }));
 }
 
 function latestAgentContext() {

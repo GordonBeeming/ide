@@ -933,25 +933,68 @@ button {
 }
 
 .settings-dialog {
-  width: min(520px, 100%);
+  width: min(720px, 100%);
 }
 
-.settings-list {
+.settings-layout {
   display: grid;
-  gap: 12px;
+  grid-template-columns: minmax(140px, 180px) minmax(0, 1fr);
+  gap: 14px;
   margin-top: 14px;
+}
+
+.settings-tabs {
+  display: grid;
+  align-content: start;
+  gap: 6px;
+}
+
+.settings-tab {
+  display: grid;
+  gap: 2px;
+  width: 100%;
+  padding: 9px 10px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  text-align: left;
+}
+
+.settings-tab:hover {
+  border-color: var(--border);
+  background: var(--panel-strong);
+  color: var(--text);
+}
+
+.settings-tab--active {
+  border-color: color-mix(in oklch, var(--accent), var(--border) 48%);
+  background: color-mix(in oklch, var(--accent), var(--panel) 86%);
+  color: var(--text);
+}
+
+.settings-tab span {
+  font-size: 13px;
+  font-weight: 750;
+}
+
+.settings-tab small {
+  overflow: hidden;
+  font-size: 11px;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-panel {
+  min-width: 0;
+  min-height: 174px;
 }
 
 .settings-section {
   display: grid;
   gap: 8px;
-  padding-block: 2px 10px;
-  border-bottom: 1px solid var(--border);
-}
-
-.settings-section:last-child {
-  border-bottom: 0;
-  padding-bottom: 0;
+  padding: 2px 0 0;
 }
 
 .settings-section__title {
@@ -975,6 +1018,16 @@ button {
 
 .settings-row input {
   accent-color: var(--accent);
+}
+
+@media (max-width: 720px) {
+  .settings-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .settings-tabs {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 .confirm-dialog h2 {

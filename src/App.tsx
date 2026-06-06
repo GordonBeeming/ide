@@ -153,6 +153,18 @@ interface OpenFailure {
 }
 
 type SidebarSearchMode = "filter" | "content";
+type SettingsCategory = "view" | "indexing" | "search" | "interface";
+
+const settingsCategories: Array<{
+  id: SettingsCategory;
+  title: string;
+  detail: string;
+}> = [
+  { id: "view", title: "View", detail: "Tree visibility" },
+  { id: "indexing", title: "Indexing", detail: "Scan and file size" },
+  { id: "search", title: "Search", detail: "Result and file caps" },
+  { id: "interface", title: "Interface", detail: "Palette result counts" },
+];
 
 const minTreeScanLimit = 500;
 const maxTreeScanLimit = 100000;
@@ -314,6 +326,7 @@ export default function App() {
   const [pendingAppClose, setPendingAppClose] = useState(false);
   const [integrationsOpen, setIntegrationsOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsCategory, setSettingsCategory] = useState<SettingsCategory>("view");
   const [showDotfiles, setShowDotfiles] = useState(false);
   const [showGeneratedInternal, setShowGeneratedInternal] = useState(false);
   const [treeScanLimit, setTreeScanLimit] = useState(defaultTreeScanLimit);
@@ -3251,211 +3264,266 @@ export default function App() {
             <div>
               <div className="eyebrow">Preferences</div>
               <h2 id="settings-title">Settings</h2>
-              <div className="settings-list">
-                <section className="settings-section" aria-label="Workspace view">
-                  <div className="settings-section__title">Workspace View</div>
-                  <label className="settings-row">
-                    <input
-                      type="checkbox"
-                      checked={showDotfiles}
-                      onChange={(event) => {
-                        setShowDotfiles(event.target.checked);
-                        setStatus(event.target.checked ? "Showing dotfiles" : "Hiding dotfiles");
-                      }}
-                    />
-                    <span>Show dotfiles and dot folders</span>
-                  </label>
-                  <label className="settings-row">
-                    <input
-                      type="checkbox"
-                      checked={showGeneratedInternal}
-                      onChange={(event) => {
-                        setShowGeneratedInternal(event.target.checked);
-                        setStatus(
-                          event.target.checked
-                            ? "Showing generated/internal folders"
-                            : "Hiding generated/internal folders",
-                        );
-                      }}
-                    />
-                    <span>Show generated and internal folders</span>
-                  </label>
-                </section>
+              <div className="settings-layout">
+                <div className="settings-tabs" role="tablist" aria-label="Settings categories">
+                  {settingsCategories.map((category) => (
+                    <button
+                      key={category.id}
+                      className={[
+                        "settings-tab",
+                        settingsCategory === category.id ? "settings-tab--active" : "",
+                      ].join(" ")}
+                      type="button"
+                      role="tab"
+                      aria-selected={settingsCategory === category.id}
+                      aria-controls={`settings-panel-${category.id}`}
+                      id={`settings-tab-${category.id}`}
+                      onClick={() => setSettingsCategory(category.id)}
+                    >
+                      <span>{category.title}</span>
+                      <small>{category.detail}</small>
+                    </button>
+                  ))}
+                </div>
 
-                <section className="settings-section" aria-label="Workspace indexing">
-                  <div className="settings-section__title">Workspace Indexing</div>
-                  <label className="dialog-field">
-                    <span>Initial tree scan entries</span>
-                    <input
-                      inputMode="numeric"
-                      min={minTreeScanLimit}
-                      max={maxTreeScanLimit}
-                      step={500}
-                      type="number"
-                      value={treeScanLimit}
-                      onChange={(event) => {
-                        const next = sanitizeTreeScanLimit(Number(event.target.value));
-                        setTreeScanLimit(next);
-                        setStatus(`Tree scan limit set to ${next}`);
-                      }}
-                    />
-                  </label>
-                  <label className="dialog-field">
-                    <span>Max editable file KB</span>
-                    <input
-                      inputMode="numeric"
-                      min={minMaxOpenFileKb}
-                      max={maxMaxOpenFileKb}
-                      step={64}
-                      type="number"
-                      value={maxOpenFileKb}
-                      onChange={(event) => {
-                        const next = sanitizeNumberLimit(
-                          Number(event.target.value),
-                          minMaxOpenFileKb,
-                          maxMaxOpenFileKb,
-                          defaultMaxOpenFileKb,
-                        );
-                        setMaxOpenFileKb(next);
-                        setStatus(`Editable file limit set to ${next} KB`);
-                      }}
-                    />
-                  </label>
-                </section>
+                <div className="settings-panel">
+                  {settingsCategory === "view" ? (
+                    <section
+                      className="settings-section"
+                      aria-label="Workspace view"
+                      role="tabpanel"
+                      id="settings-panel-view"
+                      aria-labelledby="settings-tab-view"
+                    >
+                      <div className="settings-section__title">Workspace View</div>
+                      <label className="settings-row">
+                        <input
+                          type="checkbox"
+                          checked={showDotfiles}
+                          onChange={(event) => {
+                            setShowDotfiles(event.target.checked);
+                            setStatus(event.target.checked ? "Showing dotfiles" : "Hiding dotfiles");
+                          }}
+                        />
+                        <span>Show dotfiles and dot folders</span>
+                      </label>
+                      <label className="settings-row">
+                        <input
+                          type="checkbox"
+                          checked={showGeneratedInternal}
+                          onChange={(event) => {
+                            setShowGeneratedInternal(event.target.checked);
+                            setStatus(
+                              event.target.checked
+                                ? "Showing generated/internal folders"
+                                : "Hiding generated/internal folders",
+                            );
+                          }}
+                        />
+                        <span>Show generated and internal folders</span>
+                      </label>
+                    </section>
+                  ) : null}
 
-                <section className="settings-section" aria-label="Search limits">
-                  <div className="settings-section__title">Search Limits</div>
-                  <label className="dialog-field">
-                    <span>Workspace search results</span>
-                    <input
-                      inputMode="numeric"
-                      min={minWorkspaceSearchResultLimit}
-                      max={maxWorkspaceSearchResultLimit}
-                      step={25}
-                      type="number"
-                      value={workspaceSearchResultLimit}
-                      onChange={(event) => {
-                        const next = sanitizeNumberLimit(
-                          Number(event.target.value),
-                          minWorkspaceSearchResultLimit,
-                          maxWorkspaceSearchResultLimit,
-                          defaultWorkspaceSearchResultLimit,
-                        );
-                        setWorkspaceSearchResultLimit(next);
-                        setStatus(`Workspace search result limit set to ${next}`);
-                      }}
-                    />
-                  </label>
-                  <label className="dialog-field">
-                    <span>Workspace search file KB</span>
-                    <input
-                      inputMode="numeric"
-                      min={minWorkspaceSearchMaxFileKb}
-                      max={maxWorkspaceSearchMaxFileKb}
-                      step={64}
-                      type="number"
-                      value={workspaceSearchMaxFileKb}
-                      onChange={(event) => {
-                        const next = sanitizeNumberLimit(
-                          Number(event.target.value),
-                          minWorkspaceSearchMaxFileKb,
-                          maxWorkspaceSearchMaxFileKb,
-                          defaultWorkspaceSearchMaxFileKb,
-                        );
-                        setWorkspaceSearchMaxFileKb(next);
-                        setStatus(`Workspace search file limit set to ${next} KB`);
-                      }}
-                    />
-                  </label>
-                  <label className="dialog-field">
-                    <span>Current-file search results</span>
-                    <input
-                      inputMode="numeric"
-                      min={minCurrentFileSearchResultLimit}
-                      max={maxCurrentFileSearchResultLimit}
-                      step={25}
-                      type="number"
-                      value={currentFileSearchResultLimit}
-                      onChange={(event) => {
-                        const next = sanitizeNumberLimit(
-                          Number(event.target.value),
-                          minCurrentFileSearchResultLimit,
-                          maxCurrentFileSearchResultLimit,
-                          defaultCurrentFileSearchResultLimit,
-                        );
-                        setCurrentFileSearchResultLimit(next);
-                        setStatus(`Current-file search result limit set to ${next}`);
-                      }}
-                    />
-                  </label>
-                  <label className="dialog-field">
-                    <span>Current-file result rows</span>
-                    <input
-                      inputMode="numeric"
-                      min={minCurrentFileResultPreviewLimit}
-                      max={maxCurrentFileResultPreviewLimit}
-                      step={1}
-                      type="number"
-                      value={currentFileResultPreviewLimit}
-                      onChange={(event) => {
-                        const next = sanitizeNumberLimit(
-                          Number(event.target.value),
-                          minCurrentFileResultPreviewLimit,
-                          maxCurrentFileResultPreviewLimit,
-                          defaultCurrentFileResultPreviewLimit,
-                        );
-                        setCurrentFileResultPreviewLimit(next);
-                        setStatus(`Current-file result rows set to ${next}`);
-                      }}
-                    />
-                  </label>
-                </section>
+                  {settingsCategory === "indexing" ? (
+                    <section
+                      className="settings-section"
+                      aria-label="Workspace indexing"
+                      role="tabpanel"
+                      id="settings-panel-indexing"
+                      aria-labelledby="settings-tab-indexing"
+                    >
+                      <div className="settings-section__title">Workspace Indexing</div>
+                      <label className="dialog-field">
+                        <span>Initial tree scan entries</span>
+                        <input
+                          inputMode="numeric"
+                          min={minTreeScanLimit}
+                          max={maxTreeScanLimit}
+                          step={500}
+                          type="number"
+                          value={treeScanLimit}
+                          onChange={(event) => {
+                            const next = sanitizeTreeScanLimit(Number(event.target.value));
+                            setTreeScanLimit(next);
+                            setStatus(`Tree scan limit set to ${next}`);
+                          }}
+                        />
+                      </label>
+                      <label className="dialog-field">
+                        <span>Max editable file KB</span>
+                        <input
+                          inputMode="numeric"
+                          min={minMaxOpenFileKb}
+                          max={maxMaxOpenFileKb}
+                          step={64}
+                          type="number"
+                          value={maxOpenFileKb}
+                          onChange={(event) => {
+                            const next = sanitizeNumberLimit(
+                              Number(event.target.value),
+                              minMaxOpenFileKb,
+                              maxMaxOpenFileKb,
+                              defaultMaxOpenFileKb,
+                            );
+                            setMaxOpenFileKb(next);
+                            setStatus(`Editable file limit set to ${next} KB`);
+                          }}
+                        />
+                      </label>
+                    </section>
+                  ) : null}
 
-                <section className="settings-section" aria-label="Interface limits">
-                  <div className="settings-section__title">Interface Limits</div>
-                  <label className="dialog-field">
-                    <span>Quick open results</span>
-                    <input
-                      inputMode="numeric"
-                      min={minQuickOpenResultLimit}
-                      max={maxQuickOpenResultLimit}
-                      step={1}
-                      type="number"
-                      value={quickOpenResultLimit}
-                      onChange={(event) => {
-                        const next = sanitizeNumberLimit(
-                          Number(event.target.value),
-                          minQuickOpenResultLimit,
-                          maxQuickOpenResultLimit,
-                          defaultQuickOpenResultLimit,
-                        );
-                        setQuickOpenResultLimit(next);
-                        setStatus(`Quick open result limit set to ${next}`);
-                      }}
-                    />
-                  </label>
-                  <label className="dialog-field">
-                    <span>Command palette results</span>
-                    <input
-                      inputMode="numeric"
-                      min={minCommandPaletteResultLimit}
-                      max={maxCommandPaletteResultLimit}
-                      step={1}
-                      type="number"
-                      value={commandPaletteResultLimit}
-                      onChange={(event) => {
-                        const next = sanitizeNumberLimit(
-                          Number(event.target.value),
-                          minCommandPaletteResultLimit,
-                          maxCommandPaletteResultLimit,
-                          defaultCommandPaletteResultLimit,
-                        );
-                        setCommandPaletteResultLimit(next);
-                        setStatus(`Command palette result limit set to ${next}`);
-                      }}
-                    />
-                  </label>
-                </section>
+                  {settingsCategory === "search" ? (
+                    <section
+                      className="settings-section"
+                      aria-label="Search limits"
+                      role="tabpanel"
+                      id="settings-panel-search"
+                      aria-labelledby="settings-tab-search"
+                    >
+                      <div className="settings-section__title">Search Limits</div>
+                      <label className="dialog-field">
+                        <span>Workspace search results</span>
+                        <input
+                          inputMode="numeric"
+                          min={minWorkspaceSearchResultLimit}
+                          max={maxWorkspaceSearchResultLimit}
+                          step={25}
+                          type="number"
+                          value={workspaceSearchResultLimit}
+                          onChange={(event) => {
+                            const next = sanitizeNumberLimit(
+                              Number(event.target.value),
+                              minWorkspaceSearchResultLimit,
+                              maxWorkspaceSearchResultLimit,
+                              defaultWorkspaceSearchResultLimit,
+                            );
+                            setWorkspaceSearchResultLimit(next);
+                            setStatus(`Workspace search result limit set to ${next}`);
+                          }}
+                        />
+                      </label>
+                      <label className="dialog-field">
+                        <span>Workspace search file KB</span>
+                        <input
+                          inputMode="numeric"
+                          min={minWorkspaceSearchMaxFileKb}
+                          max={maxWorkspaceSearchMaxFileKb}
+                          step={64}
+                          type="number"
+                          value={workspaceSearchMaxFileKb}
+                          onChange={(event) => {
+                            const next = sanitizeNumberLimit(
+                              Number(event.target.value),
+                              minWorkspaceSearchMaxFileKb,
+                              maxWorkspaceSearchMaxFileKb,
+                              defaultWorkspaceSearchMaxFileKb,
+                            );
+                            setWorkspaceSearchMaxFileKb(next);
+                            setStatus(`Workspace search file limit set to ${next} KB`);
+                          }}
+                        />
+                      </label>
+                      <label className="dialog-field">
+                        <span>Current-file search results</span>
+                        <input
+                          inputMode="numeric"
+                          min={minCurrentFileSearchResultLimit}
+                          max={maxCurrentFileSearchResultLimit}
+                          step={25}
+                          type="number"
+                          value={currentFileSearchResultLimit}
+                          onChange={(event) => {
+                            const next = sanitizeNumberLimit(
+                              Number(event.target.value),
+                              minCurrentFileSearchResultLimit,
+                              maxCurrentFileSearchResultLimit,
+                              defaultCurrentFileSearchResultLimit,
+                            );
+                            setCurrentFileSearchResultLimit(next);
+                            setStatus(`Current-file search result limit set to ${next}`);
+                          }}
+                        />
+                      </label>
+                      <label className="dialog-field">
+                        <span>Current-file result rows</span>
+                        <input
+                          inputMode="numeric"
+                          min={minCurrentFileResultPreviewLimit}
+                          max={maxCurrentFileResultPreviewLimit}
+                          step={1}
+                          type="number"
+                          value={currentFileResultPreviewLimit}
+                          onChange={(event) => {
+                            const next = sanitizeNumberLimit(
+                              Number(event.target.value),
+                              minCurrentFileResultPreviewLimit,
+                              maxCurrentFileResultPreviewLimit,
+                              defaultCurrentFileResultPreviewLimit,
+                            );
+                            setCurrentFileResultPreviewLimit(next);
+                            setStatus(`Current-file result rows set to ${next}`);
+                          }}
+                        />
+                      </label>
+                    </section>
+                  ) : null}
+
+                  {settingsCategory === "interface" ? (
+                    <section
+                      className="settings-section"
+                      aria-label="Interface limits"
+                      role="tabpanel"
+                      id="settings-panel-interface"
+                      aria-labelledby="settings-tab-interface"
+                    >
+                      <div className="settings-section__title">Interface Limits</div>
+                      <label className="dialog-field">
+                        <span>Quick open results</span>
+                        <input
+                          inputMode="numeric"
+                          min={minQuickOpenResultLimit}
+                          max={maxQuickOpenResultLimit}
+                          step={1}
+                          type="number"
+                          value={quickOpenResultLimit}
+                          onChange={(event) => {
+                            const next = sanitizeNumberLimit(
+                              Number(event.target.value),
+                              minQuickOpenResultLimit,
+                              maxQuickOpenResultLimit,
+                              defaultQuickOpenResultLimit,
+                            );
+                            setQuickOpenResultLimit(next);
+                            setStatus(`Quick open result limit set to ${next}`);
+                          }}
+                        />
+                      </label>
+                      <label className="dialog-field">
+                        <span>Command palette results</span>
+                        <input
+                          inputMode="numeric"
+                          min={minCommandPaletteResultLimit}
+                          max={maxCommandPaletteResultLimit}
+                          step={1}
+                          type="number"
+                          value={commandPaletteResultLimit}
+                          onChange={(event) => {
+                            const next = sanitizeNumberLimit(
+                              Number(event.target.value),
+                              minCommandPaletteResultLimit,
+                              maxCommandPaletteResultLimit,
+                              defaultCommandPaletteResultLimit,
+                            );
+                            setCommandPaletteResultLimit(next);
+                            setStatus(`Command palette result limit set to ${next}`);
+                          }}
+                        />
+                      </label>
+                    </section>
+                  ) : null}
+                </div>
               </div>
             </div>
             <div className="confirm-dialog__actions">
