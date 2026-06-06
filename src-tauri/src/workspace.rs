@@ -233,65 +233,85 @@ pub fn search_workspace(
     if query.chars().count() > MAX_SEARCH_QUERY_CHARS {
         return Err(WorkspaceError::SearchQueryTooLong);
     }
+    if max_results == 0 {
+        return Ok(Vec::new());
+    }
 
     let normalized_query = query.to_lowercase();
     let mut matches = Vec::new();
-    let walker = workspace_walker(root, false, false).build();
+    let mut seen_paths = HashSet::new();
+    let mut max_depth = 1;
 
-    for result in walker {
-        if matches.len() >= max_results {
-            break;
-        }
+    loop {
+        let previous_seen_count = seen_paths.len();
+        let mut walker = workspace_walker(root, false, false);
+        walker.max_depth(Some(max_depth));
 
-        let entry = result?;
-        let path = entry.path();
-        if path == root {
-            continue;
-        }
-
-        let metadata = fs::symlink_metadata(path)?;
-        if metadata.file_type().is_symlink() {
-            continue;
-        }
-        if metadata.is_dir() || metadata.len() > max_file_bytes || is_known_binary_path(path) {
-            continue;
-        }
-
-        let bytes = fs::read(path)?;
-        if bytes.contains(&0) {
-            continue;
-        }
-
-        let Ok(contents) = std::str::from_utf8(&bytes) else {
-            continue;
-        };
-        'line_matches: for (index, line) in contents.lines().enumerate() {
+        for result in walker.build() {
             if matches.len() >= max_results {
-                break;
+                return Ok(matches);
+            }
+
+            let entry = result?;
+            let path = entry.path();
+            if path == root {
+                continue;
             }
 
             let relative = path
                 .strip_prefix(root)
                 .map_err(|_| WorkspaceError::OutsideWorkspace)?;
             let relative_path = normalize_path(relative);
-            let line_text = line.trim_end().to_string();
+            if !seen_paths.insert(relative_path.clone()) {
+                continue;
+            }
 
-            for (match_start, match_end) in
-                case_insensitive_match_byte_ranges(line, &normalized_query)
-            {
+            let metadata = fs::symlink_metadata(path)?;
+            if metadata.file_type().is_symlink() {
+                continue;
+            }
+            if metadata.is_dir() || metadata.len() > max_file_bytes || is_known_binary_path(path) {
+                continue;
+            }
+
+            let bytes = fs::read(path)?;
+            if bytes.contains(&0) {
+                continue;
+            }
+
+            let Ok(contents) = std::str::from_utf8(&bytes) else {
+                continue;
+            };
+            'line_matches: for (index, line) in contents.lines().enumerate() {
                 if matches.len() >= max_results {
-                    break 'line_matches;
+                    break;
                 }
 
-                matches.push(SearchMatch {
-                    path: relative_path.clone(),
-                    line_number: index + 1,
-                    line_text: line_text.clone(),
-                    match_start: utf16_offset_for_byte_index(line, match_start),
-                    match_end: utf16_offset_for_byte_index(line, match_end),
-                });
+                let line_text = line.trim_end().to_string();
+
+                for (match_start, match_end) in
+                    case_insensitive_match_byte_ranges(line, &normalized_query)
+                {
+                    if matches.len() >= max_results {
+                        break 'line_matches;
+                    }
+
+                    matches.push(SearchMatch {
+                        path: relative_path.clone(),
+                        line_number: index + 1,
+                        line_text: line_text.clone(),
+                        match_start: utf16_offset_for_byte_index(line, match_start),
+                        match_end: utf16_offset_for_byte_index(line, match_end),
+                    });
+                }
             }
         }
+
+        if seen_paths.len() == previous_seen_count {
+            break;
+        }
+
+        max_depth += 1;
     }
 
     Ok(matches)
@@ -1275,6 +1295,29 @@ mod tests {
         assert_eq!(results.len(), 2);
         assert_eq!(results[0].match_start, 0);
         assert_eq!(results[1].match_start, 7);
+    }
+
+    #[test]
+    fn search_workspace_spends_result_limit_by_layer() {
+        let dir = tempdir().unwrap();
+        fs::create_dir_all(dir.path().join("a/inner")).unwrap();
+        fs::write(dir.path().join("a/inner/deep.txt"), "needle").unwrap();
+        fs::write(dir.path().join("z-root.txt"), "needle").unwrap();
+
+        let results = search_workspace(dir.path(), "needle", 1, 1_000_000).unwrap();
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].path, "z-root.txt");
+    }
+
+    #[test]
+    fn search_workspace_accepts_zero_result_limit() {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join("README.md"), "needle").unwrap();
+
+        let results = search_workspace(dir.path(), "needle", 0, 1_000_000).unwrap();
+
+        assert!(results.is_empty());
     }
 
     #[test]

@@ -118,7 +118,7 @@ Current constraints:
 - Hide dotfiles, dot folders, and generated/internal folders by default, with the native Settings dialog controlling tree visibility, initial tree scan entries, search caps, and UI result counts.
 - Store tree metadata in the app-local SQLite index instead of keeping an unbounded in-memory tree. The index is disposable and can be rebuilt when the workspace reopens. Quick open queries this metadata using the Settings-backed quick-open result cap and, when the current index cannot satisfy the query, expands unloaded folders in layer order within the Settings-backed tree scan cap; stale indexed folders are purged instead of surfaced as search failures. Quick open does not keep a second hidden limit.
 - Always ignore `node_modules`, `target`, `dist`, `.git`, and common generated folders during content search.
-- Workspace content search runs in Rust, skips generated folders and binary-looking files, and applies the Settings-backed result/file-size caps before scanning.
+- Workspace content search runs in Rust, walks the workspace by layer so shallow matches spend the result cap first, skips generated folders and binary-looking files, and applies the Settings-backed result/file-size caps before scanning.
 - Keep syntax language packages dynamically imported by extension.
 - Keep the editor theme tied to `prefers-color-scheme`; the app shell and CodeMirror surface should not drift into different light/dark modes.
 - Keep LSP optional and lazy. Language servers should start only when a matching file type is opened.
