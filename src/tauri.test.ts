@@ -367,6 +367,32 @@ describe("hosted Tauri API transport", () => {
     );
   });
 
+  it("normalizes hosted search metadata responses", async () => {
+    const fetchMock = vi.fn().mockImplementation(async () =>
+      jsonResponse({
+        matches: [
+          {
+            path: "README.md",
+            lineNumber: 1,
+            lineText: "needle",
+            matchStart: 0,
+            matchEnd: 6,
+          },
+        ],
+        truncated: true,
+        limit: 1,
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const { searchFiles } = await import("./tauri");
+
+    await expect(searchFiles("needle")).resolves.toMatchObject({
+      matches: [{ path: "README.md" }],
+      truncated: true,
+      limit: 1,
+    });
+  });
+
   it("passes explicit open file size limits through hosted read requests", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response("readme", {
@@ -543,6 +569,31 @@ describe("hosted Tauri API transport", () => {
       query: "needle",
       maxResults: 500,
       maxFileBytes: 512 * 1024,
+    });
+  });
+
+  it("normalizes native search metadata responses", async () => {
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    const { invoke } = await import("@tauri-apps/api/core");
+    vi.mocked(invoke).mockResolvedValue({
+      matches: [
+        {
+          path: "README.md",
+          lineNumber: 1,
+          lineText: "needle",
+          matchStart: 0,
+          matchEnd: 6,
+        },
+      ],
+      truncated: true,
+      limit: 1,
+    });
+    const { searchFiles } = await import("./tauri");
+
+    await expect(searchFiles("needle")).resolves.toMatchObject({
+      matches: [{ path: "README.md" }],
+      truncated: true,
+      limit: 1,
     });
   });
 

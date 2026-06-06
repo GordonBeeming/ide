@@ -37,6 +37,14 @@ pub struct SearchMatch {
     pub match_end: usize,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceSearch {
+    pub matches: Vec<SearchMatch>,
+    pub truncated: bool,
+    pub limit: usize,
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum WorkspaceError {
     #[error("path is outside the workspace")]
@@ -261,26 +269,45 @@ fn file_entry_from_relative(
     })
 }
 
-pub fn search_workspace(
+#[cfg(test)]
+fn search_workspace(
     root: &Path,
     query: &str,
     max_results: usize,
     max_file_bytes: u64,
 ) -> Result<Vec<SearchMatch>, WorkspaceError> {
+    Ok(search_workspace_with_metadata(root, query, max_results, max_file_bytes)?.matches)
+}
+
+pub fn search_workspace_with_metadata(
+    root: &Path,
+    query: &str,
+    max_results: usize,
+    max_file_bytes: u64,
+) -> Result<WorkspaceSearch, WorkspaceError> {
     let query = query.trim();
     if query.is_empty() {
-        return Ok(Vec::new());
+        return Ok(WorkspaceSearch {
+            matches: Vec::new(),
+            truncated: false,
+            limit: max_results,
+        });
     }
     if query.chars().count() > MAX_SEARCH_QUERY_CHARS {
         return Err(WorkspaceError::SearchQueryTooLong);
     }
     if max_results == 0 {
-        return Ok(Vec::new());
+        return Ok(WorkspaceSearch {
+            matches: Vec::new(),
+            truncated: false,
+            limit: max_results,
+        });
     }
 
     let normalized_query = query.to_lowercase();
     let mut matches = Vec::new();
     let mut seen_paths = HashSet::new();
+    let collection_limit = max_results.saturating_add(1);
     let mut max_depth = 1;
 
     loop {
@@ -289,8 +316,14 @@ pub fn search_workspace(
         walker.max_depth(Some(max_depth));
 
         for result in walker.build() {
-            if matches.len() >= max_results {
-                return Ok(matches);
+            if matches.len() >= collection_limit {
+                let truncated = matches.len() > max_results;
+                matches.truncate(max_results);
+                return Ok(WorkspaceSearch {
+                    matches,
+                    truncated,
+                    limit: max_results,
+                });
             }
 
             let entry = result?;
@@ -324,7 +357,7 @@ pub fn search_workspace(
                 continue;
             };
             'line_matches: for (index, line) in contents.lines().enumerate() {
-                if matches.len() >= max_results {
+                if matches.len() >= collection_limit {
                     break;
                 }
 
@@ -333,7 +366,7 @@ pub fn search_workspace(
                 for (match_start, match_end) in
                     case_insensitive_match_byte_ranges(line, &normalized_query)
                 {
-                    if matches.len() >= max_results {
+                    if matches.len() >= collection_limit {
                         break 'line_matches;
                     }
 
@@ -355,7 +388,13 @@ pub fn search_workspace(
         max_depth += 1;
     }
 
-    Ok(matches)
+    let truncated = matches.len() > max_results;
+    matches.truncate(max_results);
+    Ok(WorkspaceSearch {
+        matches,
+        truncated,
+        limit: max_results,
+    })
 }
 
 pub fn read_workspace_file(
@@ -1381,6 +1420,30 @@ mod tests {
         assert_eq!(results.len(), 2);
         assert_eq!(results[0].match_start, 0);
         assert_eq!(results[1].match_start, 7);
+    }
+
+    #[test]
+    fn search_workspace_reports_when_result_limit_truncates_matches() {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join("README.md"), "needle needle needle\n").unwrap();
+
+        let search = search_workspace_with_metadata(dir.path(), "needle", 2, 1_000_000).unwrap();
+
+        assert_eq!(search.matches.len(), 2);
+        assert_eq!(search.limit, 2);
+        assert!(search.truncated);
+    }
+
+    #[test]
+    fn search_workspace_does_not_report_truncation_when_limit_exactly_fits() {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join("README.md"), "needle needle\n").unwrap();
+
+        let search = search_workspace_with_metadata(dir.path(), "needle", 2, 1_000_000).unwrap();
+
+        assert_eq!(search.matches.len(), 2);
+        assert_eq!(search.limit, 2);
+        assert!(!search.truncated);
     }
 
     #[test]

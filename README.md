@@ -20,7 +20,7 @@ Implemented:
 - Runtime handling for native OS file-open events, including cold-start opens before the frontend has registered listeners.
 - Explicit workspace loading, empty, and load-failure retry states.
 - Collapsible sidebar for focused editing.
-- Collapsed file-name filtering and bounded text search across the current workspace.
+- Collapsed file-name filtering and bounded text search across the current workspace, with visible capped-result notices.
 - Collapsed current-file search over loaded and unsaved editor contents, with Enter/Shift+Enter match navigation.
 - Lightweight command palette for discoverable editor and workspace commands, including native file/folder open actions in the desktop app.
 - Keyboard quick-open palette for opening editor-supported files by path, including arrow-key result selection and SQLite-backed candidates from indexed workspace metadata with bounded on-demand folder expansion.

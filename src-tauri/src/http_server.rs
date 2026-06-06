@@ -18,9 +18,9 @@ use tokio::sync::RwLock;
 use crate::lsp::{LspManager, LspServerStatus};
 use crate::workspace::{
     create_workspace_file, create_workspace_folder, delete_workspace_file, read_workspace_file,
-    rename_workspace_file, scan_workspace_with_metadata, search_workspace,
+    rename_workspace_file, scan_workspace_with_metadata, search_workspace_with_metadata,
     workspace_directory_entries, workspace_entry, workspace_file_entry, write_workspace_file,
-    FileEntry, SearchMatch, WorkspaceScan,
+    FileEntry, WorkspaceScan, WorkspaceSearch,
 };
 use crate::workspace_index::WorkspaceIndex;
 use crate::AgentContext;
@@ -618,7 +618,7 @@ struct SearchQuery {
 async fn search(
     State(state): State<HttpServerState>,
     Query(query): Query<SearchQuery>,
-) -> Result<Json<Vec<SearchMatch>>, ApiError> {
+) -> Result<Json<WorkspaceSearch>, ApiError> {
     let workspace_root = state.workspace_root.read().await.clone();
     let max_results = query
         .max_results
@@ -640,7 +640,7 @@ async fn search(
                 .unwrap_or(1_024 * 1_024)
         })
         .clamp(64 * 1024, 16_384 * 1024);
-    Ok(Json(search_workspace(
+    Ok(Json(search_workspace_with_metadata(
         &workspace_root,
         &query.query,
         max_results,

@@ -78,6 +78,12 @@ export interface SearchMatch {
   matchEnd: number;
 }
 
+export interface SearchResult {
+  matches: SearchMatch[];
+  truncated: boolean;
+  limit: number;
+}
+
 export interface OpenFileRequest {
   workspaceRoot: string;
   path: string;
@@ -329,14 +335,49 @@ export function searchFiles(
   const params = new URLSearchParams({ query });
   if (maxResults !== undefined) params.set("maxResults", String(maxResults));
   if (maxFileBytes !== undefined) params.set("maxFileBytes", String(maxFileBytes));
-  return callApi<SearchMatch[]>("search_files", `/api/search?${params.toString()}`, {
+  return callApi<unknown>("search_files", `/api/search?${params.toString()}`, {
     method: "GET",
     invokeArgs: {
       query,
       ...(maxResults === undefined ? {} : { maxResults }),
       ...(maxFileBytes === undefined ? {} : { maxFileBytes }),
     },
+  }).then((result) => {
+    const normalized = normalizeSearchResult(result);
+    if (!normalized) {
+      throw new Error("Workspace search response was not valid JSON");
+    }
+    return normalized;
   });
+}
+
+export function normalizeSearchResult(value: unknown): SearchResult | undefined {
+  if (Array.isArray(value)) {
+    return {
+      matches: value as SearchMatch[],
+      truncated: false,
+      limit: value.length,
+    };
+  }
+
+  if (
+    value &&
+    typeof value === "object" &&
+    Array.isArray((value as { matches?: unknown }).matches)
+  ) {
+    const candidate = value as {
+      matches: SearchMatch[];
+      truncated?: unknown;
+      limit?: unknown;
+    };
+    return {
+      matches: candidate.matches,
+      truncated: candidate.truncated === true,
+      limit: typeof candidate.limit === "number" ? candidate.limit : candidate.matches.length,
+    };
+  }
+
+  return undefined;
 }
 
 export function searchIndexedFiles(

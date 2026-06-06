@@ -2372,6 +2372,43 @@ describe("App shell interactions", () => {
     expect(screen.getByText("No matches")).toBeInTheDocument();
   });
 
+  it("surfaces capped workspace content search results and opens search settings", async () => {
+    tauriMocks.searchFiles.mockResolvedValueOnce({
+      matches: [
+        {
+          path: "README.md",
+          lineNumber: 1,
+          lineText: "needle",
+          matchStart: 0,
+          matchEnd: 6,
+        },
+      ],
+      truncated: true,
+      limit: 1,
+    });
+    render(<App />);
+
+    fireEvent.change(await openContentSearch(), {
+      target: { value: "needle" },
+    });
+
+    expect(await screen.findByText("README.md:1")).toBeInTheDocument();
+    const notice = screen
+      .getByText(/Showing the first 1 matches/)
+      .closest(".search-results__notice");
+    expect(notice).not.toBeNull();
+    expect(screen.getByText("First 1 matches")).toBeInTheDocument();
+
+    fireEvent.click(within(notice as HTMLElement).getByRole("button", { name: "Settings" }));
+
+    expect(await screen.findByRole("dialog", { name: "Settings" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /Search/ })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(screen.getByLabelText("Workspace search results")).toBeInTheDocument();
+  });
+
   it("clears stale content search errors when a new query starts", async () => {
     tauriMocks.searchFiles
       .mockRejectedValueOnce(new Error("index unavailable"))

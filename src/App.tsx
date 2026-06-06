@@ -86,6 +86,7 @@ import {
   listDirectory,
   listFiles,
   normalizeFileListResult,
+  normalizeSearchResult,
   pickOpenFile,
   pickWorkspaceFolder,
   readFile,
@@ -303,6 +304,10 @@ export default function App() {
   const [currentFindIndex, setCurrentFindIndex] = useState(-1);
   const [editorCommand, setEditorCommand] = useState<EditorCommandRequest>();
   const [searchResults, setSearchResults] = useState<SearchMatch[]>([]);
+  const [searchResultsTruncated, setSearchResultsTruncated] = useState(false);
+  const [searchResultLimitHit, setSearchResultLimitHit] = useState(
+    defaultWorkspaceSearchResultLimit,
+  );
   const [searching, setSearching] = useState(false);
   const [quickOpenVisible, setQuickOpenVisible] = useState(false);
   const [quickOpenQuery, setQuickOpenQuery] = useState("");
@@ -778,6 +783,7 @@ export default function App() {
     const query = contentQuery.trim();
     if (query.length < 2) {
       setSearchResults([]);
+      setSearchResultsTruncated(false);
       setSearching(false);
       return;
     }
@@ -788,14 +794,21 @@ export default function App() {
     let cancelled = false;
     const timeout = window.setTimeout(() => {
       const searchPromise = singleFileMode && singleFilePath
-        ? readFile(singleFilePath, maxOpenFileKb * 1024).then((contents) =>
-            currentFileMatches(
+        ? readFile(singleFilePath, maxOpenFileKb * 1024).then((contents) => {
+            const limit = currentFileSearchResultLimit;
+            const matches = currentFileMatches(
               singleFilePath,
               contents,
               query,
-              currentFileSearchResultLimit,
-            ),
-          )
+              limit + 1,
+            );
+            const truncated = matches.length > limit;
+            return {
+              matches: matches.slice(0, limit),
+              truncated,
+              limit,
+            };
+          })
         : searchFiles(
             query,
             workspaceSearchResultLimit,
@@ -803,15 +816,28 @@ export default function App() {
           );
 
       searchPromise
-        .then((results) => {
+        .then((result) => {
           if (cancelled) return;
-          setSearchResults(results);
-          setStatus(results.length === 1 ? "1 match" : `${results.length} matches`);
+          const normalized = normalizeSearchResult(result);
+          if (!normalized) {
+            throw new Error("Workspace search response was not valid JSON");
+          }
+          setSearchResults(normalized.matches);
+          setSearchResultsTruncated(normalized.truncated);
+          setSearchResultLimitHit(normalized.limit);
+          setStatus(
+            normalized.truncated
+              ? `First ${normalized.matches.length} matches`
+              : normalized.matches.length === 1
+                ? "1 match"
+                : `${normalized.matches.length} matches`,
+          );
         })
         .catch((reason) => {
           if (cancelled) return;
           setError(`Search failed: ${String(reason)}`);
           setSearchResults([]);
+          setSearchResultsTruncated(false);
         })
         .finally(() => {
           if (!cancelled) setSearching(false);
@@ -2749,6 +2775,24 @@ export default function App() {
               <span>{searching ? "Searching" : "Results"}</span>
               <span>{searchResults.length}</span>
             </div>
+            {searchResultsTruncated ? (
+              <div className="search-results__notice" role="status">
+                <TriangleAlert size={14} />
+                <span>
+                  Showing the first {searchResultLimitHit.toLocaleString()} matches.
+                  Raise the result cap in Settings to search further.
+                </span>
+                <button
+                  className="command-button command-button--quiet"
+                  onClick={() => {
+                    setSettingsCategory("search");
+                    setSettingsOpen(true);
+                  }}
+                >
+                  Settings
+                </button>
+              </div>
+            ) : null}
             {searchResults.map((result) => (
               <button
                 className="search-result"
