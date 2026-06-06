@@ -85,6 +85,7 @@ import {
   isNativeTauri,
   listDirectory,
   listFiles,
+  normalizeFileListResult,
   pickOpenFile,
   pickWorkspaceFolder,
   readFile,
@@ -285,6 +286,8 @@ export default function App() {
   const [singleFileMode, setSingleFileMode] = useState(false);
   const [singleFilePath, setSingleFilePath] = useState<string>();
   const [files, setFiles] = useState<FileEntry[]>([]);
+  const [workspaceScanTruncated, setWorkspaceScanTruncated] = useState(false);
+  const [workspaceScanLimitHit, setWorkspaceScanLimitHit] = useState(defaultTreeScanLimit);
   const [loadedFolders, setLoadedFolders] = useState<Set<string>>(() => new Set());
   const loadingFoldersRef = useRef<Set<string>>(new Set());
   const [activePath, setActivePath] = useState<string>();
@@ -682,6 +685,8 @@ export default function App() {
       if (effectiveSingleFileMode && effectiveSingleFilePath) {
         const entry = await statFile(effectiveSingleFilePath);
         setFiles([entry]);
+        setWorkspaceScanTruncated(false);
+        setWorkspaceScanLimitHit(treeScanLimit);
         setLoadedFolders(new Set());
         loadingFoldersRef.current.clear();
         setWorkspaceLoadFailed(false);
@@ -690,8 +695,16 @@ export default function App() {
         return [entry];
       }
 
-      const entries = await listFiles(showDotfiles, showGeneratedInternal, treeScanLimit);
+      const scan = normalizeFileListResult(
+        await listFiles(showDotfiles, showGeneratedInternal, treeScanLimit),
+      );
+      if (!scan) {
+        throw new Error("Workspace file list response was not valid JSON");
+      }
+      const entries = scan.entries;
       setFiles(entries);
+      setWorkspaceScanTruncated(scan.truncated);
+      setWorkspaceScanLimitHit(scan.limit);
       setLoadedFolders(new Set());
       loadingFoldersRef.current.clear();
       setWorkspaceLoadFailed(false);
@@ -2756,6 +2769,24 @@ export default function App() {
         ) : null}
 
         <nav className="file-tree" role="tree" aria-label="Workspace files">
+          {workspaceScanTruncated && !singleFileMode ? (
+            <div className="tree-notice" role="status">
+              <TriangleAlert size={14} />
+              <span>
+                Initial scan reached {workspaceScanLimitHit.toLocaleString()} entries.
+                Expand folders to load more, or raise the limit in Settings.
+              </span>
+              <button
+                className="command-button command-button--quiet"
+                onClick={() => {
+                  setSettingsCategory("indexing");
+                  setSettingsOpen(true);
+                }}
+              >
+                Settings
+              </button>
+            </div>
+          ) : null}
           {workspaceLoading && files.length === 0 ? (
             <div className="tree-empty" role="status">Loading workspace</div>
           ) : workspaceLoadFailed && files.length === 0 ? (

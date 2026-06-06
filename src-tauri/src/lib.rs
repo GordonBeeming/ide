@@ -14,8 +14,9 @@ use tauri_plugin_dialog::DialogExt;
 use tokio::sync::RwLock;
 use workspace::{
     create_workspace_file, create_workspace_folder, delete_workspace_file, read_workspace_file,
-    rename_workspace_file, scan_workspace, search_workspace, workspace_directory_entries,
-    workspace_entry, workspace_file_entry, write_workspace_file, WorkspaceError,
+    rename_workspace_file, scan_workspace_with_metadata, search_workspace,
+    workspace_directory_entries, workspace_entry, workspace_file_entry, write_workspace_file,
+    WorkspaceError,
 };
 
 #[derive(Clone)]
@@ -368,7 +369,7 @@ async fn list_files(
     show_dotfiles: bool,
     show_generated_internal: bool,
     tree_scan_limit: Option<usize>,
-) -> Result<Vec<workspace::FileEntry>, CommandError> {
+) -> Result<workspace::WorkspaceScan, CommandError> {
     let workspace_root = state.workspace_root.read().await.clone();
     let tree_scan_limit = tree_scan_limit.unwrap_or_else(|| {
         state
@@ -378,7 +379,7 @@ async fn list_files(
             .unwrap_or_else(|_| default_tree_scan_limit())
     });
     let tree_scan_limit = tree_scan_limit.clamp(MIN_TREE_SCAN_LIMIT, MAX_TREE_SCAN_LIMIT);
-    let entries = scan_workspace(
+    let scan = scan_workspace_with_metadata(
         &workspace_root,
         tree_scan_limit,
         show_dotfiles,
@@ -387,8 +388,8 @@ async fn list_files(
     .map_err(CommandError::from)?;
     state
         .workspace_index
-        .replace_root_entries(&workspace_root, &entries)?;
-    Ok(entries)
+        .replace_root_entries(&workspace_root, &scan.entries)?;
+    Ok(scan)
 }
 
 #[tauri::command]

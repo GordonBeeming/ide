@@ -10,6 +10,12 @@ export interface FileEntry {
   modifiedMs?: number;
 }
 
+export interface FileListResult {
+  entries: FileEntry[];
+  truncated: boolean;
+  limit: number;
+}
+
 export interface EditorSelection {
   filePath: string;
   text: string;
@@ -195,11 +201,41 @@ export function listFiles(
       ...(treeScanLimit === undefined ? {} : { treeScanLimit }),
     },
   }).then((entries) => {
-    if (!Array.isArray(entries)) {
+    const result = normalizeFileListResult(entries);
+    if (!result) {
       throw new Error("Workspace file list response was not valid JSON");
     }
-    return entries as FileEntry[];
+    return result;
   });
+}
+
+export function normalizeFileListResult(value: unknown): FileListResult | undefined {
+  if (Array.isArray(value)) {
+    return {
+      entries: value as FileEntry[],
+      truncated: false,
+      limit: value.length,
+    };
+  }
+
+  if (
+    value &&
+    typeof value === "object" &&
+    Array.isArray((value as { entries?: unknown }).entries)
+  ) {
+    const candidate = value as {
+      entries: FileEntry[];
+      truncated?: unknown;
+      limit?: unknown;
+    };
+    return {
+      entries: candidate.entries,
+      truncated: candidate.truncated === true,
+      limit: typeof candidate.limit === "number" ? candidate.limit : candidate.entries.length,
+    };
+  }
+
+  return undefined;
 }
 
 export function listDirectory(

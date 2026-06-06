@@ -21,6 +21,14 @@ pub struct FileEntry {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct WorkspaceScan {
+    pub entries: Vec<FileEntry>,
+    pub truncated: bool,
+    pub limit: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SearchMatch {
     pub path: String,
     pub line_number: usize,
@@ -61,12 +69,25 @@ pub enum WorkspaceError {
 
 const MAX_SEARCH_QUERY_CHARS: usize = 128;
 
-pub fn scan_workspace(
+#[cfg(test)]
+fn scan_workspace(
     root: &Path,
     max_entries: usize,
     show_dotfiles: bool,
     show_generated_internal: bool,
 ) -> Result<Vec<FileEntry>, WorkspaceError> {
+    Ok(
+        scan_workspace_with_metadata(root, max_entries, show_dotfiles, show_generated_internal)?
+            .entries,
+    )
+}
+
+pub fn scan_workspace_with_metadata(
+    root: &Path,
+    max_entries: usize,
+    show_dotfiles: bool,
+    show_generated_internal: bool,
+) -> Result<WorkspaceScan, WorkspaceError> {
     let mut entries = Vec::new();
     let mut seen_paths = HashSet::new();
     let mut max_depth = 1;
@@ -77,12 +98,29 @@ pub fn scan_workspace(
         walker.max_depth(Some(max_depth));
 
         for result in walker.build() {
-            if entries.len() >= max_entries {
-                sort_scan_entries(&mut entries);
-                return Ok(entries);
+            let entry = result?;
+            if entry.path() == root {
+                continue;
             }
 
-            let entry = result?;
+            let relative = entry
+                .path()
+                .strip_prefix(root)
+                .map_err(|_| WorkspaceError::OutsideWorkspace)?;
+            let relative_path = normalize_path(relative);
+            if seen_paths.contains(&relative_path) {
+                continue;
+            }
+
+            if entries.len() >= max_entries {
+                sort_scan_entries(&mut entries);
+                return Ok(WorkspaceScan {
+                    entries,
+                    truncated: true,
+                    limit: max_entries,
+                });
+            }
+
             push_scan_entry(root, &entry, &mut entries, &mut seen_paths)?;
         }
 
@@ -94,7 +132,11 @@ pub fn scan_workspace(
     }
 
     sort_scan_entries(&mut entries);
-    Ok(entries)
+    Ok(WorkspaceScan {
+        entries,
+        truncated: false,
+        limit: max_entries,
+    })
 }
 
 fn sort_scan_entries(entries: &mut [FileEntry]) {
@@ -1191,6 +1233,33 @@ mod tests {
         assert!(paths.contains(&"b/two"));
         assert!(!paths.contains(&"a/one/deep.txt"));
         assert!(!paths.contains(&"b/two/deep.txt"));
+    }
+
+    #[test]
+    fn scan_workspace_reports_when_entry_limit_truncates_results() {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join("a.txt"), "").unwrap();
+        fs::write(dir.path().join("b.txt"), "").unwrap();
+        fs::write(dir.path().join("c.txt"), "").unwrap();
+
+        let scan = scan_workspace_with_metadata(dir.path(), 2, false, false).unwrap();
+
+        assert_eq!(scan.entries.len(), 2);
+        assert_eq!(scan.limit, 2);
+        assert!(scan.truncated);
+    }
+
+    #[test]
+    fn scan_workspace_does_not_report_truncation_when_limit_exactly_fits() {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join("a.txt"), "").unwrap();
+        fs::write(dir.path().join("b.txt"), "").unwrap();
+
+        let scan = scan_workspace_with_metadata(dir.path(), 2, false, false).unwrap();
+
+        assert_eq!(scan.entries.len(), 2);
+        assert_eq!(scan.limit, 2);
+        assert!(!scan.truncated);
     }
 
     #[test]

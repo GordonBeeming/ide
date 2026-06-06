@@ -37,6 +37,7 @@ Implemented:
 - Stale-save protection so externally modified files are not silently overwritten.
 - Guarded Rust-native workspace scanning, file/folder creation, rename, deletion, and file read/write commands.
 - SQLite-backed workspace metadata index stored in OS app-local data, refreshed from initial scans, lazy folder loads, bounded quick-open expansion, and editor file mutations.
+- Bounded initial tree scans surface a visible notice when the configured entry cap is reached, while folder expansion continues loading children on demand.
 - User preferences and recents are stored in OS app data; disposable workspace indexes stay in OS app-local data so they can be rebuilt.
 - Common binary/media/font/archive files select in the tree without attempting text-editor reads.
 - CodeMirror 6 editor.

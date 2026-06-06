@@ -253,6 +253,29 @@ button {
   justify-self: start;
 }
 
+.tree-notice {
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 7px;
+  margin: 4px 7px 8px;
+  padding: 8px 9px;
+  border: 1px solid color-mix(in oklch, var(--warning) 44%, var(--border));
+  border-radius: 6px;
+  background: color-mix(in oklch, var(--warning) 10%, var(--panel));
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.3;
+}
+
+.tree-notice svg {
+  color: var(--warning);
+}
+
+.tree-notice span {
+  min-width: 0;
+}
+
 .search-results {
   max-height: 240px;
   overflow: auto;

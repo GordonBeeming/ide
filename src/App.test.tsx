@@ -316,6 +316,31 @@ describe("App shell interactions", () => {
     expect(screen.queryByText("Workspace load failed")).not.toBeInTheDocument();
   });
 
+  it("surfaces bounded initial scans and opens indexing settings", async () => {
+    tauriMocks.listFiles.mockResolvedValueOnce({
+      entries: files,
+      truncated: true,
+      limit: 3,
+    });
+
+    render(<App />);
+
+    expect(await treeButton("README.md")).toBeInTheDocument();
+    const notice = screen
+      .getByText(/Initial scan reached 3 entries/)
+      .closest(".tree-notice");
+    expect(notice).not.toBeNull();
+
+    fireEvent.click(within(notice as HTMLElement).getByRole("button", { name: "Settings" }));
+
+    expect(await screen.findByRole("dialog", { name: "Settings" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /Indexing/ })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(screen.getByLabelText("Initial tree scan entries")).toBeInTheDocument();
+  });
+
   it("keeps the empty editor pane on the active light theme", async () => {
     render(<App />);
 

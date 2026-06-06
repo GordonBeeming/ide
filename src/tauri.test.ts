@@ -506,6 +506,31 @@ describe("hosted Tauri API transport", () => {
     });
   });
 
+  it("normalizes native file listing metadata responses", async () => {
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    const { invoke } = await import("@tauri-apps/api/core");
+    vi.mocked(invoke).mockResolvedValue({
+      entries: [
+        {
+          path: "README.md",
+          name: "README.md",
+          isDir: false,
+          depth: 0,
+          size: 10,
+        },
+      ],
+      truncated: true,
+      limit: 1,
+    });
+    const { listFiles } = await import("./tauri");
+
+    await expect(listFiles()).resolves.toMatchObject({
+      entries: [{ path: "README.md" }],
+      truncated: true,
+      limit: 1,
+    });
+  });
+
   it("passes explicit search limits through native search commands", async () => {
     (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
     const { invoke } = await import("@tauri-apps/api/core");

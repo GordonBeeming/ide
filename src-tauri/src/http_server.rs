@@ -18,8 +18,9 @@ use tokio::sync::RwLock;
 use crate::lsp::{LspManager, LspServerStatus};
 use crate::workspace::{
     create_workspace_file, create_workspace_folder, delete_workspace_file, read_workspace_file,
-    rename_workspace_file, scan_workspace, search_workspace, workspace_directory_entries,
-    workspace_entry, workspace_file_entry, write_workspace_file, FileEntry, SearchMatch,
+    rename_workspace_file, scan_workspace_with_metadata, search_workspace,
+    workspace_directory_entries, workspace_entry, workspace_file_entry, write_workspace_file,
+    FileEntry, SearchMatch, WorkspaceScan,
 };
 use crate::workspace_index::WorkspaceIndex;
 use crate::AgentContext;
@@ -326,7 +327,7 @@ async fn workspace_root(State(state): State<HttpServerState>) -> Json<String> {
 async fn files(
     State(state): State<HttpServerState>,
     Query(query): Query<FilesQuery>,
-) -> Result<Json<Vec<FileEntry>>, ApiError> {
+) -> Result<Json<WorkspaceScan>, ApiError> {
     let workspace_root = state.workspace_root.read().await.clone();
     let tree_scan_limit = query
         .tree_scan_limit
@@ -338,7 +339,7 @@ async fn files(
                 .unwrap_or(4_000)
         })
         .clamp(500, 100_000);
-    let entries = scan_workspace(
+    let scan = scan_workspace_with_metadata(
         &workspace_root,
         tree_scan_limit,
         query.show_dotfiles.unwrap_or(false),
@@ -346,8 +347,8 @@ async fn files(
     )?;
     state
         .workspace_index
-        .replace_root_entries(&workspace_root, &entries)?;
-    Ok(Json(entries))
+        .replace_root_entries(&workspace_root, &scan.entries)?;
+    Ok(Json(scan))
 }
 
 async fn indexed_files(
