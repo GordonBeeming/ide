@@ -23,7 +23,7 @@ Implemented:
 - Collapsed file-name filtering and bounded text search across the current workspace.
 - Collapsed current-file search over loaded and unsaved editor contents, with Enter/Shift+Enter match navigation.
 - Lightweight command palette for discoverable editor and workspace commands, including native file/folder open actions in the desktop app.
-- Keyboard quick-open palette for opening editor-supported files by path, including arrow-key result selection and SQLite-backed candidates from indexed workspace metadata.
+- Keyboard quick-open palette for opening editor-supported files by path, including arrow-key result selection and SQLite-backed candidates from indexed workspace metadata with bounded on-demand folder expansion.
 - Keyboard file/folder creation, tab navigation, numbered tab selection, and close commands.
 - Native Search menu with Go to File, Go to Line, Find in File, and Find in Files actions.
 - Native Navigate menu actions for LSP-backed Go to Definition and Find References.
@@ -36,7 +36,7 @@ Implemented:
 - Save active file and Save All commands.
 - Stale-save protection so externally modified files are not silently overwritten.
 - Guarded Rust-native workspace scanning, file/folder creation, rename, deletion, and file read/write commands.
-- SQLite-backed workspace metadata index stored in OS app-local data, refreshed from initial scans, lazy folder loads, and editor file mutations.
+- SQLite-backed workspace metadata index stored in OS app-local data, refreshed from initial scans, lazy folder loads, bounded quick-open expansion, and editor file mutations.
 - User preferences and recents are stored in OS app data; disposable workspace indexes stay in OS app-local data so they can be rebuilt.
 - Common binary/media/font/archive files select in the tree without attempting text-editor reads.
 - CodeMirror 6 editor.

@@ -130,7 +130,11 @@ pub fn workspace_directory_entries(
     show_dotfiles: bool,
     show_generated_internal: bool,
 ) -> Result<Vec<FileEntry>, WorkspaceError> {
-    let path = resolve_existing_workspace_entry_path(root, relative)?;
+    let path = if relative.is_empty() {
+        root.canonicalize()?
+    } else {
+        resolve_existing_workspace_entry_path(root, relative)?
+    };
     let metadata = fs::symlink_metadata(&path)?;
     if !metadata.is_dir() {
         return Err(WorkspaceError::NotADirectory);
@@ -1182,6 +1186,22 @@ mod tests {
         assert!(paths.contains(&"src/.env"));
         assert!(paths.contains(&"src/node_modules"));
         assert!(!paths.contains(&"src/node_modules/pkg"));
+    }
+
+    #[test]
+    fn workspace_directory_entries_accepts_workspace_root() {
+        let dir = tempdir().unwrap();
+        fs::create_dir_all(dir.path().join("src")).unwrap();
+        fs::write(dir.path().join("README.md"), "").unwrap();
+
+        let entries = workspace_directory_entries(dir.path(), "", false, false).unwrap();
+        let paths = entries
+            .iter()
+            .map(|entry| entry.path.as_str())
+            .collect::<Vec<_>>();
+
+        assert!(paths.contains(&"src"));
+        assert!(paths.contains(&"README.md"));
     }
 
     #[test]

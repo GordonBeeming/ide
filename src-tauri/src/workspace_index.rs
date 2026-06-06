@@ -52,6 +52,10 @@ impl WorkspaceIndex {
         let mut connection = self.connection()?;
         let transaction = connection.transaction()?;
         transaction.execute("DELETE FROM workspace_entries WHERE root = ?1", [&root_key])?;
+        transaction.execute(
+            "DELETE FROM workspace_indexed_directories WHERE root = ?1",
+            [&root_key],
+        )?;
         insert_entries(&transaction, &root_key, entries)?;
         transaction.commit()?;
         Ok(())
@@ -66,11 +70,19 @@ impl WorkspaceIndex {
         let root_key = root_key(root);
         let mut connection = self.connection()?;
         let transaction = connection.transaction()?;
-        transaction.execute(
-            "DELETE FROM workspace_entries WHERE root = ?1 AND parent = ?2",
-            params![root_key, parent],
-        )?;
+        if parent.is_empty() {
+            transaction.execute(
+                "DELETE FROM workspace_entries WHERE root = ?1 AND parent IS NULL",
+                [&root_key],
+            )?;
+        } else {
+            transaction.execute(
+                "DELETE FROM workspace_entries WHERE root = ?1 AND parent = ?2",
+                params![root_key, parent],
+            )?;
+        }
         insert_entries(&transaction, &root_key, entries)?;
+        mark_directory_indexed(&transaction, &root_key, parent)?;
         transaction.commit()?;
         Ok(())
     }
@@ -163,6 +175,45 @@ impl WorkspaceIndex {
         Ok(entries)
     }
 
+    pub fn next_unindexed_directories(
+        &self,
+        root: &Path,
+        limit: usize,
+    ) -> Result<Vec<String>, WorkspaceIndexError> {
+        let root_key = root_key(root);
+        let connection = self.connection()?;
+        let mut directories = Vec::new();
+
+        if !directory_is_indexed(&connection, &root_key, "")? {
+            return Ok(vec![String::new()]);
+        }
+
+        let mut statement = connection.prepare(
+            "SELECT path
+             FROM workspace_entries AS entry
+             WHERE entry.root = ?1
+                AND entry.is_dir = 1
+                AND NOT EXISTS (
+                    SELECT 1
+                    FROM workspace_indexed_directories AS indexed
+                    WHERE indexed.root = entry.root AND indexed.path = entry.path
+                )
+             ORDER BY entry.depth, lower(entry.path), entry.path
+             LIMIT ?2",
+        )?;
+        let rows = statement.query_map(
+            params![root_key, i64::try_from(limit).unwrap_or(i64::MAX)],
+            |row| row.get::<_, String>(0),
+        )?;
+        for row in rows {
+            if directories.len() >= limit {
+                break;
+            }
+            directories.push(row?);
+        }
+        Ok(directories)
+    }
+
     #[cfg(test)]
     pub fn entries_for_root(&self, root: &Path) -> Result<Vec<FileEntry>, WorkspaceIndexError> {
         let root_key = root_key(root);
@@ -227,7 +278,44 @@ fn initialize_schema(connection: &Connection) -> Result<(), WorkspaceIndexError>
 
         CREATE INDEX IF NOT EXISTS idx_workspace_entries_name
             ON workspace_entries(root, lower(name), name);
+
+        CREATE TABLE IF NOT EXISTS workspace_indexed_directories (
+            root TEXT NOT NULL,
+            path TEXT NOT NULL,
+            indexed_at_ms INTEGER NOT NULL DEFAULT (unixepoch('subsec') * 1000),
+            PRIMARY KEY (root, path)
+        );
         ",
+    )?;
+    Ok(())
+}
+
+fn directory_is_indexed(
+    connection: &Connection,
+    root_key: &str,
+    path: &str,
+) -> Result<bool, WorkspaceIndexError> {
+    let count: i64 = connection.query_row(
+        "SELECT COUNT(*)
+         FROM workspace_indexed_directories
+         WHERE root = ?1 AND path = ?2",
+        params![root_key, path],
+        |row| row.get(0),
+    )?;
+    Ok(count > 0)
+}
+
+fn mark_directory_indexed(
+    connection: &Connection,
+    root_key: &str,
+    path: &str,
+) -> Result<(), WorkspaceIndexError> {
+    connection.execute(
+        "INSERT INTO workspace_indexed_directories (root, path)
+         VALUES (?1, ?2)
+         ON CONFLICT(root, path) DO UPDATE SET
+            indexed_at_ms = unixepoch('subsec') * 1000",
+        params![root_key, path],
     )?;
     Ok(())
 }
@@ -367,6 +455,66 @@ mod tests {
             .map(|entry| entry.path)
             .collect::<Vec<_>>();
         assert_eq!(paths, vec!["src", "src/lib.rs"]);
+    }
+
+    #[test]
+    fn next_unindexed_directories_starts_at_root_then_walks_by_layer() {
+        let dir = tempdir().unwrap();
+        let index = WorkspaceIndex::new();
+        index
+            .set_database_path(dir.path().join("workspace-index.sqlite"))
+            .unwrap();
+
+        index
+            .replace_root_entries(
+                dir.path(),
+                &[entry("b", None, true), entry("a", None, true)],
+            )
+            .unwrap();
+
+        assert_eq!(
+            index.next_unindexed_directories(dir.path(), 3).unwrap(),
+            vec![""]
+        );
+
+        index
+            .replace_directory_entries(
+                dir.path(),
+                "",
+                &[entry("b", None, true), entry("a", None, true)],
+            )
+            .unwrap();
+
+        assert_eq!(
+            index.next_unindexed_directories(dir.path(), 3).unwrap(),
+            vec!["a", "b"]
+        );
+    }
+
+    #[test]
+    fn replacing_root_entries_clears_indexed_directory_frontier() {
+        let dir = tempdir().unwrap();
+        let index = WorkspaceIndex::new();
+        index
+            .set_database_path(dir.path().join("workspace-index.sqlite"))
+            .unwrap();
+
+        index
+            .replace_directory_entries(dir.path(), "", &[entry("src", None, true)])
+            .unwrap();
+        assert_eq!(
+            index.next_unindexed_directories(dir.path(), 1).unwrap(),
+            vec!["src"]
+        );
+
+        index
+            .replace_root_entries(dir.path(), &[entry("src", None, true)])
+            .unwrap();
+
+        assert_eq!(
+            index.next_unindexed_directories(dir.path(), 1).unwrap(),
+            vec![""]
+        );
     }
 
     #[test]

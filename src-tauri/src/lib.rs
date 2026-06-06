@@ -389,15 +389,61 @@ async fn search_indexed_files(
     state: State<'_, AppState>,
     query: String,
     limit: Option<usize>,
+    show_dotfiles: bool,
+    show_generated_internal: bool,
 ) -> Result<Vec<workspace::FileEntry>, CommandError> {
     let workspace_root = state.workspace_root.read().await.clone();
     let limit = limit
         .unwrap_or_else(default_quick_open_result_limit)
         .clamp(MIN_QUICK_OPEN_RESULT_LIMIT, MAX_QUICK_OPEN_RESULT_LIMIT);
-    state
-        .workspace_index
-        .search_files(&workspace_root, &query, limit)
-        .map_err(CommandError::from)
+    let expansion_limit = state
+        .tree_scan_limit
+        .read()
+        .map(|limit| *limit)
+        .unwrap_or_else(|_| default_tree_scan_limit())
+        .clamp(MIN_TREE_SCAN_LIMIT, MAX_TREE_SCAN_LIMIT);
+    search_indexed_files_with_expansion(
+        &state.workspace_index,
+        &workspace_root,
+        &query,
+        limit,
+        expansion_limit,
+        show_dotfiles,
+        show_generated_internal,
+    )
+}
+
+fn search_indexed_files_with_expansion(
+    index: &workspace_index::WorkspaceIndex,
+    root: &Path,
+    query: &str,
+    limit: usize,
+    expansion_limit: usize,
+    show_dotfiles: bool,
+    show_generated_internal: bool,
+) -> Result<Vec<workspace::FileEntry>, CommandError> {
+    let mut results = index.search_files(root, query, limit)?;
+    if query.trim().is_empty() || results.len() >= limit {
+        return Ok(results);
+    }
+
+    let mut remaining_entries = expansion_limit;
+    while results.len() < limit && remaining_entries > 0 {
+        let Some(directory) = index
+            .next_unindexed_directories(root, 1)?
+            .into_iter()
+            .next()
+        else {
+            break;
+        };
+        let entries =
+            workspace_directory_entries(root, &directory, show_dotfiles, show_generated_internal)?;
+        remaining_entries = remaining_entries.saturating_sub(entries.len().max(1));
+        index.replace_directory_entries(root, &directory, &entries)?;
+        results = index.search_files(root, query, limit)?;
+    }
+
+    Ok(results)
 }
 
 fn refresh_indexed_entry(

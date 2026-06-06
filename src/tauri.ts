@@ -292,11 +292,18 @@ export function searchFiles(
   });
 }
 
-export function searchIndexedFiles(query: string, limit?: number) {
+export function searchIndexedFiles(
+  query: string,
+  limit?: number,
+  showDotfiles = false,
+  showGeneratedInternal = false,
+) {
   const params = new URLSearchParams();
   const trimmedQuery = query.trim();
   if (trimmedQuery) params.set("query", trimmedQuery);
   if (limit !== undefined) params.set("limit", String(limit));
+  if (showDotfiles) params.set("showDotfiles", "true");
+  if (showGeneratedInternal) params.set("showGeneratedInternal", "true");
   const requestPath = params.toString()
     ? `/api/file-search?${params.toString()}`
     : "/api/file-search";
@@ -305,6 +312,8 @@ export function searchIndexedFiles(query: string, limit?: number) {
     invokeArgs: {
       query,
       ...(limit === undefined ? {} : { limit }),
+      showDotfiles,
+      showGeneratedInternal,
     },
   }).then((entries) => {
     if (!Array.isArray(entries)) {

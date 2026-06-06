@@ -89,6 +89,8 @@ struct FilesQuery {
 struct IndexedFilesQuery {
     query: Option<String>,
     limit: Option<usize>,
+    show_dotfiles: Option<bool>,
+    show_generated_internal: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -358,11 +360,54 @@ async fn indexed_files(
                 .unwrap_or(12)
         })
         .clamp(5, 100);
-    Ok(Json(state.workspace_index.search_files(
+    let expansion_limit = state
+        .tree_scan_limit
+        .read()
+        .map(|limit| *limit)
+        .unwrap_or(4_000)
+        .clamp(500, 100_000);
+    Ok(Json(search_indexed_files_with_expansion(
+        &state.workspace_index,
         &workspace_root,
         query.query.as_deref().unwrap_or(""),
         limit,
+        expansion_limit,
+        query.show_dotfiles.unwrap_or(false),
+        query.show_generated_internal.unwrap_or(false),
     )?))
+}
+
+fn search_indexed_files_with_expansion(
+    index: &WorkspaceIndex,
+    root: &Path,
+    query: &str,
+    limit: usize,
+    expansion_limit: usize,
+    show_dotfiles: bool,
+    show_generated_internal: bool,
+) -> Result<Vec<FileEntry>, ApiError> {
+    let mut results = index.search_files(root, query, limit)?;
+    if query.trim().is_empty() || results.len() >= limit {
+        return Ok(results);
+    }
+
+    let mut remaining_entries = expansion_limit;
+    while results.len() < limit && remaining_entries > 0 {
+        let Some(directory) = index
+            .next_unindexed_directories(root, 1)?
+            .into_iter()
+            .next()
+        else {
+            break;
+        };
+        let entries =
+            workspace_directory_entries(root, &directory, show_dotfiles, show_generated_internal)?;
+        remaining_entries = remaining_entries.saturating_sub(entries.len().max(1));
+        index.replace_directory_entries(root, &directory, &entries)?;
+        results = index.search_files(root, query, limit)?;
+    }
+
+    Ok(results)
 }
 
 async fn directory(

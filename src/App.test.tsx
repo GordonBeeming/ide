@@ -1054,7 +1054,7 @@ describe("App shell interactions", () => {
     fireEvent.change(input, { target: { value: "nested" } });
 
     await waitFor(() =>
-      expect(tauriMocks.searchIndexedFiles).toHaveBeenCalledWith("nested", 12),
+      expect(tauriMocks.searchIndexedFiles).toHaveBeenCalledWith("nested", 12, false, false),
     );
     expect(await screen.findByText("deep/Nested.ts")).toBeInTheDocument();
     fireEvent.keyDown(input, { key: "Enter" });

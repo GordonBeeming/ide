@@ -369,8 +369,12 @@ describe("hosted Tauri API transport", () => {
     const { searchIndexedFiles } = await import("./tauri");
 
     await searchIndexedFiles("app", 20);
+    await searchIndexedFiles("app", 20, true, true);
 
     expect(fetchMock.mock.calls[0][0]).toBe("/api/file-search?query=app&limit=20");
+    expect(fetchMock.mock.calls[1][0]).toBe(
+      "/api/file-search?query=app&limit=20&showDotfiles=true&showGeneratedInternal=true",
+    );
   });
 
   it("passes dotfile visibility through hosted file listing requests", async () => {
@@ -506,6 +510,8 @@ describe("hosted Tauri API transport", () => {
     expect(invoke).toHaveBeenCalledWith("search_indexed_files", {
       query: "app",
       limit: 20,
+      showDotfiles: false,
+      showGeneratedInternal: false,
     });
   });
 

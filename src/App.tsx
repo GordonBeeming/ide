@@ -1023,7 +1023,12 @@ export default function App() {
     let disposed = false;
     setQuickOpenSearching(true);
     const timeout = window.setTimeout(() => {
-      searchIndexedFiles(quickOpenQuery, quickOpenResultLimit)
+      searchIndexedFiles(
+        quickOpenQuery,
+        quickOpenResultLimit,
+        showDotfiles,
+        showGeneratedInternal,
+      )
         .then((entries) => {
           if (disposed) return;
           setQuickOpenIndexedResults(entries);
@@ -1043,7 +1048,14 @@ export default function App() {
       disposed = true;
       window.clearTimeout(timeout);
     };
-  }, [quickOpenQuery, quickOpenResultLimit, quickOpenVisible, singleFileMode]);
+  }, [
+    quickOpenQuery,
+    quickOpenResultLimit,
+    quickOpenVisible,
+    showDotfiles,
+    showGeneratedInternal,
+    singleFileMode,
+  ]);
 
   const closeCommandPalette = useCallback(() => {
     setCommandPaletteVisible(false);
