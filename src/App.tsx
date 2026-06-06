@@ -460,6 +460,20 @@ export default function App() {
     integrationsOpen ||
     settingsOpen ||
     pendingClosePath !== undefined;
+  const modalUiOpenRef = useRef(false);
+
+  useEffect(() => {
+    modalUiOpenRef.current = modalUiOpen;
+  }, [modalUiOpen]);
+
+  const runNativeMenuAction = useCallback((action: () => void) => {
+    if (modalUiOpenRef.current) {
+      setStatus("Close the active dialog first");
+      return;
+    }
+
+    action();
+  }, []);
 
   useEffect(() => {
     const media = window.matchMedia?.(darkSchemeQuery);
@@ -1740,75 +1754,79 @@ export default function App() {
     };
     Promise.all([
       listen<{ path: string }>("menu://open-workspace", (event) => {
-        handleOpenLaunchRequest({
-          type: "workspace",
-          path: event.payload.path,
+        runNativeMenuAction(() => {
+          handleOpenLaunchRequest({
+            type: "workspace",
+            path: event.payload.path,
+          });
         });
       }),
       listen<{ workspaceRoot: string; path: string; singleFile?: boolean }>("menu://open-file", (event) => {
-        handleOpenLaunchRequest({
-          type: "file",
-          workspaceRoot: event.payload.workspaceRoot,
-          path: event.payload.path,
-          singleFile: Boolean(event.payload.singleFile),
+        runNativeMenuAction(() => {
+          handleOpenLaunchRequest({
+            type: "file",
+            workspaceRoot: event.payload.workspaceRoot,
+            path: event.payload.path,
+            singleFile: Boolean(event.payload.singleFile),
+          });
         });
       }),
       listen("menu://close-tab", () => {
-        requestCloseActiveFile();
+        runNativeMenuAction(requestCloseActiveFile);
       }),
       listen("menu://close-all", () => {
-        requestCloseAllFiles();
+        runNativeMenuAction(requestCloseAllFiles);
       }),
       listen("menu://new-file", () => {
-        openNewFileDialog();
+        runNativeMenuAction(openNewFileDialog);
       }),
       listen("menu://new-folder", () => {
-        openNewFolderDialog();
+        runNativeMenuAction(openNewFolderDialog);
       }),
       listen("menu://save-file", () => {
-        void saveActive();
+        runNativeMenuAction(() => void saveActive());
       }),
       listen("menu://save-all", () => {
-        void saveAll();
+        runNativeMenuAction(() => void saveAll());
       }),
       listen("menu://reload-file", () => {
-        requestReloadActiveFile();
+        runNativeMenuAction(requestReloadActiveFile);
       }),
       listen("menu://rename-selected", () => {
-        openRenameDialog();
+        runNativeMenuAction(openRenameDialog);
       }),
       listen("menu://delete-selected", () => {
-        requestDeleteSelectedFile();
+        runNativeMenuAction(requestDeleteSelectedFile);
       }),
       listen("menu://go-to-definition", () => {
-        requestEditorCommand("goToDefinition");
+        runNativeMenuAction(() => requestEditorCommand("goToDefinition"));
       }),
       listen("menu://find-references", () => {
-        requestEditorCommand("findReferences");
+        runNativeMenuAction(() => requestEditorCommand("findReferences"));
       }),
       listen("menu://command-palette", () => {
-        openCommandPalette();
+        runNativeMenuAction(openCommandPalette);
       }),
       listen("menu://quick-open", () => {
-        openQuickOpen();
+        runNativeMenuAction(openQuickOpen);
       }),
       listen("menu://go-to-line", () => {
-        openGoToLineDialog();
+        runNativeMenuAction(openGoToLineDialog);
       }),
       listen("menu://find-in-file", () => {
-        openCurrentFileFind();
+        runNativeMenuAction(openCurrentFileFind);
       }),
       listen("menu://find-in-files", () => {
-        openWorkspaceSearch();
+        runNativeMenuAction(openWorkspaceSearch);
       }),
       listen<string>("app://error", (event) => {
         setError(event.payload);
       }),
       listen("menu://show-integrations", () => {
-        setIntegrationsOpen(true);
+        runNativeMenuAction(() => setIntegrationsOpen(true));
       }),
       listen("menu://show-settings", () => {
-        setSettingsOpen(true);
+        runNativeMenuAction(() => setSettingsOpen(true));
       }),
     ])
       .then((callbacks) => {
@@ -1851,6 +1869,7 @@ export default function App() {
     requestDeleteSelectedFile,
     requestEditorCommand,
     requestReloadActiveFile,
+    runNativeMenuAction,
     saveActive,
     saveAll,
   ]);

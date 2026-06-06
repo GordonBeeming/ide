@@ -1592,6 +1592,39 @@ describe("App shell interactions", () => {
     );
   });
 
+  it("blocks native menu actions while a dirty close confirmation is open", async () => {
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    render(<App />);
+
+    fireEvent.click(await treeButton("README.md"));
+    await findTab("README.md");
+    fireEvent.change(await screen.findByLabelText("Editor README.md"), {
+      target: { value: "changed readme" },
+    });
+
+    await waitFor(() => expect(eventMocks.listeners.has("menu://close-tab")).toBe(true));
+    await waitFor(() => expect(eventMocks.listeners.has("menu://save-file")).toBe(true));
+    await waitFor(() => expect(eventMocks.listeners.has("menu://new-file")).toBe(true));
+
+    act(() => {
+      eventMocks.listeners.get("menu://close-tab")?.({ payload: undefined });
+    });
+
+    const dialog = await screen.findByRole("alertdialog", {
+      name: "Close modified file?",
+    });
+
+    act(() => {
+      eventMocks.listeners.get("menu://save-file")?.({ payload: undefined });
+      eventMocks.listeners.get("menu://new-file")?.({ payload: undefined });
+    });
+
+    expect(tauriMocks.writeFile).not.toHaveBeenCalled();
+    expect(dialog).toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "New file" })).not.toBeInTheDocument();
+    expect(await screen.findByText("Close the active dialog first")).toBeInTheDocument();
+  });
+
   it("saves and closes a dirty tab from the close confirmation", async () => {
     render(<App />);
 
