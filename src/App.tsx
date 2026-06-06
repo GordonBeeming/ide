@@ -436,6 +436,20 @@ export default function App() {
     : lastSegment(workspaceRoot);
   const nativePickerAvailable = isNativeTauri();
   const emptyEditorState = emptyEditorStateForSelection(selectedEntry, openFailure);
+  const modalUiOpen =
+    quickOpenVisible ||
+    commandPaletteVisible ||
+    newFileDialogOpen ||
+    newFolderDialogOpen ||
+    renameDialogOpen ||
+    goToLineDialogOpen ||
+    pendingDeletePath !== undefined ||
+    pendingReloadPath !== undefined ||
+    pendingCloseAll ||
+    pendingAppClose ||
+    integrationsOpen ||
+    settingsOpen ||
+    pendingClosePath !== undefined;
 
   useEffect(() => {
     const media = window.matchMedia?.(darkSchemeQuery);
@@ -2322,6 +2336,79 @@ export default function App() {
 
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
+      if (event.defaultPrevented) return;
+
+      if (event.key === "Escape" && newFileDialogOpen) {
+        event.preventDefault();
+        closeNewFileDialog();
+        return;
+      }
+      if (event.key === "Escape" && newFolderDialogOpen) {
+        event.preventDefault();
+        closeNewFolderDialog();
+        return;
+      }
+      if (event.key === "Escape" && renameDialogOpen) {
+        event.preventDefault();
+        closeRenameDialog();
+        return;
+      }
+      if (event.key === "Escape" && goToLineDialogOpen) {
+        event.preventDefault();
+        closeGoToLineDialog();
+        return;
+      }
+      if (event.key === "Escape" && pendingDeletePath) {
+        event.preventDefault();
+        cancelDeleteSelectedFile();
+        return;
+      }
+      if (event.key === "Escape" && pendingReloadPath) {
+        event.preventDefault();
+        cancelReloadActiveFile();
+        return;
+      }
+      if (event.key === "Escape" && pendingCloseAll) {
+        event.preventDefault();
+        setPendingCloseAll(false);
+        return;
+      }
+      if (event.key === "Escape" && pendingAppClose) {
+        event.preventDefault();
+        setPendingAppClose(false);
+        return;
+      }
+      if (event.key === "Escape" && integrationsOpen) {
+        event.preventDefault();
+        setIntegrationsOpen(false);
+        return;
+      }
+      if (event.key === "Escape" && settingsOpen) {
+        event.preventDefault();
+        setSettingsOpen(false);
+        return;
+      }
+      if (event.key === "Escape" && pendingClosePath) {
+        event.preventDefault();
+        setPendingClosePath(undefined);
+        return;
+      }
+      if (event.key === "Escape" && quickOpenVisible) {
+        event.preventDefault();
+        closeQuickOpen();
+        return;
+      }
+      if (event.key === "Escape" && commandPaletteVisible) {
+        event.preventDefault();
+        closeCommandPalette();
+        return;
+      }
+
+      if (modalUiOpen && isGlobalIdeShortcut(event)) {
+        event.preventDefault();
+        return;
+      }
+
       const numberedPath =
         (event.metaKey || event.ctrlKey) && !event.shiftKey
           ? numberedTabPath(openFiles, event.key)
@@ -2414,45 +2501,6 @@ export default function App() {
       } else if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "f") {
         event.preventDefault();
         openCurrentFileFind();
-      } else if (event.key === "Escape" && newFileDialogOpen) {
-        event.preventDefault();
-        closeNewFileDialog();
-      } else if (event.key === "Escape" && newFolderDialogOpen) {
-        event.preventDefault();
-        closeNewFolderDialog();
-      } else if (event.key === "Escape" && renameDialogOpen) {
-        event.preventDefault();
-        closeRenameDialog();
-      } else if (event.key === "Escape" && goToLineDialogOpen) {
-        event.preventDefault();
-        closeGoToLineDialog();
-      } else if (event.key === "Escape" && pendingDeletePath) {
-        event.preventDefault();
-        cancelDeleteSelectedFile();
-      } else if (event.key === "Escape" && pendingReloadPath) {
-        event.preventDefault();
-        cancelReloadActiveFile();
-      } else if (event.key === "Escape" && pendingCloseAll) {
-        event.preventDefault();
-        setPendingCloseAll(false);
-      } else if (event.key === "Escape" && pendingAppClose) {
-        event.preventDefault();
-        setPendingAppClose(false);
-      } else if (event.key === "Escape" && integrationsOpen) {
-        event.preventDefault();
-        setIntegrationsOpen(false);
-      } else if (event.key === "Escape" && settingsOpen) {
-        event.preventDefault();
-        setSettingsOpen(false);
-      } else if (event.key === "Escape" && pendingClosePath) {
-        event.preventDefault();
-        setPendingClosePath(undefined);
-      } else if (event.key === "Escape" && quickOpenVisible) {
-        event.preventDefault();
-        closeQuickOpen();
-      } else if (event.key === "Escape" && commandPaletteVisible) {
-        event.preventDefault();
-        closeCommandPalette();
       }
     };
     window.addEventListener("keydown", handler);
@@ -2473,6 +2521,7 @@ export default function App() {
     integrationsOpen,
     settingsOpen,
     goToLineDialogOpen,
+    modalUiOpen,
     nativePickerAvailable,
     commandPaletteVisible,
     openRenameDialog,
@@ -3866,6 +3915,16 @@ function filterTree(nodes: TreeNode[], filter: string): TreeNode[] {
 
 function lastSegment(path: string) {
   return path.split(/[\\/]/).filter(Boolean).at(-1) ?? "";
+}
+
+function isGlobalIdeShortcut(event: KeyboardEvent) {
+  const key = event.key.toLowerCase();
+  if (event.key === "F2") return true;
+  if (event.ctrlKey && event.key === "Tab") return true;
+  if (event.ctrlKey && !event.metaKey && key === "g") return true;
+  if (!(event.metaKey || event.ctrlKey)) return false;
+  if (!event.shiftKey && /^[1-9]$/.test(event.key)) return true;
+  return ["s", "r", "w", "b", "n", "o", "p", "f"].includes(key);
 }
 
 function suggestNewFilePath(selectedPath: string | undefined, files: FileEntry[]) {

@@ -1479,6 +1479,42 @@ describe("App shell interactions", () => {
     expect(tauriMocks.writeFile).not.toHaveBeenCalled();
   });
 
+  it("blocks global file shortcuts while a dirty close confirmation is open", async () => {
+    render(<App />);
+
+    fireEvent.click(await treeButton("README.md"));
+    const tab = await findTab("README.md");
+    fireEvent.change(await screen.findByLabelText("Editor README.md"), {
+      target: { value: "changed readme" },
+    });
+
+    fireEvent(
+      tab,
+      new MouseEvent("auxclick", {
+        bubbles: true,
+        cancelable: true,
+        button: 1,
+      }),
+    );
+
+    const dialog = await screen.findByRole("alertdialog", {
+      name: "Close modified file?",
+    });
+    fireEvent.keyDown(window, { key: "s", metaKey: true });
+
+    expect(tauriMocks.writeFile).not.toHaveBeenCalled();
+    expect(dialog).toBeInTheDocument();
+    expect(tabButton("README.md")).toBeTruthy();
+
+    fireEvent.keyDown(window, { key: "Escape" });
+
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("alertdialog", { name: "Close modified file?" }),
+      ).not.toBeInTheDocument(),
+    );
+  });
+
   it("saves and closes a dirty tab from the close confirmation", async () => {
     render(<App />);
 
