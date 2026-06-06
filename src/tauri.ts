@@ -94,9 +94,11 @@ export interface PersistedViewSettings {
   showDotfiles: boolean;
   showGeneratedInternal: boolean;
   treeScanLimit?: number;
+  maxOpenFileKb?: number;
   workspaceSearchResultLimit?: number;
   workspaceSearchMaxFileKb?: number;
   currentFileSearchResultLimit?: number;
+  currentFileResultPreviewLimit?: number;
   quickOpenResultLimit?: number;
   commandPaletteResultLimit?: number;
 }
@@ -118,9 +120,11 @@ const defaultUiSnapshot: PersistedUiSnapshot = {
     showDotfiles: false,
     showGeneratedInternal: false,
     treeScanLimit: 4000,
+    maxOpenFileKb: 5120,
     workspaceSearchResultLimit: 200,
     workspaceSearchMaxFileKb: 1024,
     currentFileSearchResultLimit: 200,
+    currentFileResultPreviewLimit: 12,
     quickOpenResultLimit: 12,
     commandPaletteResultLimit: 18,
   },
@@ -216,10 +220,17 @@ export function listDirectory(
   });
 }
 
-export function readFile(path: string) {
-  return callApi<string>("read_file", `/api/file?path=${encodeURIComponent(path)}`, {
+export function readFile(path: string, maxOpenBytes?: number) {
+  const params = new URLSearchParams({ path });
+  if (maxOpenBytes !== undefined) {
+    params.set("maxOpenBytes", String(maxOpenBytes));
+  }
+  return callApi<string>("read_file", `/api/file?${params.toString()}`, {
     method: "GET",
-    invokeArgs: { path },
+    invokeArgs: {
+      path,
+      ...(maxOpenBytes === undefined ? {} : { maxOpenBytes }),
+    },
   });
 }
 

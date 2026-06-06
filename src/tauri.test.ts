@@ -318,9 +318,11 @@ describe("hosted Tauri API transport", () => {
         showDotfiles: false,
         showGeneratedInternal: false,
         treeScanLimit: 4000,
+        maxOpenFileKb: 5120,
         workspaceSearchResultLimit: 200,
         workspaceSearchMaxFileKb: 1024,
         currentFileSearchResultLimit: 200,
+        currentFileResultPreviewLimit: 12,
         quickOpenResultLimit: 12,
         commandPaletteResultLimit: 18,
       },
@@ -334,9 +336,11 @@ describe("hosted Tauri API transport", () => {
         showDotfiles: true,
         showGeneratedInternal: true,
         treeScanLimit: 4000,
+        maxOpenFileKb: 5120,
         workspaceSearchResultLimit: 200,
         workspaceSearchMaxFileKb: 1024,
         currentFileSearchResultLimit: 200,
+        currentFileResultPreviewLimit: 12,
         quickOpenResultLimit: 12,
         commandPaletteResultLimit: 18,
       },
@@ -360,6 +364,24 @@ describe("hosted Tauri API transport", () => {
 
     expect(fetchMock.mock.calls[0][0]).toBe(
       "/api/search?query=needle&maxResults=500&maxFileBytes=524288",
+    );
+  });
+
+  it("passes explicit open file size limits through hosted read requests", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response("readme", {
+        status: 200,
+        headers: { "Content-Type": "text/plain" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const { readFile } = await import("./tauri");
+
+    await readFile("README.md", 5 * 1024);
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/file?path=README.md&maxOpenBytes=5120",
+      expect.objectContaining({ method: "GET" }),
     );
   });
 
@@ -496,6 +518,20 @@ describe("hosted Tauri API transport", () => {
       query: "needle",
       maxResults: 500,
       maxFileBytes: 512 * 1024,
+    });
+  });
+
+  it("passes explicit open file size limits through native read commands", async () => {
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    const { invoke } = await import("@tauri-apps/api/core");
+    vi.mocked(invoke).mockResolvedValue("readme");
+    const { readFile } = await import("./tauri");
+
+    await readFile("README.md", 5 * 1024);
+
+    expect(invoke).toHaveBeenCalledWith("read_file", {
+      path: "README.md",
+      maxOpenBytes: 5 * 1024,
     });
   });
 

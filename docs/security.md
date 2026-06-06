@@ -7,7 +7,7 @@ Security is a core product constraint for this IDE. Changes should be reviewed w
 - Workspace file/folder creation, rename, deletion, file reads, and file writes are resolved relative to the workspace root.
 - Absolute paths and parent traversal are rejected.
 - Existing file and folder operations reject symbolic links, and content search skips symbolic links, so a workspace cannot expose files outside its root through symlink targets.
-- File opens are capped at 5 MiB.
+- File opens are capped by the Settings-backed editable file size limit, sanitized by the Rust backend.
 - Common generated folders and `.git` are skipped during tree scans.
 - Content search skips generated folders, skips binary-looking files, caps searched file size, caps query length, and caps result count.
 - New-file creation uses create-new filesystem semantics so existing files are not overwritten, then captures the created file timestamp for first-save conflict detection.

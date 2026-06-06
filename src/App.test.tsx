@@ -698,9 +698,11 @@ describe("App shell interactions", () => {
           showDotfiles: false,
           showGeneratedInternal: false,
           treeScanLimit: 4000,
+          maxOpenFileKb: 5120,
           workspaceSearchResultLimit: 200,
           workspaceSearchMaxFileKb: 1024,
           currentFileSearchResultLimit: 200,
+          currentFileResultPreviewLimit: 12,
           quickOpenResultLimit: 12,
           commandPaletteResultLimit: 18,
         }),
@@ -860,6 +862,81 @@ describe("App shell interactions", () => {
         expect.objectContaining({
           workspaceSearchResultLimit: 500,
           workspaceSearchMaxFileKb: 512,
+        }),
+        expect.any(Object),
+      ),
+    );
+  });
+
+  it("applies the editable file size limit from Settings", async () => {
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+
+    render(<App />);
+
+    expect(await treeButton("README.md")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(eventMocks.listeners.has("menu://show-settings")).toBe(true),
+    );
+
+    eventMocks.listeners.get("menu://show-settings")?.({ payload: undefined });
+    fireEvent.change(await screen.findByLabelText("Max editable file KB"), {
+      target: { value: "2048" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+
+    fireEvent.click(await treeButton("README.md"));
+
+    await waitFor(() =>
+      expect(tauriMocks.readFile).toHaveBeenCalledWith("README.md", 2048 * 1024),
+    );
+    await waitFor(() =>
+      expect(tauriMocks.updateUiState).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          maxOpenFileKb: 2048,
+        }),
+        expect.any(Object),
+      ),
+    );
+  });
+
+  it("applies the current-file result row limit from Settings", async () => {
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    tauriMocks.readFile.mockImplementation(async (path: string) => {
+      if (path === "README.md") {
+        return "needle one\nneedle two\nneedle three\nneedle four";
+      }
+      if (path === "src/App.tsx") return "export function App() {}";
+      return "";
+    });
+
+    render(<App />);
+
+    expect(await treeButton("README.md")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(eventMocks.listeners.has("menu://show-settings")).toBe(true),
+    );
+
+    eventMocks.listeners.get("menu://show-settings")?.({ payload: undefined });
+    fireEvent.change(await screen.findByLabelText("Current-file result rows"), {
+      target: { value: "3" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+
+    fireEvent.click(await treeButton("README.md"));
+    await findTab("README.md");
+    fireEvent.change(await openCurrentFileFind(), {
+      target: { value: "needle" },
+    });
+
+    const results = screen.getByLabelText("Current file search results");
+    expect(results).toHaveTextContent("4");
+    expect(within(results).getByText("line 1")).toBeInTheDocument();
+    expect(within(results).getByText("line 3")).toBeInTheDocument();
+    expect(within(results).queryByText("line 4")).not.toBeInTheDocument();
+    await waitFor(() =>
+      expect(tauriMocks.updateUiState).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          currentFileResultPreviewLimit: 3,
         }),
         expect.any(Object),
       ),

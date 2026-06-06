@@ -59,7 +59,6 @@ pub enum WorkspaceError {
     Walk(#[from] ignore::Error),
 }
 
-const MAX_OPEN_BYTES: u64 = 5 * 1024 * 1024;
 const MAX_SEARCH_QUERY_CHARS: usize = 128;
 
 pub fn scan_workspace(
@@ -317,10 +316,14 @@ pub fn search_workspace(
     Ok(matches)
 }
 
-pub fn read_workspace_file(root: &Path, relative: &str) -> Result<String, WorkspaceError> {
+pub fn read_workspace_file(
+    root: &Path,
+    relative: &str,
+    max_open_bytes: u64,
+) -> Result<String, WorkspaceError> {
     let path = resolve_existing_workspace_file_path(root, relative)?;
     let metadata = fs::metadata(&path)?;
-    if metadata.len() > MAX_OPEN_BYTES {
+    if metadata.len() > max_open_bytes {
         return Err(WorkspaceError::FileTooLarge);
     }
 
@@ -684,7 +687,7 @@ mod tests {
     #[test]
     fn read_workspace_file_rejects_parent_traversal() {
         let dir = tempdir().unwrap();
-        let result = read_workspace_file(dir.path(), "../secret.txt");
+        let result = read_workspace_file(dir.path(), "../secret.txt", 1024);
 
         assert!(matches!(result, Err(WorkspaceError::InvalidPath)));
     }
@@ -692,7 +695,7 @@ mod tests {
     #[test]
     fn read_workspace_file_rejects_absolute_paths() {
         let dir = tempdir().unwrap();
-        let result = read_workspace_file(dir.path(), "/etc/hosts");
+        let result = read_workspace_file(dir.path(), "/etc/hosts", 1024);
 
         assert!(matches!(result, Err(WorkspaceError::OutsideWorkspace)));
     }
@@ -702,9 +705,9 @@ mod tests {
         let dir = tempdir().unwrap();
         fs::write(dir.path().join("note.txt"), "before").unwrap();
 
-        let before = read_workspace_file(dir.path(), "note.txt").unwrap();
+        let before = read_workspace_file(dir.path(), "note.txt", 1024).unwrap();
         write_workspace_file(dir.path(), "note.txt", "after", None).unwrap();
-        let after = read_workspace_file(dir.path(), "note.txt").unwrap();
+        let after = read_workspace_file(dir.path(), "note.txt", 1024).unwrap();
 
         assert_eq!(before, "before");
         assert_eq!(after, "after");
@@ -715,9 +718,23 @@ mod tests {
         let dir = tempdir().unwrap();
         fs::write(dir.path().join("invalid.txt"), b"valid prefix \xFF").unwrap();
 
-        let result = read_workspace_file(dir.path(), "invalid.txt");
+        let result = read_workspace_file(dir.path(), "invalid.txt", 1024);
 
         assert!(matches!(result, Err(WorkspaceError::UnsupportedEncoding)));
+    }
+
+    #[test]
+    fn read_workspace_file_respects_configured_size_limit() {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join("large.txt"), "123456").unwrap();
+
+        let result = read_workspace_file(dir.path(), "large.txt", 5);
+
+        assert!(matches!(result, Err(WorkspaceError::FileTooLarge)));
+        assert_eq!(
+            read_workspace_file(dir.path(), "large.txt", 6).unwrap(),
+            "123456"
+        );
     }
 
     #[cfg(unix)]
@@ -732,7 +749,7 @@ mod tests {
         )
         .unwrap();
 
-        let result = read_workspace_file(dir.path(), "linked.txt");
+        let result = read_workspace_file(dir.path(), "linked.txt", 1024);
 
         assert!(matches!(result, Err(WorkspaceError::SymlinkUnsupported)));
     }

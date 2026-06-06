@@ -157,6 +157,9 @@ type SidebarSearchMode = "filter" | "content";
 const minTreeScanLimit = 500;
 const maxTreeScanLimit = 100000;
 const defaultTreeScanLimit = 4000;
+const minMaxOpenFileKb = 64;
+const maxMaxOpenFileKb = 65536;
+const defaultMaxOpenFileKb = 5120;
 const minWorkspaceSearchResultLimit = 25;
 const maxWorkspaceSearchResultLimit = 5000;
 const defaultWorkspaceSearchResultLimit = 200;
@@ -166,6 +169,9 @@ const defaultWorkspaceSearchMaxFileKb = 1024;
 const minCurrentFileSearchResultLimit = 25;
 const maxCurrentFileSearchResultLimit = 5000;
 const defaultCurrentFileSearchResultLimit = 200;
+const minCurrentFileResultPreviewLimit = 3;
+const maxCurrentFileResultPreviewLimit = 100;
+const defaultCurrentFileResultPreviewLimit = 12;
 const minQuickOpenResultLimit = 5;
 const maxQuickOpenResultLimit = 100;
 const defaultQuickOpenResultLimit = 12;
@@ -311,6 +317,7 @@ export default function App() {
   const [showDotfiles, setShowDotfiles] = useState(false);
   const [showGeneratedInternal, setShowGeneratedInternal] = useState(false);
   const [treeScanLimit, setTreeScanLimit] = useState(defaultTreeScanLimit);
+  const [maxOpenFileKb, setMaxOpenFileKb] = useState(defaultMaxOpenFileKb);
   const [workspaceSearchResultLimit, setWorkspaceSearchResultLimit] = useState(
     defaultWorkspaceSearchResultLimit,
   );
@@ -319,6 +326,9 @@ export default function App() {
   );
   const [currentFileSearchResultLimit, setCurrentFileSearchResultLimit] = useState(
     defaultCurrentFileSearchResultLimit,
+  );
+  const [currentFileResultPreviewLimit, setCurrentFileResultPreviewLimit] = useState(
+    defaultCurrentFileResultPreviewLimit,
   );
   const [quickOpenResultLimit, setQuickOpenResultLimit] = useState(
     defaultQuickOpenResultLimit,
@@ -507,6 +517,14 @@ export default function App() {
     setShowDotfiles(snapshot.view.showDotfiles);
     setShowGeneratedInternal(snapshot.view.showGeneratedInternal);
     setTreeScanLimit(sanitizeTreeScanLimit(snapshot.view.treeScanLimit));
+    setMaxOpenFileKb(
+      sanitizeNumberLimit(
+        snapshot.view.maxOpenFileKb,
+        minMaxOpenFileKb,
+        maxMaxOpenFileKb,
+        defaultMaxOpenFileKb,
+      ),
+    );
     setWorkspaceSearchResultLimit(
       sanitizeNumberLimit(
         snapshot.view.workspaceSearchResultLimit,
@@ -529,6 +547,14 @@ export default function App() {
         minCurrentFileSearchResultLimit,
         maxCurrentFileSearchResultLimit,
         defaultCurrentFileSearchResultLimit,
+      ),
+    );
+    setCurrentFileResultPreviewLimit(
+      sanitizeNumberLimit(
+        snapshot.view.currentFileResultPreviewLimit,
+        minCurrentFileResultPreviewLimit,
+        maxCurrentFileResultPreviewLimit,
+        defaultCurrentFileResultPreviewLimit,
       ),
     );
     setQuickOpenResultLimit(
@@ -722,7 +748,7 @@ export default function App() {
     let cancelled = false;
     const timeout = window.setTimeout(() => {
       const searchPromise = singleFileMode && singleFilePath
-        ? readFile(singleFilePath).then((contents) =>
+        ? readFile(singleFilePath, maxOpenFileKb * 1024).then((contents) =>
             currentFileMatches(
               singleFilePath,
               contents,
@@ -759,6 +785,7 @@ export default function App() {
   }, [
     contentQuery,
     currentFileSearchResultLimit,
+    maxOpenFileKb,
     singleFileMode,
     singleFilePath,
     workspaceSearchMaxFileKb,
@@ -827,7 +854,7 @@ export default function App() {
       }
 
       try {
-        const contents = await readFile(entry.path);
+        const contents = await readFile(entry.path, maxOpenFileKb * 1024);
         setOpenFiles((current) =>
           addPreviewTab(current, {
             path: entry.path,
@@ -850,7 +877,7 @@ export default function App() {
         setStatus("Open failed");
       }
     },
-    [openFiles, singleFileMode],
+    [maxOpenFileKb, openFiles, singleFileMode],
   );
 
   const openPathByName = useCallback(
@@ -905,7 +932,7 @@ export default function App() {
           return {
             tab: {
               path,
-              contents: await readFile(path),
+              contents: await readFile(path, maxOpenFileKb * 1024),
               dirty: false,
               modifiedMs: entry.modifiedMs,
               pinned: true,
@@ -974,6 +1001,7 @@ export default function App() {
     };
   }, [
     files,
+    maxOpenFileKb,
     singleFileMode,
     uiStateLoaded,
     workspaceLoadFailed,
@@ -995,9 +1023,11 @@ export default function App() {
           showDotfiles,
           showGeneratedInternal,
           treeScanLimit,
+          maxOpenFileKb,
           workspaceSearchResultLimit,
           workspaceSearchMaxFileKb,
           currentFileSearchResultLimit,
+          currentFileResultPreviewLimit,
           quickOpenResultLimit,
           commandPaletteResultLimit,
         },
@@ -1022,9 +1052,11 @@ export default function App() {
     showGeneratedInternal,
     singleFileMode,
     treeScanLimit,
+    maxOpenFileKb,
     workspaceSearchResultLimit,
     workspaceSearchMaxFileKb,
     currentFileSearchResultLimit,
+    currentFileResultPreviewLimit,
     quickOpenResultLimit,
     commandPaletteResultLimit,
     uiStateLoaded,
@@ -1312,7 +1344,7 @@ export default function App() {
     setError(undefined);
     setStatus(`Reloading ${path}`);
     try {
-      const contents = await readFile(path);
+      const contents = await readFile(path, maxOpenFileKb * 1024);
       const refreshedEntries = await refreshFiles();
       const modifiedMs = refreshedEntries.find((entry) => entry.path === path)?.modifiedMs;
       setOpenFiles((current) =>
@@ -2884,7 +2916,7 @@ export default function App() {
                 <span>Find in {activeFile.path}</span>
                 <span>{currentFindResults.length}</span>
               </div>
-              {currentFindResults.slice(0, 12).map((result, index) => (
+              {currentFindResults.slice(0, currentFileResultPreviewLimit).map((result, index) => (
                 <button
                   className={[
                     "current-find-result",
@@ -3249,6 +3281,27 @@ export default function App() {
                       }}
                     />
                   </label>
+                  <label className="dialog-field">
+                    <span>Max editable file KB</span>
+                    <input
+                      inputMode="numeric"
+                      min={minMaxOpenFileKb}
+                      max={maxMaxOpenFileKb}
+                      step={64}
+                      type="number"
+                      value={maxOpenFileKb}
+                      onChange={(event) => {
+                        const next = sanitizeNumberLimit(
+                          Number(event.target.value),
+                          minMaxOpenFileKb,
+                          maxMaxOpenFileKb,
+                          defaultMaxOpenFileKb,
+                        );
+                        setMaxOpenFileKb(next);
+                        setStatus(`Editable file limit set to ${next} KB`);
+                      }}
+                    />
+                  </label>
                 </section>
 
                 <section className="settings-section" aria-label="Search limits">
@@ -3313,6 +3366,27 @@ export default function App() {
                         );
                         setCurrentFileSearchResultLimit(next);
                         setStatus(`Current-file search result limit set to ${next}`);
+                      }}
+                    />
+                  </label>
+                  <label className="dialog-field">
+                    <span>Current-file result rows</span>
+                    <input
+                      inputMode="numeric"
+                      min={minCurrentFileResultPreviewLimit}
+                      max={maxCurrentFileResultPreviewLimit}
+                      step={1}
+                      type="number"
+                      value={currentFileResultPreviewLimit}
+                      onChange={(event) => {
+                        const next = sanitizeNumberLimit(
+                          Number(event.target.value),
+                          minCurrentFileResultPreviewLimit,
+                          maxCurrentFileResultPreviewLimit,
+                          defaultCurrentFileResultPreviewLimit,
+                        );
+                        setCurrentFileResultPreviewLimit(next);
+                        setStatus(`Current-file result rows set to ${next}`);
                       }}
                     />
                   </label>

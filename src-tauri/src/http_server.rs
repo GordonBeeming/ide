@@ -28,6 +28,7 @@ use crate::AgentContext;
 pub struct HttpServerState {
     workspace_root: Arc<RwLock<PathBuf>>,
     tree_scan_limit: Arc<std::sync::RwLock<usize>>,
+    max_open_file_bytes: Arc<std::sync::RwLock<u64>>,
     workspace_search_result_limit: Arc<std::sync::RwLock<usize>>,
     workspace_search_max_file_bytes: Arc<std::sync::RwLock<u64>>,
     quick_open_result_limit: Arc<std::sync::RwLock<usize>>,
@@ -41,6 +42,7 @@ pub struct HttpServerState {
 pub struct HttpServerConfig {
     pub root_path: Arc<RwLock<PathBuf>>,
     pub tree_scan_limit: Arc<std::sync::RwLock<usize>>,
+    pub max_open_file_bytes: Arc<std::sync::RwLock<u64>>,
     pub workspace_search_result_limit: Arc<std::sync::RwLock<usize>>,
     pub workspace_search_max_file_bytes: Arc<std::sync::RwLock<u64>>,
     pub quick_open_result_limit: Arc<std::sync::RwLock<usize>>,
@@ -72,6 +74,7 @@ struct CodexMcpStatus {
 #[serde(rename_all = "camelCase")]
 struct FileQuery {
     path: String,
+    max_open_bytes: Option<u64>,
     show_dotfiles: Option<bool>,
     show_generated_internal: Option<bool>,
 }
@@ -149,6 +152,7 @@ pub async fn start_http_server(config: HttpServerConfig) -> Result<HttpServerInf
     let HttpServerConfig {
         root_path,
         tree_scan_limit,
+        max_open_file_bytes,
         workspace_search_result_limit,
         workspace_search_max_file_bytes,
         quick_open_result_limit,
@@ -163,6 +167,7 @@ pub async fn start_http_server(config: HttpServerConfig) -> Result<HttpServerInf
     let state = HttpServerState {
         workspace_root: root_path,
         tree_scan_limit,
+        max_open_file_bytes,
         workspace_search_result_limit,
         workspace_search_max_file_bytes,
         quick_open_result_limit,
@@ -450,7 +455,21 @@ async fn read_file(
     Query(query): Query<FileQuery>,
 ) -> Result<String, ApiError> {
     let workspace_root = state.workspace_root.read().await.clone();
-    Ok(read_workspace_file(&workspace_root, &query.path)?)
+    let max_open_bytes = query
+        .max_open_bytes
+        .unwrap_or_else(|| {
+            state
+                .max_open_file_bytes
+                .read()
+                .map(|limit| *limit)
+                .unwrap_or(5_120 * 1024)
+        })
+        .clamp(64 * 1024, 65_536 * 1024);
+    Ok(read_workspace_file(
+        &workspace_root,
+        &query.path,
+        max_open_bytes,
+    )?)
 }
 
 async fn stat_file(
@@ -1250,6 +1269,7 @@ mod tests {
         let state = HttpServerState {
             workspace_root: Arc::new(RwLock::new(dir.path().to_path_buf())),
             tree_scan_limit: Arc::new(std::sync::RwLock::new(4_000)),
+            max_open_file_bytes: Arc::new(std::sync::RwLock::new(5_120 * 1024)),
             workspace_search_result_limit: Arc::new(std::sync::RwLock::new(200)),
             workspace_search_max_file_bytes: Arc::new(std::sync::RwLock::new(1_024 * 1_024)),
             quick_open_result_limit: Arc::new(std::sync::RwLock::new(12)),
@@ -1284,6 +1304,7 @@ mod tests {
         let state = HttpServerState {
             workspace_root: Arc::new(RwLock::new(dir.path().to_path_buf())),
             tree_scan_limit: Arc::new(std::sync::RwLock::new(4_000)),
+            max_open_file_bytes: Arc::new(std::sync::RwLock::new(5_120 * 1024)),
             workspace_search_result_limit: Arc::new(std::sync::RwLock::new(200)),
             workspace_search_max_file_bytes: Arc::new(std::sync::RwLock::new(1_024 * 1_024)),
             quick_open_result_limit: Arc::new(std::sync::RwLock::new(12)),
@@ -1322,6 +1343,7 @@ mod tests {
         let state = HttpServerState {
             workspace_root: Arc::new(RwLock::new(dir.path().to_path_buf())),
             tree_scan_limit: Arc::new(std::sync::RwLock::new(4_000)),
+            max_open_file_bytes: Arc::new(std::sync::RwLock::new(5_120 * 1024)),
             workspace_search_result_limit: Arc::new(std::sync::RwLock::new(200)),
             workspace_search_max_file_bytes: Arc::new(std::sync::RwLock::new(1_024 * 1_024)),
             quick_open_result_limit: Arc::new(std::sync::RwLock::new(12)),
@@ -1360,6 +1382,7 @@ mod tests {
         let state = HttpServerState {
             workspace_root: Arc::new(RwLock::new(dir.path().to_path_buf())),
             tree_scan_limit: Arc::new(std::sync::RwLock::new(4_000)),
+            max_open_file_bytes: Arc::new(std::sync::RwLock::new(5_120 * 1024)),
             workspace_search_result_limit: Arc::new(std::sync::RwLock::new(200)),
             workspace_search_max_file_bytes: Arc::new(std::sync::RwLock::new(1_024 * 1_024)),
             quick_open_result_limit: Arc::new(std::sync::RwLock::new(12)),
@@ -1393,6 +1416,7 @@ mod tests {
         let state = HttpServerState {
             workspace_root: Arc::new(RwLock::new(dir.path().to_path_buf())),
             tree_scan_limit: Arc::new(std::sync::RwLock::new(4_000)),
+            max_open_file_bytes: Arc::new(std::sync::RwLock::new(5_120 * 1024)),
             workspace_search_result_limit: Arc::new(std::sync::RwLock::new(200)),
             workspace_search_max_file_bytes: Arc::new(std::sync::RwLock::new(1_024 * 1_024)),
             quick_open_result_limit: Arc::new(std::sync::RwLock::new(12)),
@@ -1430,6 +1454,7 @@ mod tests {
         let state = HttpServerState {
             workspace_root: Arc::new(RwLock::new(dir.path().to_path_buf())),
             tree_scan_limit: Arc::new(std::sync::RwLock::new(4_000)),
+            max_open_file_bytes: Arc::new(std::sync::RwLock::new(5_120 * 1024)),
             workspace_search_result_limit: Arc::new(std::sync::RwLock::new(200)),
             workspace_search_max_file_bytes: Arc::new(std::sync::RwLock::new(1_024 * 1_024)),
             quick_open_result_limit: Arc::new(std::sync::RwLock::new(12)),
@@ -1461,6 +1486,7 @@ mod tests {
         let state = HttpServerState {
             workspace_root: Arc::new(RwLock::new(dir.path().to_path_buf())),
             tree_scan_limit: Arc::new(std::sync::RwLock::new(4_000)),
+            max_open_file_bytes: Arc::new(std::sync::RwLock::new(5_120 * 1024)),
             workspace_search_result_limit: Arc::new(std::sync::RwLock::new(200)),
             workspace_search_max_file_bytes: Arc::new(std::sync::RwLock::new(1_024 * 1_024)),
             quick_open_result_limit: Arc::new(std::sync::RwLock::new(12)),
@@ -1498,6 +1524,7 @@ mod tests {
         let state = HttpServerState {
             workspace_root: Arc::new(RwLock::new(dir.path().to_path_buf())),
             tree_scan_limit: Arc::new(std::sync::RwLock::new(4_000)),
+            max_open_file_bytes: Arc::new(std::sync::RwLock::new(5_120 * 1024)),
             workspace_search_result_limit: Arc::new(std::sync::RwLock::new(200)),
             workspace_search_max_file_bytes: Arc::new(std::sync::RwLock::new(1_024 * 1_024)),
             quick_open_result_limit: Arc::new(std::sync::RwLock::new(12)),
@@ -1533,6 +1560,7 @@ mod tests {
         let state = HttpServerState {
             workspace_root: Arc::new(RwLock::new(dir.path().to_path_buf())),
             tree_scan_limit: Arc::new(std::sync::RwLock::new(4_000)),
+            max_open_file_bytes: Arc::new(std::sync::RwLock::new(5_120 * 1024)),
             workspace_search_result_limit: Arc::new(std::sync::RwLock::new(200)),
             workspace_search_max_file_bytes: Arc::new(std::sync::RwLock::new(1_024 * 1_024)),
             quick_open_result_limit: Arc::new(std::sync::RwLock::new(12)),
@@ -1571,6 +1599,7 @@ mod tests {
         let state = HttpServerState {
             workspace_root: Arc::new(RwLock::new(dir.path().to_path_buf())),
             tree_scan_limit: Arc::new(std::sync::RwLock::new(4_000)),
+            max_open_file_bytes: Arc::new(std::sync::RwLock::new(5_120 * 1024)),
             workspace_search_result_limit: Arc::new(std::sync::RwLock::new(200)),
             workspace_search_max_file_bytes: Arc::new(std::sync::RwLock::new(1_024 * 1_024)),
             quick_open_result_limit: Arc::new(std::sync::RwLock::new(12)),
@@ -1603,6 +1632,7 @@ mod tests {
         let state = HttpServerState {
             workspace_root: Arc::new(RwLock::new(dir.path().to_path_buf())),
             tree_scan_limit: Arc::new(std::sync::RwLock::new(4_000)),
+            max_open_file_bytes: Arc::new(std::sync::RwLock::new(5_120 * 1024)),
             workspace_search_result_limit: Arc::new(std::sync::RwLock::new(200)),
             workspace_search_max_file_bytes: Arc::new(std::sync::RwLock::new(1_024 * 1_024)),
             quick_open_result_limit: Arc::new(std::sync::RwLock::new(12)),
@@ -1637,6 +1667,7 @@ mod tests {
         let state = HttpServerState {
             workspace_root: Arc::new(RwLock::new(dir.path().to_path_buf())),
             tree_scan_limit: Arc::new(std::sync::RwLock::new(4_000)),
+            max_open_file_bytes: Arc::new(std::sync::RwLock::new(5_120 * 1024)),
             workspace_search_result_limit: Arc::new(std::sync::RwLock::new(200)),
             workspace_search_max_file_bytes: Arc::new(std::sync::RwLock::new(1_024 * 1_024)),
             quick_open_result_limit: Arc::new(std::sync::RwLock::new(12)),
@@ -1716,6 +1747,7 @@ mod tests {
         let state = HttpServerState {
             workspace_root: Arc::new(RwLock::new(dir.path().to_path_buf())),
             tree_scan_limit: Arc::new(std::sync::RwLock::new(4_000)),
+            max_open_file_bytes: Arc::new(std::sync::RwLock::new(5_120 * 1024)),
             workspace_search_result_limit: Arc::new(std::sync::RwLock::new(200)),
             workspace_search_max_file_bytes: Arc::new(std::sync::RwLock::new(1_024 * 1_024)),
             quick_open_result_limit: Arc::new(std::sync::RwLock::new(12)),
@@ -1751,6 +1783,7 @@ mod tests {
         let state = HttpServerState {
             workspace_root: Arc::new(RwLock::new(dir.path().to_path_buf())),
             tree_scan_limit: Arc::new(std::sync::RwLock::new(4_000)),
+            max_open_file_bytes: Arc::new(std::sync::RwLock::new(5_120 * 1024)),
             workspace_search_result_limit: Arc::new(std::sync::RwLock::new(200)),
             workspace_search_max_file_bytes: Arc::new(std::sync::RwLock::new(1_024 * 1_024)),
             quick_open_result_limit: Arc::new(std::sync::RwLock::new(12)),
