@@ -167,6 +167,19 @@ async function fulfillApi(route) {
     return;
   }
 
+  if (url.pathname === "/api/workspace-index") {
+    await route.fulfill(
+      json({
+        indexedEntries: 7,
+        indexedFiles: 4,
+        indexedFolders: 3,
+        loadedFolders: 2,
+        pendingFolders: 1,
+      }),
+    );
+    return;
+  }
+
   if (url.pathname === "/api/lsp") {
     await route.fulfill(json([]));
     return;
@@ -480,6 +493,22 @@ async function runScenario(browser, url, colorScheme) {
   await page.locator('input[placeholder="Run command"]').fill("workspace");
   await page.keyboard.press("Enter");
   await page.locator('input[placeholder="Search contents"]').waitFor();
+
+  await page.keyboard.press(`${commandModifier}+Shift+P`);
+  await page.getByRole("dialog", { name: "Command palette" }).waitFor();
+  await page.locator('input[placeholder="Run command"]').fill("settings");
+  await page.keyboard.press("Enter");
+  const settingsDialog = page.getByRole("dialog", { name: "Settings" });
+  await settingsDialog.waitFor();
+  await page.getByRole("tab", { name: /Storage/ }).click();
+  const indexCoverage = page.getByLabel("Workspace index coverage");
+  await indexCoverage.waitFor();
+  await indexCoverage.getByText("Indexed files").waitFor();
+  await indexCoverage.getByText("4").waitFor();
+  await indexCoverage.getByText("Pending folders").waitFor();
+  await indexCoverage.getByText("1").waitFor();
+  await settingsDialog.getByRole("button", { name: "Close" }).click();
+  await settingsDialog.waitFor({ state: "hidden" });
 
   await page.getByLabel("Filter files").click();
   const filterInput = page.locator('input[placeholder="Filter files"]');
