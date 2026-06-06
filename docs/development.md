@@ -101,7 +101,7 @@ The app is intentionally split into a small always-loaded shell and lazy-loaded 
 - `scripts/smoke-test.mjs`: browser smoke coverage for empty-pane and loaded-editor theme alignment plus core UI flows that are hard to trust from jsdom alone.
 - `src/language.ts`: lazy language loaders for common code and config files, including Rust, TypeScript/JavaScript/React, JSON, Markdown, shell, HTML, CSS/SCSS/Sass, C#, C/C++, JVM languages, Python, Go, Ruby, SQL, XML/YAML/TOML, Dockerfiles, PowerShell, diffs, and .NET project files.
 - `src-tauri/src/workspace.rs`: Rust-native workspace scanning, guarded file/folder creation, guarded file/folder rename/delete, and guarded file IO.
-- `src-tauri/src/workspace_index.rs`: SQLite-backed workspace metadata index stored under the OS app-local data directory. Initial scans replace the current workspace rows, lazy folder loads and quick-open expansion refresh direct children, folder-frontier state tracks what has been expanded, and editor file mutations upsert or remove affected paths.
+- `src-tauri/src/workspace_index.rs`: SQLite-backed workspace metadata index stored under the OS app-local data directory. Initial scans replace the current workspace rows, lazy folder loads and quick-open expansion refresh direct children, folder-frontier state tracks what has been expanded, and editor file mutations upsert or remove affected paths plus stale frontier rows.
 - `src-tauri/src/http_server.rs`: loopback HTTP API, browser endpoint static asset server with SPA fallback and missing asset 404s, authenticated write routes, and authenticated read-only Codex MCP endpoint.
 - `src-tauri/src/claude_bridge.rs`: authenticated Claude Code IDE WebSocket bridge.
 - `src-tauri/src/lib.rs`: Tauri command registration and in-memory editor context state.
@@ -116,7 +116,7 @@ Current constraints:
 - No Monaco editor.
 - No filesystem plugin for broad client-side filesystem access.
 - Hide dotfiles, dot folders, and generated/internal folders by default, with the native Settings dialog controlling tree visibility, initial tree scan entries, search caps, and UI result counts.
-- Store tree metadata in the app-local SQLite index instead of keeping an unbounded in-memory tree. The index is disposable and can be rebuilt when the workspace reopens. Quick open queries this metadata using the Settings-backed quick-open result cap and, when the current index cannot satisfy the query, expands unloaded folders in layer order within the Settings-backed tree scan cap; it does not keep a second hidden limit.
+- Store tree metadata in the app-local SQLite index instead of keeping an unbounded in-memory tree. The index is disposable and can be rebuilt when the workspace reopens. Quick open queries this metadata using the Settings-backed quick-open result cap and, when the current index cannot satisfy the query, expands unloaded folders in layer order within the Settings-backed tree scan cap; stale indexed folders are purged instead of surfaced as search failures. Quick open does not keep a second hidden limit.
 - Always ignore `node_modules`, `target`, `dist`, `.git`, and common generated folders during content search.
 - Workspace content search runs in Rust, skips generated folders and binary-looking files, and applies the Settings-backed result/file-size caps before scanning.
 - Keep syntax language packages dynamically imported by extension.

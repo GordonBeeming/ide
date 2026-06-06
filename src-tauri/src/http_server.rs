@@ -400,14 +400,32 @@ fn search_indexed_files_with_expansion(
         else {
             break;
         };
-        let entries =
-            workspace_directory_entries(root, &directory, show_dotfiles, show_generated_internal)?;
+        let entries = match workspace_directory_entries(
+            root,
+            &directory,
+            show_dotfiles,
+            show_generated_internal,
+        ) {
+            Ok(entries) => entries,
+            Err(error) if !directory.is_empty() && stale_indexed_directory_error(&error) => {
+                index.remove_path(root, &directory)?;
+                remaining_entries = remaining_entries.saturating_sub(1);
+                results = index.search_files(root, query, limit)?;
+                continue;
+            }
+            Err(error) => return Err(ApiError::from(error)),
+        };
         remaining_entries = remaining_entries.saturating_sub(entries.len().max(1));
         index.replace_directory_entries(root, &directory, &entries)?;
         results = index.search_files(root, query, limit)?;
     }
 
     Ok(results)
+}
+
+fn stale_indexed_directory_error(error: &crate::workspace::WorkspaceError) -> bool {
+    matches!(error, crate::workspace::WorkspaceError::NotADirectory)
+        || matches!(error, crate::workspace::WorkspaceError::Io(io_error) if io_error.kind() == std::io::ErrorKind::NotFound)
 }
 
 async fn directory(
@@ -1097,6 +1115,41 @@ mod tests {
             .set_database_path(root.join("workspace-index.sqlite"))
             .unwrap();
         index
+    }
+
+    fn test_file_entry(path: &str, parent: Option<&str>, is_dir: bool) -> FileEntry {
+        FileEntry {
+            path: path.to_string(),
+            name: Path::new(path)
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string(),
+            parent: parent.map(ToString::to_string),
+            is_dir,
+            depth: path.matches('/').count(),
+            size: 0,
+            modified_ms: Some(1),
+        }
+    }
+
+    #[test]
+    fn hosted_indexed_file_search_discards_stale_expansion_directories() {
+        let dir = tempdir().unwrap();
+        let index = test_workspace_index(dir.path());
+        index
+            .replace_root_entries(dir.path(), &[test_file_entry("missing", None, true)])
+            .unwrap();
+        index
+            .replace_directory_entries(dir.path(), "", &[test_file_entry("missing", None, true)])
+            .unwrap();
+
+        let results =
+            search_indexed_files_with_expansion(&index, dir.path(), "needle", 10, 20, false, false)
+                .unwrap();
+
+        assert!(results.is_empty());
+        assert!(index.entries_for_root(dir.path()).unwrap().is_empty());
     }
 
     #[test]

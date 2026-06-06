@@ -114,6 +114,16 @@ impl WorkspaceIndex {
                 prefix
             ],
         )?;
+        connection.execute(
+            "DELETE FROM workspace_indexed_directories
+             WHERE root = ?1 AND (path = ?2 OR substr(path, 1, ?3) = ?4)",
+            params![
+                root_key,
+                relative,
+                i64::try_from(prefix.len()).unwrap_or(i64::MAX),
+                prefix
+            ],
+        )?;
         Ok(())
     }
 
@@ -500,7 +510,11 @@ mod tests {
             .unwrap();
 
         index
-            .replace_directory_entries(dir.path(), "", &[entry("src", None, true)])
+            .replace_directory_entries(
+                dir.path(),
+                "",
+                &[entry("src", None, true), entry("README.md", None, false)],
+            )
             .unwrap();
         assert_eq!(
             index.next_unindexed_directories(dir.path(), 1).unwrap(),
@@ -535,11 +549,31 @@ mod tests {
                 ],
             )
             .unwrap();
+        index
+            .replace_directory_entries(
+                dir.path(),
+                "",
+                &[entry("src", None, true), entry("README.md", None, false)],
+            )
+            .unwrap();
+        index
+            .replace_directory_entries(dir.path(), "src", &[entry("src/nested", Some("src"), true)])
+            .unwrap();
+        index
+            .replace_directory_entries(
+                dir.path(),
+                "src/nested",
+                &[entry("src/nested/file.rs", Some("src/nested"), false)],
+            )
+            .unwrap();
         index.remove_path(dir.path(), "src").unwrap();
 
         let entries = index.entries_for_root(dir.path()).unwrap();
+        let unindexed_directories = index.next_unindexed_directories(dir.path(), 5).unwrap();
+
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].path, "README.md");
+        assert!(unindexed_directories.is_empty());
     }
 
     #[test]

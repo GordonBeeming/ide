@@ -65,6 +65,7 @@ Current implementation:
 - Refresh indexed direct children when a folder is lazily expanded.
 - Track expanded directory frontiers and let quick-open expand unloaded folders in layer order when the indexed metadata cannot satisfy a query.
 - Upsert/remove affected indexed paths after editor file creation, writes, renames, and deletes.
+- Remove stale directory-frontier rows when indexed paths are deleted or an indexed folder no longer exists during expansion.
 - Keep current streaming content search bounded by Settings-backed result and per-file-size caps.
 - Continue to keep generated/internal folders out of content search by default.
 
