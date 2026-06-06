@@ -85,6 +85,14 @@ struct CodexMcpInfo {
     bearer_token: String,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SettingsLocations {
+    settings_file: Option<String>,
+    recents_file: Option<String>,
+    workspace_index_file: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 struct RecentItems {
@@ -246,6 +254,10 @@ fn sanitize_view_settings(mut settings: PersistedViewSettings) -> PersistedViewS
         MAX_COMMAND_PALETTE_RESULT_LIMIT,
     );
     settings
+}
+
+fn path_to_string(path: &Path) -> String {
+    path.to_string_lossy().to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -708,6 +720,38 @@ async fn get_ui_state(state: State<'_, AppState>) -> Result<PersistedUiSnapshot,
         .to_string_lossy()
         .to_string();
     workspace_ui_snapshot_for_root(&state, &workspace_root)
+}
+
+#[tauri::command]
+fn get_settings_locations(state: State<'_, AppState>) -> Result<SettingsLocations, CommandError> {
+    settings_locations_for_state(&state)
+}
+
+fn settings_locations_for_state(state: &AppState) -> Result<SettingsLocations, CommandError> {
+    let settings_file = state
+        .ui_state_store_path
+        .read()
+        .map_err(|_| CommandError::UiState("ui state store lock poisoned".to_string()))?
+        .as_ref()
+        .map(|path| path_to_string(path));
+    let recents_file = state
+        .recent_store_path
+        .read()
+        .map_err(|_| CommandError::Recent("recent store lock poisoned".to_string()))?
+        .as_ref()
+        .map(|path| path_to_string(path));
+    let workspace_index_file = state
+        .workspace_index
+        .database_path()
+        .map_err(CommandError::WorkspaceIndex)?
+        .as_ref()
+        .map(|path| path_to_string(path));
+
+    Ok(SettingsLocations {
+        settings_file,
+        recents_file,
+        workspace_index_file,
+    })
 }
 
 #[tauri::command]
@@ -1247,6 +1291,7 @@ pub fn run() {
             set_workspace_root,
             record_recent_file,
             get_ui_state,
+            get_settings_locations,
             update_ui_state,
             update_agent_context,
             get_agent_context,
@@ -2010,6 +2055,32 @@ mod tests {
         assert_eq!(
             snapshot.workspace.active_file,
             Some("src/App.tsx".to_string())
+        );
+    }
+
+    #[test]
+    fn settings_locations_report_user_state_and_cache_paths() {
+        let dir = tempdir().unwrap();
+        let recents_path = dir.path().join("recents.json");
+        let ui_state_path = dir.path().join("ui-state.json");
+        let workspace_index_path = dir.path().join("workspace-index.sqlite");
+        let state = test_state(recents_path.clone());
+        *state.ui_state_store_path.write().unwrap() = Some(ui_state_path.clone());
+        state
+            .workspace_index
+            .set_database_path(workspace_index_path.clone())
+            .unwrap();
+
+        let locations = settings_locations_for_state(&state).unwrap();
+
+        assert_eq!(
+            locations.settings_file,
+            Some(path_to_string(&ui_state_path))
+        );
+        assert_eq!(locations.recents_file, Some(path_to_string(&recents_path)));
+        assert_eq!(
+            locations.workspace_index_file,
+            Some(path_to_string(&workspace_index_path))
         );
     }
 

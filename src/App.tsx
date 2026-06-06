@@ -80,6 +80,7 @@ import {
   getHttpEndpoint,
   getInitialFile,
   getLspServers,
+  getSettingsLocations,
   getUiState,
   getWorkspaceRoot,
   isNativeTauri,
@@ -102,6 +103,7 @@ import {
   writeFile,
   type OpenLaunchRequest,
   type PersistedUiSnapshot,
+  type SettingsLocations,
   type WorkspaceUiState,
 } from "./tauri";
 import {
@@ -155,7 +157,7 @@ interface OpenFailure {
 }
 
 type SidebarSearchMode = "filter" | "content";
-type SettingsCategory = "view" | "indexing" | "search" | "interface";
+type SettingsCategory = "view" | "performance" | "search" | "storage";
 
 const settingsCategories: Array<{
   id: SettingsCategory;
@@ -163,9 +165,9 @@ const settingsCategories: Array<{
   detail: string;
 }> = [
   { id: "view", title: "View", detail: "Tree visibility" },
-  { id: "indexing", title: "Indexing", detail: "Scan and file size" },
-  { id: "search", title: "Search", detail: "Result and file caps" },
-  { id: "interface", title: "Interface", detail: "Palette result counts" },
+  { id: "performance", title: "Performance", detail: "Scan, file, and palette caps" },
+  { id: "search", title: "Search", detail: "Search result and file caps" },
+  { id: "storage", title: "Storage", detail: "Settings and index files" },
 ];
 
 const minTreeScanLimit = 500;
@@ -374,6 +376,7 @@ export default function App() {
   const [diagnosticsByPath, setDiagnosticsByPath] = useState<
     Record<string, EditorDiagnostic[]>
   >({});
+  const [settingsLocations, setSettingsLocations] = useState<SettingsLocations>({});
   const [httpEndpoint, setHttpEndpoint] = useState<string>();
   const [codexMcp, setCodexMcp] = useState<CodexMcpStatus>();
   const [claudeBridge, setClaudeBridge] = useState<ClaudeBridgeStatus>();
@@ -780,6 +783,14 @@ export default function App() {
   useEffect(() => {
     loadPersistedUiState();
   }, [loadPersistedUiState]);
+
+  useEffect(() => {
+    getSettingsLocations()
+      .then(setSettingsLocations)
+      .catch((reason) => {
+        setError(`Unable to load settings storage paths: ${String(reason)}`);
+      });
+  }, []);
 
   useEffect(() => {
     if (!uiStateLoaded || !launchTargetLoaded) return;
@@ -2847,7 +2858,7 @@ export default function App() {
               <button
                 className="command-button command-button--quiet"
                 onClick={() => {
-                  setSettingsCategory("indexing");
+                  setSettingsCategory("performance");
                   setSettingsOpen(true);
                 }}
               >
@@ -3424,15 +3435,15 @@ export default function App() {
                     </section>
                   ) : null}
 
-                  {settingsCategory === "indexing" ? (
+                  {settingsCategory === "performance" ? (
                     <section
                       className="settings-section"
-                      aria-label="Workspace indexing"
+                      aria-label="Performance limits"
                       role="tabpanel"
-                      id="settings-panel-indexing"
-                      aria-labelledby="settings-tab-indexing"
+                      id="settings-panel-performance"
+                      aria-labelledby="settings-tab-performance"
                     >
-                      <div className="settings-section__title">Workspace Indexing</div>
+                      <div className="settings-section__title">Performance Limits</div>
                       <label className="dialog-field">
                         <span>Initial tree scan entries</span>
                         <input
@@ -3467,6 +3478,48 @@ export default function App() {
                             );
                             setMaxOpenFileKb(next);
                             setStatus(`Editable file limit set to ${next} KB`);
+                          }}
+                        />
+                      </label>
+                      <label className="dialog-field">
+                        <span>Quick open results</span>
+                        <input
+                          inputMode="numeric"
+                          min={minQuickOpenResultLimit}
+                          max={maxQuickOpenResultLimit}
+                          step={1}
+                          type="number"
+                          value={quickOpenResultLimit}
+                          onChange={(event) => {
+                            const next = sanitizeNumberLimit(
+                              Number(event.target.value),
+                              minQuickOpenResultLimit,
+                              maxQuickOpenResultLimit,
+                              defaultQuickOpenResultLimit,
+                            );
+                            setQuickOpenResultLimit(next);
+                            setStatus(`Quick open result limit set to ${next}`);
+                          }}
+                        />
+                      </label>
+                      <label className="dialog-field">
+                        <span>Command palette results</span>
+                        <input
+                          inputMode="numeric"
+                          min={minCommandPaletteResultLimit}
+                          max={maxCommandPaletteResultLimit}
+                          step={1}
+                          type="number"
+                          value={commandPaletteResultLimit}
+                          onChange={(event) => {
+                            const next = sanitizeNumberLimit(
+                              Number(event.target.value),
+                              minCommandPaletteResultLimit,
+                              maxCommandPaletteResultLimit,
+                              defaultCommandPaletteResultLimit,
+                            );
+                            setCommandPaletteResultLimit(next);
+                            setStatus(`Command palette result limit set to ${next}`);
                           }}
                         />
                       </label>
@@ -3569,57 +3622,76 @@ export default function App() {
                     </section>
                   ) : null}
 
-                  {settingsCategory === "interface" ? (
+                  {settingsCategory === "storage" ? (
                     <section
                       className="settings-section"
-                      aria-label="Interface limits"
+                      aria-label="Settings storage"
                       role="tabpanel"
-                      id="settings-panel-interface"
-                      aria-labelledby="settings-tab-interface"
+                      id="settings-panel-storage"
+                      aria-labelledby="settings-tab-storage"
                     >
-                      <div className="settings-section__title">Interface Limits</div>
-                      <label className="dialog-field">
-                        <span>Quick open results</span>
-                        <input
-                          inputMode="numeric"
-                          min={minQuickOpenResultLimit}
-                          max={maxQuickOpenResultLimit}
-                          step={1}
-                          type="number"
-                          value={quickOpenResultLimit}
-                          onChange={(event) => {
-                            const next = sanitizeNumberLimit(
-                              Number(event.target.value),
-                              minQuickOpenResultLimit,
-                              maxQuickOpenResultLimit,
-                              defaultQuickOpenResultLimit,
-                            );
-                            setQuickOpenResultLimit(next);
-                            setStatus(`Quick open result limit set to ${next}`);
-                          }}
-                        />
-                      </label>
-                      <label className="dialog-field">
-                        <span>Command palette results</span>
-                        <input
-                          inputMode="numeric"
-                          min={minCommandPaletteResultLimit}
-                          max={maxCommandPaletteResultLimit}
-                          step={1}
-                          type="number"
-                          value={commandPaletteResultLimit}
-                          onChange={(event) => {
-                            const next = sanitizeNumberLimit(
-                              Number(event.target.value),
-                              minCommandPaletteResultLimit,
-                              maxCommandPaletteResultLimit,
-                              defaultCommandPaletteResultLimit,
-                            );
-                            setCommandPaletteResultLimit(next);
-                            setStatus(`Command palette result limit set to ${next}`);
-                          }}
-                        />
-                      </label>
+                      <div className="settings-section__title">Storage</div>
+                      <p className="settings-note">
+                        Settings and recents are stored in the operating system app-data
+                        directory. The workspace index is app-local cache data and can be
+                        rebuilt.
+                      </p>
+                      <div className="settings-path-list">
+                        <div className="settings-path-row">
+                          <span>Settings file</span>
+                          <code>{settingsLocations.settingsFile ?? "Native app data path unavailable"}</code>
+                          {settingsLocations.settingsFile ? (
+                            <button
+                              className="command-button command-button--icon"
+                              type="button"
+                              aria-label="Copy settings file path"
+                              title="Copy settings file path"
+                              onClick={() =>
+                                void copyText("settings file path", settingsLocations.settingsFile!)
+                              }
+                            >
+                              <Copy size={15} aria-hidden="true" />
+                            </button>
+                          ) : null}
+                        </div>
+                        <div className="settings-path-row">
+                          <span>Recent files</span>
+                          <code>{settingsLocations.recentsFile ?? "Native app data path unavailable"}</code>
+                          {settingsLocations.recentsFile ? (
+                            <button
+                              className="command-button command-button--icon"
+                              type="button"
+                              aria-label="Copy recents file path"
+                              title="Copy recents file path"
+                              onClick={() =>
+                                void copyText("recents file path", settingsLocations.recentsFile!)
+                              }
+                            >
+                              <Copy size={15} aria-hidden="true" />
+                            </button>
+                          ) : null}
+                        </div>
+                        <div className="settings-path-row">
+                          <span>Workspace index</span>
+                          <code>{settingsLocations.workspaceIndexFile ?? "Native app-local data path unavailable"}</code>
+                          {settingsLocations.workspaceIndexFile ? (
+                            <button
+                              className="command-button command-button--icon"
+                              type="button"
+                              aria-label="Copy workspace index path"
+                              title="Copy workspace index path"
+                              onClick={() =>
+                                void copyText(
+                                  "workspace index path",
+                                  settingsLocations.workspaceIndexFile!,
+                                )
+                              }
+                            >
+                              <Copy size={15} aria-hidden="true" />
+                            </button>
+                          ) : null}
+                        </div>
+                      </div>
                     </section>
                   ) : null}
                 </div>

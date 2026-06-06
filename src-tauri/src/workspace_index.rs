@@ -43,6 +43,14 @@ impl WorkspaceIndex {
         Ok(())
     }
 
+    pub fn database_path(&self) -> Result<Option<PathBuf>, WorkspaceIndexError> {
+        Ok(self
+            .database_path
+            .read()
+            .map_err(|_| WorkspaceIndexError::LockPoisoned)?
+            .clone())
+    }
+
     pub fn replace_root_entries(
         &self,
         root: &Path,

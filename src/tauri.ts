@@ -129,6 +129,12 @@ export interface PersistedUiSnapshot {
   workspace: WorkspaceUiState;
 }
 
+export interface SettingsLocations {
+  settingsFile?: string;
+  recentsFile?: string;
+  workspaceIndexFile?: string;
+}
+
 const defaultUiSnapshot: PersistedUiSnapshot = {
   view: {
     showDotfiles: false,
@@ -181,6 +187,14 @@ export function recordRecentFile(path: string, singleFile = false) {
 export function getUiState() {
   if (!isNativeTauri()) return Promise.resolve(defaultUiSnapshot);
   return invoke<PersistedUiSnapshot>("get_ui_state");
+}
+
+export function getSettingsLocations() {
+  if (!isNativeTauri()) {
+    return Promise.resolve<SettingsLocations>({});
+  }
+
+  return invoke<SettingsLocations>("get_settings_locations");
 }
 
 export function updateUiState(

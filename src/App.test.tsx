@@ -74,6 +74,7 @@ const tauriMocks = vi.hoisted(() => ({
   pickWorkspaceFolder: vi.fn(),
   setWorkspaceRootPath: vi.fn(),
   getUiState: vi.fn(),
+  getSettingsLocations: vi.fn(),
   updateUiState: vi.fn(),
   updateAgentContext: vi.fn(),
   getLspServers: vi.fn(),
@@ -132,6 +133,7 @@ vi.mock("./tauri", async () => {
     pickWorkspaceFolder: tauriMocks.pickWorkspaceFolder,
     setWorkspaceRootPath: tauriMocks.setWorkspaceRootPath,
     getUiState: tauriMocks.getUiState,
+    getSettingsLocations: tauriMocks.getSettingsLocations,
     updateUiState: tauriMocks.updateUiState,
     updateAgentContext: tauriMocks.updateAgentContext,
     getLspServers: tauriMocks.getLspServers,
@@ -265,6 +267,11 @@ describe("App shell interactions", () => {
         openFiles: [],
       },
     });
+    tauriMocks.getSettingsLocations.mockResolvedValue({
+      settingsFile: "/Users/gordon/Library/Application Support/com.gordonbeeming.ide/ui-state.json",
+      recentsFile: "/Users/gordon/Library/Application Support/com.gordonbeeming.ide/recents.json",
+      workspaceIndexFile: "/Users/gordon/Library/Application Support/com.gordonbeeming.ide/workspace-index.sqlite",
+    });
     tauriMocks.updateUiState.mockResolvedValue(undefined);
     tauriMocks.updateAgentContext.mockResolvedValue(undefined);
     tauriMocks.getLspServers.mockResolvedValue([]);
@@ -316,7 +323,7 @@ describe("App shell interactions", () => {
     expect(screen.queryByText("Workspace load failed")).not.toBeInTheDocument();
   });
 
-  it("surfaces bounded initial scans and opens indexing settings", async () => {
+  it("surfaces bounded initial scans and opens performance settings", async () => {
     tauriMocks.listFiles.mockResolvedValueOnce({
       entries: files,
       truncated: true,
@@ -334,7 +341,7 @@ describe("App shell interactions", () => {
     fireEvent.click(within(notice as HTMLElement).getByRole("button", { name: "Settings" }));
 
     expect(await screen.findByRole("dialog", { name: "Settings" })).toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: /Indexing/ })).toHaveAttribute(
+    expect(screen.getByRole("tab", { name: /Performance/ })).toHaveAttribute(
       "aria-selected",
       "true",
     );
@@ -755,10 +762,37 @@ describe("App shell interactions", () => {
     expect(screen.getByLabelText("Show dotfiles and dot folders")).toBeInTheDocument();
     expect(screen.queryByLabelText("Initial tree scan entries")).not.toBeInTheDocument();
 
-    selectSettingsTab("Indexing");
+    selectSettingsTab("Performance");
 
     expect(screen.getByLabelText("Initial tree scan entries")).toBeInTheDocument();
     expect(screen.queryByLabelText("Show dotfiles and dot folders")).not.toBeInTheDocument();
+  });
+
+  it("shows OS storage paths from Settings", async () => {
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    render(<App />);
+
+    expect(await treeButton("README.md")).toBeInTheDocument();
+    await openSettingsDialog();
+    selectSettingsTab("Storage");
+
+    expect(screen.getByText("Settings file")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "/Users/gordon/Library/Application Support/com.gordonbeeming.ide/ui-state.json",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "/Users/gordon/Library/Application Support/com.gordonbeeming.ide/recents.json",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "/Users/gordon/Library/Application Support/com.gordonbeeming.ide/workspace-index.sqlite",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Copy settings file path" })).toBeInTheDocument();
   });
 
   it("reloads the tree with dotfiles when changed from Settings", async () => {
@@ -844,7 +878,7 @@ describe("App shell interactions", () => {
 
     expect(await treeButton("README.md")).toBeInTheDocument();
     await openSettingsDialog();
-    selectSettingsTab("Indexing");
+    selectSettingsTab("Performance");
 
     fireEvent.change(await screen.findByLabelText("Initial tree scan entries"), {
       target: { value: "8000" },
@@ -931,7 +965,7 @@ describe("App shell interactions", () => {
 
     expect(await treeButton("README.md")).toBeInTheDocument();
     await openSettingsDialog();
-    selectSettingsTab("Indexing");
+    selectSettingsTab("Performance");
 
     fireEvent.change(await screen.findByLabelText("Max editable file KB"), {
       target: { value: "2048" },

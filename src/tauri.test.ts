@@ -311,7 +311,7 @@ describe("hosted Tauri API transport", () => {
   it("returns default UI state and does not persist it from hosted browser mode", async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
-    const { getUiState, updateUiState } = await import("./tauri");
+    const { getSettingsLocations, getUiState, updateUiState } = await import("./tauri");
 
     await expect(getUiState()).resolves.toEqual({
       view: {
@@ -331,6 +331,7 @@ describe("hosted Tauri API transport", () => {
         openFiles: [],
       },
     });
+    await expect(getSettingsLocations()).resolves.toEqual({});
     await updateUiState(
       {
         showDotfiles: true,
@@ -353,6 +354,24 @@ describe("hosted Tauri API transport", () => {
     );
 
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("reads native settings storage locations through Tauri", async () => {
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    const { invoke } = await import("@tauri-apps/api/core");
+    vi.mocked(invoke).mockResolvedValue({
+      settingsFile: "/app-data/ui-state.json",
+      recentsFile: "/app-data/recents.json",
+      workspaceIndexFile: "/app-local/workspace-index.sqlite",
+    });
+    const { getSettingsLocations } = await import("./tauri");
+
+    await expect(getSettingsLocations()).resolves.toEqual({
+      settingsFile: "/app-data/ui-state.json",
+      recentsFile: "/app-data/recents.json",
+      workspaceIndexFile: "/app-local/workspace-index.sqlite",
+    });
+    expect(invoke).toHaveBeenCalledWith("get_settings_locations");
   });
 
   it("passes explicit search limits through hosted search requests", async () => {

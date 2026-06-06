@@ -14,7 +14,7 @@ Implemented:
 - Native folder picker for switching workspaces.
 - Native toolbar buttons for opening files and folders in the desktop app.
 - Native File menu with New File, New Folder, Open File, Open Folder, Recents, Save, Reload, Rename/Delete, Close Tab, and Close All.
-- Native categorized Settings dialog for dotfile/generated-folder visibility, initial tree scan entries, editable file size, workspace search caps, current-file search caps, and UI result counts.
+- Native categorized Settings dialog for view toggles, performance limits, search limits, and OS storage locations.
 - File/folder launch targets through the local runner and macOS Finder Quick Action.
 - Packaged-app file associations for common text, code, web, config, and .NET project files.
 - Runtime handling for native OS file-open events, including cold-start opens before the frontend has registered listeners.
@@ -38,7 +38,7 @@ Implemented:
 - Guarded Rust-native workspace scanning, file/folder creation, rename, deletion, and file read/write commands.
 - SQLite-backed workspace metadata index stored in OS app-local data, refreshed from initial scans, lazy folder loads, bounded quick-open expansion, and editor file mutations.
 - Bounded initial tree scans surface a visible notice when the configured entry cap is reached, while folder expansion continues loading children on demand.
-- User preferences and recents are stored in OS app data; disposable workspace indexes stay in OS app-local data so they can be rebuilt.
+- User preferences and recents are stored in OS app data with paths exposed from Settings for backup; disposable workspace indexes stay in OS app-local data so they can be rebuilt.
 - Common binary/media/font/archive files select in the tree without attempting text-editor reads.
 - CodeMirror 6 editor.
 - Syntax highlighting for common code and config files, including Rust, TypeScript, JavaScript, React/TSX/JSX, JSON, Markdown, shell scripts, HTML, CSS/SCSS/Sass, C#, C/C++, Java/Kotlin/Scala, Python, Go, Ruby, SQL, XML/YAML/TOML, Dockerfiles, PowerShell, diffs, and .NET project files.

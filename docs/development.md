@@ -115,7 +115,7 @@ Current constraints:
 
 - No Monaco editor.
 - No filesystem plugin for broad client-side filesystem access.
-- Hide dotfiles, dot folders, and generated/internal folders by default, with the categorized native Settings dialog controlling tree visibility, initial tree scan entries, editable file size, search caps, and UI result counts.
+- Hide dotfiles, dot folders, and generated/internal folders by default, with the categorized native Settings dialog controlling tree visibility, performance caps, search caps, UI result counts, and persisted storage locations.
 - Store tree metadata in the app-local SQLite index instead of keeping an unbounded in-memory tree. The index is disposable and can be rebuilt when the workspace reopens. Initial tree scans report when the Settings-backed entry cap truncated the result set so the UI can explain that deeper entries are loaded on demand. Quick open queries this metadata using the Settings-backed quick-open result cap and, when the current index cannot satisfy the query, expands unloaded folders in layer order within the Settings-backed tree scan cap; stale indexed folders are purged instead of surfaced as search failures. Quick open does not keep a second hidden limit.
 - Always ignore `node_modules`, `target`, `dist`, `.git`, and common generated folders during content search.
 - Workspace content search runs in Rust, walks the workspace by layer so shallow matches spend the result cap first, honors the dotfile visibility setting, always skips generated/internal folders, skips binary-looking files, and applies the Settings-backed result/file-size caps before scanning. Search responses report when the result cap truncated matches and include searched/skipped file counts so the UI can link back to Search settings without implying the result set is complete. File opens use the Settings-backed editable file size cap.
@@ -176,7 +176,7 @@ The frontend refuses to switch folders while any open tab is dirty.
 
 ## Native Menu and Recents
 
-The app stores recent folders and recent files in the OS app-data directory through Tauri's `app_data_dir`, currently as `recents.json`. This keeps configuration and history out of browser local storage and avoids leaking editor workflow state into the visible UI. Recent files also store whether the file was opened as a single-file launch target, so Finder-opened files reopen without exposing their containing folder in the tree.
+The app stores settings and workspace UI state in the OS app-data directory through Tauri's `app_data_dir`, currently as `ui-state.json`. Recent folders and recent files live beside it as `recents.json`. Settings exposes both paths so they can be backed up through dotfiles or another user-managed backup flow. Disposable workspace metadata lives in app-local data as SQLite cache and can be rebuilt when the workspace opens.
 
 The File menu owns:
 
