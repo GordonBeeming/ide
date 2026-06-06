@@ -2,6 +2,7 @@ mod claude_bridge;
 mod http_server;
 mod lsp;
 mod workspace;
+mod workspace_index;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -14,7 +15,7 @@ use tokio::sync::RwLock;
 use workspace::{
     create_workspace_file, create_workspace_folder, delete_workspace_file, read_workspace_file,
     rename_workspace_file, scan_workspace, search_workspace, workspace_directory_entries,
-    workspace_file_entry, write_workspace_file, WorkspaceError,
+    workspace_entry, workspace_file_entry, write_workspace_file, WorkspaceError,
 };
 
 #[derive(Clone)]
@@ -27,6 +28,7 @@ struct AppState {
     ui_state: Arc<std::sync::RwLock<AppUiState>>,
     ui_state_store_path: Arc<std::sync::RwLock<Option<PathBuf>>>,
     tree_scan_limit: Arc<std::sync::RwLock<usize>>,
+    workspace_index: workspace_index::WorkspaceIndex,
     agent_context: Arc<RwLock<AgentContext>>,
     lsp_manager: lsp::LspManager,
     http_endpoint: Arc<RwLock<Option<String>>>,
@@ -221,6 +223,8 @@ enum CommandError {
     Recent(String),
     #[error("ui state storage failed: {0}")]
     UiState(String),
+    #[error("workspace index failed: {0}")]
+    WorkspaceIndex(#[from] workspace_index::WorkspaceIndexError),
 }
 
 impl serde::Serialize for CommandError {
@@ -274,13 +278,17 @@ async fn list_files(
             .unwrap_or_else(|_| default_tree_scan_limit())
     });
     let tree_scan_limit = tree_scan_limit.clamp(MIN_TREE_SCAN_LIMIT, MAX_TREE_SCAN_LIMIT);
-    scan_workspace(
+    let entries = scan_workspace(
         &workspace_root,
         tree_scan_limit,
         show_dotfiles,
         show_generated_internal,
     )
-    .map_err(CommandError::from)
+    .map_err(CommandError::from)?;
+    state
+        .workspace_index
+        .replace_root_entries(&workspace_root, &entries)?;
+    Ok(entries)
 }
 
 #[tauri::command]
@@ -291,13 +299,27 @@ async fn list_directory(
     show_generated_internal: bool,
 ) -> Result<Vec<workspace::FileEntry>, CommandError> {
     let workspace_root = state.workspace_root.read().await.clone();
-    workspace_directory_entries(
+    let entries = workspace_directory_entries(
         &workspace_root,
         &path,
         show_dotfiles,
         show_generated_internal,
     )
-    .map_err(CommandError::from)
+    .map_err(CommandError::from)?;
+    state
+        .workspace_index
+        .replace_directory_entries(&workspace_root, &path, &entries)?;
+    Ok(entries)
+}
+
+fn refresh_indexed_entry(
+    index: &workspace_index::WorkspaceIndex,
+    root: &Path,
+    relative: &str,
+) -> Result<(), CommandError> {
+    let entry = workspace_entry(root, relative)?;
+    index.upsert_entries(root, &[entry])?;
+    Ok(())
 }
 
 #[tauri::command]
@@ -324,19 +346,25 @@ async fn write_file(
 ) -> Result<(), CommandError> {
     let workspace_root = state.workspace_root.read().await.clone();
     write_workspace_file(&workspace_root, &path, &contents, expected_modified_ms)
-        .map_err(CommandError::from)
+        .map_err(CommandError::from)?;
+    refresh_indexed_entry(&state.workspace_index, &workspace_root, &path)?;
+    Ok(())
 }
 
 #[tauri::command]
 async fn create_file(state: State<'_, AppState>, path: String) -> Result<(), CommandError> {
     let workspace_root = state.workspace_root.read().await.clone();
-    create_workspace_file(&workspace_root, &path).map_err(CommandError::from)
+    create_workspace_file(&workspace_root, &path).map_err(CommandError::from)?;
+    refresh_indexed_entry(&state.workspace_index, &workspace_root, &path)?;
+    Ok(())
 }
 
 #[tauri::command]
 async fn create_folder(state: State<'_, AppState>, path: String) -> Result<(), CommandError> {
     let workspace_root = state.workspace_root.read().await.clone();
-    create_workspace_folder(&workspace_root, &path).map_err(CommandError::from)
+    create_workspace_folder(&workspace_root, &path).map_err(CommandError::from)?;
+    refresh_indexed_entry(&state.workspace_index, &workspace_root, &path)?;
+    Ok(())
 }
 
 #[tauri::command]
@@ -346,13 +374,20 @@ async fn rename_file(
     to_path: String,
 ) -> Result<(), CommandError> {
     let workspace_root = state.workspace_root.read().await.clone();
-    rename_workspace_file(&workspace_root, &from_path, &to_path).map_err(CommandError::from)
+    rename_workspace_file(&workspace_root, &from_path, &to_path).map_err(CommandError::from)?;
+    state
+        .workspace_index
+        .remove_path(&workspace_root, &from_path)?;
+    refresh_indexed_entry(&state.workspace_index, &workspace_root, &to_path)?;
+    Ok(())
 }
 
 #[tauri::command]
 async fn delete_file(state: State<'_, AppState>, path: String) -> Result<(), CommandError> {
     let workspace_root = state.workspace_root.read().await.clone();
-    delete_workspace_file(&workspace_root, &path).map_err(CommandError::from)
+    delete_workspace_file(&workspace_root, &path).map_err(CommandError::from)?;
+    state.workspace_index.remove_path(&workspace_root, &path)?;
+    Ok(())
 }
 
 #[tauri::command]
@@ -580,6 +615,7 @@ pub fn run() {
         ui_state: Arc::new(std::sync::RwLock::new(AppUiState::default())),
         ui_state_store_path: Arc::new(std::sync::RwLock::new(None)),
         tree_scan_limit: Arc::new(std::sync::RwLock::new(default_tree_scan_limit())),
+        workspace_index: workspace_index::WorkspaceIndex::new(),
         agent_context,
         lsp_manager,
         http_endpoint,
@@ -631,6 +667,15 @@ pub fn run() {
                 .ui_state
                 .write()
                 .map_err(|_| std::io::Error::other("ui state lock poisoned"))? = loaded_ui_state;
+            let workspace_index_path = app
+                .path()
+                .app_local_data_dir()
+                .map_err(|error| std::io::Error::other(error.to_string()))?
+                .join("workspace-index.sqlite");
+            http_state
+                .workspace_index
+                .set_database_path(workspace_index_path)
+                .map_err(|error| std::io::Error::other(error.to_string()))?;
             let initial_root = http_state.workspace_root.blocking_read().clone();
             record_recent_workspace_item(&http_state, &initial_root)
                 .map_err(|error| std::io::Error::other(error.to_string()))?;
@@ -641,6 +686,7 @@ pub fn run() {
 
             let workspace_root = http_state.workspace_root.clone();
             let tree_scan_limit = http_state.tree_scan_limit.clone();
+            let workspace_index = http_state.workspace_index.clone();
             let agent_context = http_state.agent_context.clone();
             let lsp_manager = http_state.lsp_manager.clone();
             let http_endpoint = http_state.http_endpoint.clone();
@@ -655,6 +701,7 @@ pub fn run() {
                 match http_server::start_http_server(http_server::HttpServerConfig {
                     root_path: workspace_root,
                     tree_scan_limit,
+                    workspace_index,
                     agent_context,
                     lsp_manager,
                     frontend_dist,
@@ -1671,6 +1718,7 @@ mod tests {
             ui_state: Arc::new(std::sync::RwLock::new(AppUiState::default())),
             ui_state_store_path: Arc::new(std::sync::RwLock::new(Some(ui_state_path))),
             tree_scan_limit: Arc::new(std::sync::RwLock::new(default_tree_scan_limit())),
+            workspace_index: workspace_index::WorkspaceIndex::new(),
             agent_context: Arc::new(RwLock::new(AgentContext::default())),
             lsp_manager: lsp::LspManager::new(),
             http_endpoint: Arc::new(RwLock::new(None)),

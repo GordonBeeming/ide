@@ -36,6 +36,7 @@ Implemented:
 - Save active file and Save All commands.
 - Stale-save protection so externally modified files are not silently overwritten.
 - Guarded Rust-native workspace scanning, file/folder creation, rename, deletion, and file read/write commands.
+- SQLite-backed workspace metadata index stored in OS app-local data, refreshed from initial scans, lazy folder loads, and editor file mutations.
 - Common binary/media/font/archive files select in the tree without attempting text-editor reads.
 - CodeMirror 6 editor.
 - Syntax highlighting for common code and config files, including Rust, TypeScript, JavaScript, React/TSX/JSX, JSON, Markdown, shell scripts, HTML, CSS/SCSS/Sass, C#, C/C++, Java/Kotlin/Scala, Python, Go, Ruby, SQL, XML/YAML/TOML, Dockerfiles, PowerShell, diffs, and .NET project files.

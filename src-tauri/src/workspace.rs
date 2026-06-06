@@ -115,6 +115,16 @@ pub fn workspace_file_entry(root: &Path, relative: &str) -> Result<FileEntry, Wo
     file_entry_from_relative(relative_path, metadata)
 }
 
+pub fn workspace_entry(root: &Path, relative: &str) -> Result<FileEntry, WorkspaceError> {
+    let path = resolve_existing_workspace_entry_path(root, relative)?;
+    let metadata = fs::symlink_metadata(&path)?;
+    let root = root.canonicalize()?;
+    let relative_path = path
+        .strip_prefix(root)
+        .map_err(|_| WorkspaceError::OutsideWorkspace)?;
+    file_entry_from_relative(relative_path, metadata)
+}
+
 pub fn workspace_directory_entries(
     root: &Path,
     relative: &str,
@@ -1276,6 +1286,20 @@ mod tests {
         assert_eq!(entry.parent.as_deref(), Some("src"));
         assert!(!entry.is_dir);
         assert_eq!(entry.depth, 1);
+        assert!(entry.modified_ms.is_some());
+    }
+
+    #[test]
+    fn workspace_entry_returns_folder_metadata() {
+        let dir = tempdir().unwrap();
+        fs::create_dir(dir.path().join("src")).unwrap();
+
+        let entry = workspace_entry(dir.path(), "src").unwrap();
+
+        assert_eq!(entry.path, "src");
+        assert_eq!(entry.name, "src");
+        assert!(entry.is_dir);
+        assert_eq!(entry.depth, 0);
         assert!(entry.modified_ms.is_some());
     }
 
