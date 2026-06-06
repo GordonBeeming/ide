@@ -14,7 +14,7 @@ Implemented:
 - Native folder picker for switching workspaces.
 - Native toolbar buttons for opening files and folders in the desktop app.
 - Native File menu with New File, New Folder, Open File, Open Folder, Recents, Save, Reload, Rename/Delete, Close Tab, and Close All.
-- Native View menu toggles for showing dotfiles and generated/internal folders in the tree.
+- Native Settings dialog for dotfile/generated-folder visibility and the initial tree scan limit.
 - File/folder launch targets through the local runner and macOS Finder Quick Action.
 - Packaged-app file associations for common text, code, web, config, and .NET project files.
 - Runtime handling for native OS file-open events, including cold-start opens before the frontend has registered listeners.

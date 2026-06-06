@@ -552,6 +552,7 @@ describe("App shell interactions", () => {
       view: {
         showDotfiles: true,
         showGeneratedInternal: true,
+        treeScanLimit: 12000,
       },
       workspace: {
         expandedFolders: ["src"],
@@ -564,7 +565,7 @@ describe("App shell interactions", () => {
     render(<App />);
 
     await waitFor(() =>
-      expect(tauriMocks.listFiles).toHaveBeenCalledWith(true, true),
+      expect(tauriMocks.listFiles).toHaveBeenCalledWith(true, true, 12000),
     );
     expect(await treeButton("App.tsx")).toHaveClass("tree-row--active");
     const tab = await findTab("src/App.tsx");
@@ -646,6 +647,7 @@ describe("App shell interactions", () => {
         {
           showDotfiles: false,
           showGeneratedInternal: false,
+          treeScanLimit: 4000,
         },
         expect.objectContaining({
           expandedFolders: [],
@@ -657,7 +659,7 @@ describe("App shell interactions", () => {
     );
   });
 
-  it("reloads the tree with dotfiles when the native menu toggle is used", async () => {
+  it("reloads the tree with dotfiles when changed from Settings", async () => {
     (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
     tauriMocks.listFiles
       .mockResolvedValueOnce(files)
@@ -677,19 +679,21 @@ describe("App shell interactions", () => {
 
     expect(await treeButton("README.md")).toBeInTheDocument();
     await waitFor(() =>
-      expect(eventMocks.listeners.has("menu://toggle-dotfiles")).toBe(true),
+      expect(eventMocks.listeners.has("menu://show-settings")).toBe(true),
     );
 
-    eventMocks.listeners.get("menu://toggle-dotfiles")?.({ payload: undefined });
+    eventMocks.listeners.get("menu://show-settings")?.({ payload: undefined });
+    fireEvent.click(await screen.findByLabelText("Show dotfiles and dot folders"));
 
     await waitFor(() =>
-      expect(tauriMocks.listFiles).toHaveBeenLastCalledWith(true, false),
+      expect(tauriMocks.listFiles).toHaveBeenLastCalledWith(true, false, 4000),
     );
     await waitFor(() =>
       expect(tauriMocks.updateUiState).toHaveBeenLastCalledWith(
         {
           showDotfiles: true,
           showGeneratedInternal: false,
+          treeScanLimit: 4000,
         },
         expect.any(Object),
       ),
@@ -697,7 +701,7 @@ describe("App shell interactions", () => {
     expect(await treeButton(".gitignore")).toBeInTheDocument();
   });
 
-  it("reloads the tree with generated folders when the native menu toggle is used", async () => {
+  it("reloads the tree with generated folders when changed from Settings", async () => {
     (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
     tauriMocks.listFiles
       .mockResolvedValueOnce(files)
@@ -716,26 +720,57 @@ describe("App shell interactions", () => {
 
     expect(await treeButton("README.md")).toBeInTheDocument();
     await waitFor(() =>
-      expect(eventMocks.listeners.has("menu://toggle-generated-internal")).toBe(true),
+      expect(eventMocks.listeners.has("menu://show-settings")).toBe(true),
     );
 
-    eventMocks.listeners
-      .get("menu://toggle-generated-internal")
-      ?.({ payload: undefined });
+    eventMocks.listeners.get("menu://show-settings")?.({ payload: undefined });
+    fireEvent.click(await screen.findByLabelText("Show generated and internal folders"));
 
     await waitFor(() =>
-      expect(tauriMocks.listFiles).toHaveBeenLastCalledWith(false, true),
+      expect(tauriMocks.listFiles).toHaveBeenLastCalledWith(false, true, 4000),
     );
     await waitFor(() =>
       expect(tauriMocks.updateUiState).toHaveBeenLastCalledWith(
         {
           showDotfiles: false,
           showGeneratedInternal: true,
+          treeScanLimit: 4000,
         },
         expect.any(Object),
       ),
     );
     expect(await treeButton("node_modules")).toBeInTheDocument();
+  });
+
+  it("applies the tree scan limit from Settings", async () => {
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    tauriMocks.listFiles.mockResolvedValue(files);
+
+    render(<App />);
+
+    expect(await treeButton("README.md")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(eventMocks.listeners.has("menu://show-settings")).toBe(true),
+    );
+
+    eventMocks.listeners.get("menu://show-settings")?.({ payload: undefined });
+    fireEvent.change(await screen.findByLabelText("Initial tree scan limit"), {
+      target: { value: "8000" },
+    });
+
+    await waitFor(() =>
+      expect(tauriMocks.listFiles).toHaveBeenLastCalledWith(false, false, 8000),
+    );
+    await waitFor(() =>
+      expect(tauriMocks.updateUiState).toHaveBeenLastCalledWith(
+        {
+          showDotfiles: false,
+          showGeneratedInternal: false,
+          treeScanLimit: 8000,
+        },
+        expect.any(Object),
+      ),
+    );
   });
 
   it("closes the native window immediately when there are no unsaved files", async () => {

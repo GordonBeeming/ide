@@ -26,10 +26,22 @@ use crate::AgentContext;
 #[derive(Clone)]
 pub struct HttpServerState {
     workspace_root: Arc<RwLock<PathBuf>>,
+    tree_scan_limit: Arc<std::sync::RwLock<usize>>,
     agent_context: Arc<RwLock<AgentContext>>,
     lsp_manager: LspManager,
     frontend_dist: PathBuf,
     mcp_token: String,
+}
+
+pub struct HttpServerConfig {
+    pub root_path: Arc<RwLock<PathBuf>>,
+    pub tree_scan_limit: Arc<std::sync::RwLock<usize>>,
+    pub agent_context: Arc<RwLock<AgentContext>>,
+    pub lsp_manager: LspManager,
+    pub frontend_dist: PathBuf,
+    pub mcp_token: String,
+    pub app_handle: tauri::AppHandle,
+    pub server_error: Arc<RwLock<Option<String>>>,
 }
 
 #[derive(Debug, Serialize)]
@@ -60,6 +72,7 @@ struct FileQuery {
 struct FilesQuery {
     show_dotfiles: Option<bool>,
     show_generated_internal: Option<bool>,
+    tree_scan_limit: Option<usize>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -114,17 +127,20 @@ struct RenameFileRequest {
     to_path: String,
 }
 
-pub async fn start_http_server(
-    root_path: Arc<RwLock<PathBuf>>,
-    agent_context: Arc<RwLock<AgentContext>>,
-    lsp_manager: LspManager,
-    frontend_dist: PathBuf,
-    mcp_token: String,
-    app_handle: tauri::AppHandle,
-    server_error: Arc<RwLock<Option<String>>>,
-) -> Result<HttpServerInfo, std::io::Error> {
+pub async fn start_http_server(config: HttpServerConfig) -> Result<HttpServerInfo, std::io::Error> {
+    let HttpServerConfig {
+        root_path,
+        tree_scan_limit,
+        agent_context,
+        lsp_manager,
+        frontend_dist,
+        mcp_token,
+        app_handle,
+        server_error,
+    } = config;
     let state = HttpServerState {
         workspace_root: root_path,
+        tree_scan_limit,
         agent_context,
         lsp_manager,
         frontend_dist,
@@ -280,9 +296,19 @@ async fn files(
     Query(query): Query<FilesQuery>,
 ) -> Result<Json<Vec<FileEntry>>, ApiError> {
     let workspace_root = state.workspace_root.read().await.clone();
+    let tree_scan_limit = query
+        .tree_scan_limit
+        .unwrap_or_else(|| {
+            state
+                .tree_scan_limit
+                .read()
+                .map(|limit| *limit)
+                .unwrap_or(4_000)
+        })
+        .clamp(500, 100_000);
     Ok(Json(scan_workspace(
         &workspace_root,
-        4_000,
+        tree_scan_limit,
         query.show_dotfiles.unwrap_or(false),
         query.show_generated_internal.unwrap_or(false),
     )?))
@@ -1005,6 +1031,7 @@ mod tests {
         std::fs::write(&file_path, "before").unwrap();
         let state = HttpServerState {
             workspace_root: Arc::new(RwLock::new(dir.path().to_path_buf())),
+            tree_scan_limit: Arc::new(std::sync::RwLock::new(4_000)),
             agent_context: Arc::new(RwLock::new(AgentContext::default())),
             lsp_manager: LspManager::new(),
             frontend_dist: dir.path().to_path_buf(),
@@ -1034,6 +1061,7 @@ mod tests {
         std::fs::write(&file_path, "before").unwrap();
         let state = HttpServerState {
             workspace_root: Arc::new(RwLock::new(dir.path().to_path_buf())),
+            tree_scan_limit: Arc::new(std::sync::RwLock::new(4_000)),
             agent_context: Arc::new(RwLock::new(AgentContext::default())),
             lsp_manager: LspManager::new(),
             frontend_dist: dir.path().to_path_buf(),
@@ -1067,6 +1095,7 @@ mod tests {
         std::fs::write(&file_path, "before").unwrap();
         let state = HttpServerState {
             workspace_root: Arc::new(RwLock::new(dir.path().to_path_buf())),
+            tree_scan_limit: Arc::new(std::sync::RwLock::new(4_000)),
             agent_context: Arc::new(RwLock::new(AgentContext::default())),
             lsp_manager: LspManager::new(),
             frontend_dist: dir.path().to_path_buf(),
@@ -1100,6 +1129,7 @@ mod tests {
         let file_path = dir.path().join("note.txt");
         let state = HttpServerState {
             workspace_root: Arc::new(RwLock::new(dir.path().to_path_buf())),
+            tree_scan_limit: Arc::new(std::sync::RwLock::new(4_000)),
             agent_context: Arc::new(RwLock::new(AgentContext::default())),
             lsp_manager: LspManager::new(),
             frontend_dist: dir.path().to_path_buf(),
@@ -1128,6 +1158,7 @@ mod tests {
         let file_path = dir.path().join("note.txt");
         let state = HttpServerState {
             workspace_root: Arc::new(RwLock::new(dir.path().to_path_buf())),
+            tree_scan_limit: Arc::new(std::sync::RwLock::new(4_000)),
             agent_context: Arc::new(RwLock::new(AgentContext::default())),
             lsp_manager: LspManager::new(),
             frontend_dist: dir.path().to_path_buf(),
@@ -1160,6 +1191,7 @@ mod tests {
         let folder_path = dir.path().join("src");
         let state = HttpServerState {
             workspace_root: Arc::new(RwLock::new(dir.path().to_path_buf())),
+            tree_scan_limit: Arc::new(std::sync::RwLock::new(4_000)),
             agent_context: Arc::new(RwLock::new(AgentContext::default())),
             lsp_manager: LspManager::new(),
             frontend_dist: dir.path().to_path_buf(),
@@ -1186,6 +1218,7 @@ mod tests {
         let folder_path = dir.path().join("src");
         let state = HttpServerState {
             workspace_root: Arc::new(RwLock::new(dir.path().to_path_buf())),
+            tree_scan_limit: Arc::new(std::sync::RwLock::new(4_000)),
             agent_context: Arc::new(RwLock::new(AgentContext::default())),
             lsp_manager: LspManager::new(),
             frontend_dist: dir.path().to_path_buf(),
@@ -1218,6 +1251,7 @@ mod tests {
         std::fs::write(&from_path, "before").unwrap();
         let state = HttpServerState {
             workspace_root: Arc::new(RwLock::new(dir.path().to_path_buf())),
+            tree_scan_limit: Arc::new(std::sync::RwLock::new(4_000)),
             agent_context: Arc::new(RwLock::new(AgentContext::default())),
             lsp_manager: LspManager::new(),
             frontend_dist: dir.path().to_path_buf(),
@@ -1248,6 +1282,7 @@ mod tests {
         std::fs::write(&from_path, "before").unwrap();
         let state = HttpServerState {
             workspace_root: Arc::new(RwLock::new(dir.path().to_path_buf())),
+            tree_scan_limit: Arc::new(std::sync::RwLock::new(4_000)),
             agent_context: Arc::new(RwLock::new(AgentContext::default())),
             lsp_manager: LspManager::new(),
             frontend_dist: dir.path().to_path_buf(),
@@ -1281,6 +1316,7 @@ mod tests {
         std::fs::write(&file_path, "before").unwrap();
         let state = HttpServerState {
             workspace_root: Arc::new(RwLock::new(dir.path().to_path_buf())),
+            tree_scan_limit: Arc::new(std::sync::RwLock::new(4_000)),
             agent_context: Arc::new(RwLock::new(AgentContext::default())),
             lsp_manager: LspManager::new(),
             frontend_dist: dir.path().to_path_buf(),
@@ -1308,6 +1344,7 @@ mod tests {
         std::fs::write(&file_path, "before").unwrap();
         let state = HttpServerState {
             workspace_root: Arc::new(RwLock::new(dir.path().to_path_buf())),
+            tree_scan_limit: Arc::new(std::sync::RwLock::new(4_000)),
             agent_context: Arc::new(RwLock::new(AgentContext::default())),
             lsp_manager: LspManager::new(),
             frontend_dist: dir.path().to_path_buf(),
@@ -1337,6 +1374,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let state = HttpServerState {
             workspace_root: Arc::new(RwLock::new(dir.path().to_path_buf())),
+            tree_scan_limit: Arc::new(std::sync::RwLock::new(4_000)),
             agent_context: Arc::new(RwLock::new(AgentContext {
                 active_file: Some("before.rs".to_string()),
                 open_files: Vec::new(),
@@ -1411,6 +1449,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let state = HttpServerState {
             workspace_root: Arc::new(RwLock::new(dir.path().to_path_buf())),
+            tree_scan_limit: Arc::new(std::sync::RwLock::new(4_000)),
             agent_context: Arc::new(RwLock::new(AgentContext::default())),
             lsp_manager: LspManager::new(),
             frontend_dist: dir.path().to_path_buf(),
@@ -1441,6 +1480,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let state = HttpServerState {
             workspace_root: Arc::new(RwLock::new(dir.path().to_path_buf())),
+            tree_scan_limit: Arc::new(std::sync::RwLock::new(4_000)),
             agent_context: Arc::new(RwLock::new(AgentContext {
                 active_file: Some("src/main.rs".to_string()),
                 open_files: vec!["src/main.rs".to_string()],

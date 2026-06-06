@@ -932,6 +932,31 @@ button {
   background: var(--bg);
 }
 
+.settings-dialog {
+  width: min(520px, 100%);
+}
+
+.settings-list {
+  display: grid;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.settings-row {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  min-height: 32px;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 550;
+}
+
+.settings-row input {
+  accent-color: var(--accent);
+}
+
 .confirm-dialog h2 {
   margin: 0;
   font-size: 18px;

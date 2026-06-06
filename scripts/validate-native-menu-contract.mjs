@@ -29,8 +29,7 @@ const expectedFrontendEvents = new Set([
   "menu://save-all",
   "menu://save-file",
   "menu://show-integrations",
-  "menu://toggle-dotfiles",
-  "menu://toggle-generated-internal",
+  "menu://show-settings",
 ]);
 
 const unroutedMenuIds = new Set([
@@ -58,8 +57,7 @@ const expectedRoutedMenuIds = new Set([
   "save_all",
   "save_file",
   "show_integrations",
-  "toggle_dotfiles",
-  "toggle_generated_internal",
+  "show_settings",
 ]);
 
 const errors = [];

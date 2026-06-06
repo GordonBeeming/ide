@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
-use tauri::menu::{CheckMenuItem, MenuBuilder, MenuItemBuilder, SubmenuBuilder};
+use tauri::menu::{MenuBuilder, MenuItemBuilder, SubmenuBuilder};
 use tauri::{Emitter, Manager, State};
 use tauri_plugin_dialog::DialogExt;
 use tokio::sync::RwLock;
@@ -26,6 +26,7 @@ struct AppState {
     recent_store_path: Arc<std::sync::RwLock<Option<PathBuf>>>,
     ui_state: Arc<std::sync::RwLock<AppUiState>>,
     ui_state_store_path: Arc<std::sync::RwLock<Option<PathBuf>>>,
+    tree_scan_limit: Arc<std::sync::RwLock<usize>>,
     agent_context: Arc<RwLock<AgentContext>>,
     lsp_manager: lsp::LspManager,
     http_endpoint: Arc<RwLock<Option<String>>>,
@@ -110,11 +111,38 @@ struct AppUiState {
     workspaces: Vec<PersistedWorkspaceUiState>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct PersistedViewSettings {
     show_dotfiles: bool,
     show_generated_internal: bool,
+    #[serde(default = "default_tree_scan_limit")]
+    tree_scan_limit: usize,
+}
+
+impl Default for PersistedViewSettings {
+    fn default() -> Self {
+        Self {
+            show_dotfiles: false,
+            show_generated_internal: false,
+            tree_scan_limit: default_tree_scan_limit(),
+        }
+    }
+}
+
+const MIN_TREE_SCAN_LIMIT: usize = 500;
+const DEFAULT_TREE_SCAN_LIMIT: usize = 4_000;
+const MAX_TREE_SCAN_LIMIT: usize = 100_000;
+
+fn default_tree_scan_limit() -> usize {
+    DEFAULT_TREE_SCAN_LIMIT
+}
+
+fn sanitize_view_settings(mut settings: PersistedViewSettings) -> PersistedViewSettings {
+    settings.tree_scan_limit = settings
+        .tree_scan_limit
+        .clamp(MIN_TREE_SCAN_LIMIT, MAX_TREE_SCAN_LIMIT);
+    settings
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -235,11 +263,20 @@ async fn list_files(
     state: State<'_, AppState>,
     show_dotfiles: bool,
     show_generated_internal: bool,
+    tree_scan_limit: Option<usize>,
 ) -> Result<Vec<workspace::FileEntry>, CommandError> {
     let workspace_root = state.workspace_root.read().await.clone();
+    let tree_scan_limit = tree_scan_limit.unwrap_or_else(|| {
+        state
+            .tree_scan_limit
+            .read()
+            .map(|limit| *limit)
+            .unwrap_or_else(|_| default_tree_scan_limit())
+    });
+    let tree_scan_limit = tree_scan_limit.clamp(MIN_TREE_SCAN_LIMIT, MAX_TREE_SCAN_LIMIT);
     scan_workspace(
         &workspace_root,
-        4_000,
+        tree_scan_limit,
         show_dotfiles,
         show_generated_internal,
     )
@@ -424,6 +461,12 @@ async fn update_ui_state(
         .ui_state
         .write()
         .map_err(|_| CommandError::UiState("ui state lock poisoned".to_string()))?;
+    let view = sanitize_view_settings(view);
+    *state
+        .tree_scan_limit
+        .write()
+        .map_err(|_| CommandError::UiState("tree scan limit lock poisoned".to_string()))? =
+        view.tree_scan_limit;
     ui_state.view = view;
     let persisted = PersistedWorkspaceUiState {
         workspace_root: workspace_root.clone(),
@@ -536,6 +579,7 @@ pub fn run() {
         recent_store_path: Arc::new(std::sync::RwLock::new(None)),
         ui_state: Arc::new(std::sync::RwLock::new(AppUiState::default())),
         ui_state_store_path: Arc::new(std::sync::RwLock::new(None)),
+        tree_scan_limit: Arc::new(std::sync::RwLock::new(default_tree_scan_limit())),
         agent_context,
         lsp_manager,
         http_endpoint,
@@ -577,11 +621,16 @@ pub fn run() {
                 .write()
                 .map_err(|_| std::io::Error::other("ui state store lock poisoned"))? =
                 Some(ui_state_store_path.clone());
+            let loaded_ui_state = load_ui_state(&ui_state_store_path)?;
+            *http_state
+                .tree_scan_limit
+                .write()
+                .map_err(|_| std::io::Error::other("tree scan limit lock poisoned"))? =
+                loaded_ui_state.view.tree_scan_limit;
             *http_state
                 .ui_state
                 .write()
-                .map_err(|_| std::io::Error::other("ui state lock poisoned"))? =
-                load_ui_state(&ui_state_store_path)?;
+                .map_err(|_| std::io::Error::other("ui state lock poisoned"))? = loaded_ui_state;
             let initial_root = http_state.workspace_root.blocking_read().clone();
             record_recent_workspace_item(&http_state, &initial_root)
                 .map_err(|error| std::io::Error::other(error.to_string()))?;
@@ -591,6 +640,7 @@ pub fn run() {
                 .map_err(|error| std::io::Error::other(error.to_string()))?;
 
             let workspace_root = http_state.workspace_root.clone();
+            let tree_scan_limit = http_state.tree_scan_limit.clone();
             let agent_context = http_state.agent_context.clone();
             let lsp_manager = http_state.lsp_manager.clone();
             let http_endpoint = http_state.http_endpoint.clone();
@@ -602,15 +652,16 @@ pub fn run() {
             let mcp_token = uuid::Uuid::new_v4().to_string();
             let app_handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
-                match http_server::start_http_server(
-                    workspace_root,
+                match http_server::start_http_server(http_server::HttpServerConfig {
+                    root_path: workspace_root,
+                    tree_scan_limit,
                     agent_context,
                     lsp_manager,
                     frontend_dist,
                     mcp_token,
                     app_handle,
-                    http_error.clone(),
-                )
+                    server_error: http_error.clone(),
+                })
                 .await
                 {
                     Ok(info) => {
@@ -833,13 +884,8 @@ pub fn run() {
                 return;
             }
 
-            if id == "toggle_dotfiles" {
-                let _ = app.emit("menu://toggle-dotfiles", ());
-                return;
-            }
-
-            if id == "toggle_generated_internal" {
-                let _ = app.emit("menu://toggle-generated-internal", ());
+            if id == "show_settings" {
+                let _ = app.emit("menu://show-settings", ());
             }
         })
         .plugin(tauri_plugin_dialog::init())
@@ -922,12 +968,6 @@ fn rebuild_app_menu(app: &tauri::AppHandle, state: &AppState) -> Result<(), Comm
         .recent_items
         .read()
         .map_err(|_| CommandError::Recent("recent items lock poisoned".to_string()))?
-        .clone();
-    let view_settings = state
-        .ui_state
-        .read()
-        .map_err(|_| CommandError::UiState("ui state lock poisoned".to_string()))?
-        .view
         .clone();
     let open_file = MenuItemBuilder::with_id("open_file", "Open File...")
         .accelerator("CmdOrCtrl+O")
@@ -1042,28 +1082,13 @@ fn rebuild_app_menu(app: &tauri::AppHandle, state: &AppState) -> Result<(), Comm
     let show_integrations = MenuItemBuilder::with_id("show_integrations", "Integrations...")
         .build(app)
         .map_err(|error| CommandError::Recent(error.to_string()))?;
-    let toggle_dotfiles = CheckMenuItem::with_id(
-        app,
-        "toggle_dotfiles",
-        "Show Dotfiles",
-        true,
-        view_settings.show_dotfiles,
-        None::<&str>,
-    )
-    .map_err(|error| CommandError::Recent(error.to_string()))?;
-    let toggle_generated_internal = CheckMenuItem::with_id(
-        app,
-        "toggle_generated_internal",
-        "Show Generated/Internal Folders",
-        true,
-        view_settings.show_generated_internal,
-        None::<&str>,
-    )
-    .map_err(|error| CommandError::Recent(error.to_string()))?;
+    let settings = MenuItemBuilder::with_id("show_settings", "Settings...")
+        .accelerator("CmdOrCtrl+,")
+        .build(app)
+        .map_err(|error| CommandError::Recent(error.to_string()))?;
     let view_menu = SubmenuBuilder::new(app, "View")
         .item(&show_integrations)
-        .item(&toggle_dotfiles)
-        .item(&toggle_generated_internal)
+        .item(&settings)
         .build()
         .map_err(|error| CommandError::Recent(error.to_string()))?;
     let edit_menu = SubmenuBuilder::new(app, "Edit")
@@ -1210,6 +1235,7 @@ fn workspace_ui_snapshot_for_root(
         .ui_state
         .read()
         .map_err(|_| CommandError::UiState("ui state lock poisoned".to_string()))?;
+    let view = sanitize_view_settings(ui_state.view.clone());
     let workspace = ui_state
         .workspaces
         .iter()
@@ -1221,10 +1247,7 @@ fn workspace_ui_snapshot_for_root(
             selected_path: workspace.selected_path.clone(),
         })
         .unwrap_or_default();
-    Ok(PersistedUiSnapshot {
-        view: ui_state.view.clone(),
-        workspace,
-    })
+    Ok(PersistedUiSnapshot { view, workspace })
 }
 
 fn sanitize_workspace_ui_state(state: WorkspaceUiStatePayload) -> WorkspaceUiStatePayload {
@@ -1291,7 +1314,9 @@ fn load_ui_state(path: &Path) -> Result<AppUiState, std::io::Error> {
     }
 
     let contents = std::fs::read_to_string(path)?;
-    serde_json::from_str(&contents).map_err(std::io::Error::other)
+    let mut state: AppUiState = serde_json::from_str(&contents).map_err(std::io::Error::other)?;
+    state.view = sanitize_view_settings(state.view);
+    Ok(state)
 }
 
 fn now_ms() -> u128 {
@@ -1604,6 +1629,7 @@ mod tests {
             view: PersistedViewSettings {
                 show_dotfiles: true,
                 show_generated_internal: true,
+                tree_scan_limit: 12_000,
             },
             workspaces: vec![PersistedWorkspaceUiState {
                 workspace_root: "/workspace".to_string(),
@@ -1644,6 +1670,7 @@ mod tests {
             recent_store_path: Arc::new(std::sync::RwLock::new(Some(recents_path))),
             ui_state: Arc::new(std::sync::RwLock::new(AppUiState::default())),
             ui_state_store_path: Arc::new(std::sync::RwLock::new(Some(ui_state_path))),
+            tree_scan_limit: Arc::new(std::sync::RwLock::new(default_tree_scan_limit())),
             agent_context: Arc::new(RwLock::new(AgentContext::default())),
             lsp_manager: lsp::LspManager::new(),
             http_endpoint: Arc::new(RwLock::new(None)),

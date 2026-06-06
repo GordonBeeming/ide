@@ -317,6 +317,7 @@ describe("hosted Tauri API transport", () => {
       view: {
         showDotfiles: false,
         showGeneratedInternal: false,
+        treeScanLimit: 4000,
       },
       workspace: {
         expandedFolders: [],
@@ -327,6 +328,7 @@ describe("hosted Tauri API transport", () => {
       {
         showDotfiles: true,
         showGeneratedInternal: true,
+        treeScanLimit: 4000,
       },
       {
         expandedFolders: ["src"],
@@ -348,6 +350,7 @@ describe("hosted Tauri API transport", () => {
     await listFiles(true);
     await listFiles(false, true);
     await listFiles(true, true);
+    await listFiles(false, false, 8000);
 
     expect(fetchMock.mock.calls[0][0]).toBe("/api/files");
     expect(fetchMock.mock.calls[1][0]).toBe("/api/files?showDotfiles=true");
@@ -357,6 +360,7 @@ describe("hosted Tauri API transport", () => {
     expect(fetchMock.mock.calls[3][0]).toBe(
       "/api/files?showDotfiles=true&showGeneratedInternal=true",
     );
+    expect(fetchMock.mock.calls[4][0]).toBe("/api/files?treeScanLimit=8000");
   });
 
   it("passes visibility settings through hosted directory listing requests", async () => {
@@ -426,6 +430,21 @@ describe("hosted Tauri API transport", () => {
     expect(invoke).toHaveBeenCalledWith("list_files", {
       showDotfiles: true,
       showGeneratedInternal: true,
+    });
+  });
+
+  it("passes explicit scan limits through native file listing commands", async () => {
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    const { invoke } = await import("@tauri-apps/api/core");
+    vi.mocked(invoke).mockResolvedValue([]);
+    const { listFiles } = await import("./tauri");
+
+    await listFiles(false, false, 8000);
+
+    expect(invoke).toHaveBeenCalledWith("list_files", {
+      showDotfiles: false,
+      showGeneratedInternal: false,
+      treeScanLimit: 8000,
     });
   });
 

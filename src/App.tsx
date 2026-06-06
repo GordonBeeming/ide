@@ -153,6 +153,16 @@ interface OpenFailure {
 
 type SidebarSearchMode = "filter" | "content";
 
+const minTreeScanLimit = 500;
+const maxTreeScanLimit = 100000;
+const defaultTreeScanLimit = 4000;
+
+function sanitizeTreeScanLimit(value: number | undefined) {
+  if (!Number.isFinite(value)) return defaultTreeScanLimit;
+  const finiteValue = value as number;
+  return Math.min(maxTreeScanLimit, Math.max(minTreeScanLimit, Math.trunc(finiteValue)));
+}
+
 function fileEntryForDirectOpen(path: string): FileEntry {
   const name = path.split("/").filter(Boolean).at(-1) ?? path;
   return {
@@ -264,8 +274,10 @@ export default function App() {
   const [pendingCloseAll, setPendingCloseAll] = useState(false);
   const [pendingAppClose, setPendingAppClose] = useState(false);
   const [integrationsOpen, setIntegrationsOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [showDotfiles, setShowDotfiles] = useState(false);
   const [showGeneratedInternal, setShowGeneratedInternal] = useState(false);
+  const [treeScanLimit, setTreeScanLimit] = useState(defaultTreeScanLimit);
   const [prefersDark, setPrefersDark] = useState(systemPrefersDark);
   const [uiStateLoaded, setUiStateLoaded] = useState(false);
   const [workspaceUiRestored, setWorkspaceUiRestored] = useState(false);
@@ -423,6 +435,7 @@ export default function App() {
     setWorkspaceUiRestored(false);
     setShowDotfiles(snapshot.view.showDotfiles);
     setShowGeneratedInternal(snapshot.view.showGeneratedInternal);
+    setTreeScanLimit(sanitizeTreeScanLimit(snapshot.view.treeScanLimit));
     setExpandedFolders(new Set(snapshot.workspace.expandedFolders));
     setSelectedPath(snapshot.workspace.selectedPath);
   }, []);
@@ -503,7 +516,7 @@ export default function App() {
         return [entry];
       }
 
-      const entries = await listFiles(showDotfiles, showGeneratedInternal);
+      const entries = await listFiles(showDotfiles, showGeneratedInternal, treeScanLimit);
       setFiles(entries);
       setLoadedFolders(new Set());
       setWorkspaceLoadFailed(false);
@@ -521,6 +534,7 @@ export default function App() {
     showGeneratedInternal,
     singleFileMode,
     singleFilePath,
+    treeScanLimit,
   ]);
 
   useEffect(() => {
@@ -843,6 +857,7 @@ export default function App() {
         {
           showDotfiles,
           showGeneratedInternal,
+          treeScanLimit,
         },
         {
           expandedFolders: [...expandedFolders],
@@ -864,6 +879,7 @@ export default function App() {
     showDotfiles,
     showGeneratedInternal,
     singleFileMode,
+    treeScanLimit,
     uiStateLoaded,
     workspaceUiRestored,
   ]);
@@ -1566,23 +1582,8 @@ export default function App() {
       listen("menu://show-integrations", () => {
         setIntegrationsOpen(true);
       }),
-      listen("menu://toggle-dotfiles", () => {
-        setShowDotfiles((current) => {
-          const next = !current;
-          setStatus(next ? "Showing dotfiles" : "Hiding dotfiles");
-          return next;
-        });
-      }),
-      listen("menu://toggle-generated-internal", () => {
-        setShowGeneratedInternal((current) => {
-          const next = !current;
-          setStatus(
-            next
-              ? "Showing generated/internal folders"
-              : "Hiding generated/internal folders",
-          );
-          return next;
-        });
+      listen("menu://show-settings", () => {
+        setSettingsOpen(true);
       }),
     ])
       .then((callbacks) => {
@@ -1847,26 +1848,12 @@ export default function App() {
         run: () => setIntegrationsOpen(true),
       },
       {
-        id: "toggle_dotfiles",
-        title: showDotfiles ? "Hide Dotfiles" : "Show Dotfiles",
-        detail: "Toggle dotfiles and dot folders in the tree",
-        keywords: ["hidden files", "view"],
+        id: "show_settings",
+        title: "Settings",
+        detail: "Adjust workspace view and scan limits",
+        keywords: ["preferences", "dotfiles", "generated folders", "limit"],
         enabled: true,
-        run: () => {
-          setShowDotfiles((current) => !current);
-        },
-      },
-      {
-        id: "toggle_generated_internal",
-        title: showGeneratedInternal
-          ? "Hide Generated/Internal Folders"
-          : "Show Generated/Internal Folders",
-        detail: "Toggle generated and internal folders in the tree",
-        keywords: ["node_modules", "target", "dist", "view"],
-        enabled: true,
-        run: () => {
-          setShowGeneratedInternal((current) => !current);
-        },
+        run: () => setSettingsOpen(true),
       },
     ],
     [
@@ -1890,8 +1877,6 @@ export default function App() {
       saveActive,
       saveAll,
       selectedEntry,
-      showDotfiles,
-      showGeneratedInternal,
       sidebarCollapsed,
       toggleSidebar,
     ],
@@ -2272,6 +2257,9 @@ export default function App() {
       } else if (event.key === "Escape" && integrationsOpen) {
         event.preventDefault();
         setIntegrationsOpen(false);
+      } else if (event.key === "Escape" && settingsOpen) {
+        event.preventDefault();
+        setSettingsOpen(false);
       } else if (event.key === "Escape" && pendingClosePath) {
         event.preventDefault();
         setPendingClosePath(undefined);
@@ -2299,6 +2287,7 @@ export default function App() {
     newFileDialogOpen,
     newFolderDialogOpen,
     integrationsOpen,
+    settingsOpen,
     goToLineDialogOpen,
     nativePickerAvailable,
     commandPaletteVisible,
@@ -2957,6 +2946,75 @@ export default function App() {
                 className="command-button command-button--primary"
                 type="button"
                 onClick={() => setIntegrationsOpen(false)}
+              >
+                Close
+              </button>
+            </div>
+          </section>
+        </div>
+      ) : null}
+
+      {settingsOpen ? (
+        <div className="dialog-backdrop" role="presentation">
+          <section
+            className="confirm-dialog settings-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="settings-title"
+          >
+            <div>
+              <div className="eyebrow">Preferences</div>
+              <h2 id="settings-title">Settings</h2>
+              <div className="settings-list">
+                <label className="settings-row">
+                  <input
+                    type="checkbox"
+                    checked={showDotfiles}
+                    onChange={(event) => {
+                      setShowDotfiles(event.target.checked);
+                      setStatus(event.target.checked ? "Showing dotfiles" : "Hiding dotfiles");
+                    }}
+                  />
+                  <span>Show dotfiles and dot folders</span>
+                </label>
+                <label className="settings-row">
+                  <input
+                    type="checkbox"
+                    checked={showGeneratedInternal}
+                    onChange={(event) => {
+                      setShowGeneratedInternal(event.target.checked);
+                      setStatus(
+                        event.target.checked
+                          ? "Showing generated/internal folders"
+                          : "Hiding generated/internal folders",
+                      );
+                    }}
+                  />
+                  <span>Show generated and internal folders</span>
+                </label>
+                <label className="dialog-field">
+                  <span>Initial tree scan limit</span>
+                  <input
+                    inputMode="numeric"
+                    min={minTreeScanLimit}
+                    max={maxTreeScanLimit}
+                    step={500}
+                    type="number"
+                    value={treeScanLimit}
+                    onChange={(event) => {
+                      const next = sanitizeTreeScanLimit(Number(event.target.value));
+                      setTreeScanLimit(next);
+                      setStatus(`Tree scan limit set to ${next}`);
+                    }}
+                  />
+                </label>
+              </div>
+            </div>
+            <div className="confirm-dialog__actions">
+              <button
+                className="command-button command-button--primary"
+                type="button"
+                onClick={() => setSettingsOpen(false)}
               >
                 Close
               </button>

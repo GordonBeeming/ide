@@ -93,6 +93,7 @@ export type OpenLaunchRequest =
 export interface PersistedViewSettings {
   showDotfiles: boolean;
   showGeneratedInternal: boolean;
+  treeScanLimit?: number;
 }
 
 export interface WorkspaceUiState {
@@ -111,6 +112,7 @@ const defaultUiSnapshot: PersistedUiSnapshot = {
   view: {
     showDotfiles: false,
     showGeneratedInternal: false,
+    treeScanLimit: 4000,
   },
   workspace: {
     expandedFolders: [],
@@ -161,14 +163,23 @@ export function updateUiState(
   return invoke<void>("update_ui_state", { view, workspace });
 }
 
-export function listFiles(showDotfiles = false, showGeneratedInternal = false) {
+export function listFiles(
+  showDotfiles = false,
+  showGeneratedInternal = false,
+  treeScanLimit?: number,
+) {
   const params = new URLSearchParams();
   if (showDotfiles) params.set("showDotfiles", "true");
   if (showGeneratedInternal) params.set("showGeneratedInternal", "true");
+  if (treeScanLimit !== undefined) params.set("treeScanLimit", String(treeScanLimit));
   const query = params.toString();
   const path = query ? `/api/files?${query}` : "/api/files";
   return callApi<unknown>("list_files", path, {
-    invokeArgs: { showDotfiles, showGeneratedInternal },
+    invokeArgs: {
+      showDotfiles,
+      showGeneratedInternal,
+      ...(treeScanLimit === undefined ? {} : { treeScanLimit }),
+    },
   }).then((entries) => {
     if (!Array.isArray(entries)) {
       throw new Error("Workspace file list response was not valid JSON");
