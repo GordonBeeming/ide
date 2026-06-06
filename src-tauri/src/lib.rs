@@ -727,6 +727,23 @@ fn get_settings_locations(state: State<'_, AppState>) -> Result<SettingsLocation
     settings_locations_for_state(&state)
 }
 
+#[tauri::command]
+async fn get_workspace_index_stats(
+    state: State<'_, AppState>,
+) -> Result<workspace_index::WorkspaceIndexStats, CommandError> {
+    let workspace_root = state.workspace_root.read().await.clone();
+    workspace_index_stats_for_root(&state.workspace_index, &workspace_root)
+}
+
+fn workspace_index_stats_for_root(
+    index: &workspace_index::WorkspaceIndex,
+    workspace_root: &Path,
+) -> Result<workspace_index::WorkspaceIndexStats, CommandError> {
+    index
+        .stats_for_root(workspace_root)
+        .map_err(CommandError::WorkspaceIndex)
+}
+
 fn settings_locations_for_state(state: &AppState) -> Result<SettingsLocations, CommandError> {
     let settings_file = state
         .ui_state_store_path
@@ -1292,6 +1309,7 @@ pub fn run() {
             record_recent_file,
             get_ui_state,
             get_settings_locations,
+            get_workspace_index_stats,
             update_ui_state,
             update_agent_context,
             get_agent_context,
@@ -2082,6 +2100,35 @@ mod tests {
             locations.workspace_index_file,
             Some(path_to_string(&workspace_index_path))
         );
+    }
+
+    #[test]
+    fn workspace_index_stats_report_current_root_coverage() {
+        let dir = tempdir().unwrap();
+        let state = test_state(dir.path().join("recents.json"));
+        state
+            .workspace_index
+            .set_database_path(dir.path().join("workspace-index.sqlite"))
+            .unwrap();
+        state
+            .workspace_index
+            .replace_directory_entries(
+                dir.path(),
+                "",
+                &[
+                    test_entry("src", None, true),
+                    test_entry("README.md", None, false),
+                ],
+            )
+            .unwrap();
+
+        let stats = workspace_index_stats_for_root(&state.workspace_index, dir.path()).unwrap();
+
+        assert_eq!(stats.indexed_entries, 2);
+        assert_eq!(stats.indexed_files, 1);
+        assert_eq!(stats.indexed_folders, 1);
+        assert_eq!(stats.loaded_folders, 1);
+        assert_eq!(stats.pending_folders, 1);
     }
 
     #[test]

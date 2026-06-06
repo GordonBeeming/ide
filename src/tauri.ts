@@ -135,6 +135,14 @@ export interface SettingsLocations {
   workspaceIndexFile?: string;
 }
 
+export interface WorkspaceIndexStats {
+  indexedEntries: number;
+  indexedFiles: number;
+  indexedFolders: number;
+  loadedFolders: number;
+  pendingFolders: number;
+}
+
 const defaultUiSnapshot: PersistedUiSnapshot = {
   view: {
     showDotfiles: false,
@@ -195,6 +203,52 @@ export function getSettingsLocations() {
   }
 
   return invoke<SettingsLocations>("get_settings_locations");
+}
+
+export function getWorkspaceIndexStats() {
+  return callApi<unknown>("get_workspace_index_stats", "/api/workspace-index").then(
+    (value) => {
+      const stats = normalizeWorkspaceIndexStats(value);
+      if (!stats) {
+        throw new Error("Workspace index stats response was not valid JSON");
+      }
+      return stats;
+    },
+  );
+}
+
+export function normalizeWorkspaceIndexStats(
+  value: unknown,
+): WorkspaceIndexStats | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const candidate = value as Record<string, unknown>;
+  const indexedEntries = numericStat(candidate.indexedEntries);
+  const indexedFiles = numericStat(candidate.indexedFiles);
+  const indexedFolders = numericStat(candidate.indexedFolders);
+  const loadedFolders = numericStat(candidate.loadedFolders);
+  const pendingFolders = numericStat(candidate.pendingFolders);
+  if (
+    indexedEntries === undefined ||
+    indexedFiles === undefined ||
+    indexedFolders === undefined ||
+    loadedFolders === undefined ||
+    pendingFolders === undefined
+  ) {
+    return undefined;
+  }
+  return {
+    indexedEntries,
+    indexedFiles,
+    indexedFolders,
+    loadedFolders,
+    pendingFolders,
+  };
+}
+
+function numericStat(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0
+    ? value
+    : undefined;
 }
 
 export function updateUiState(

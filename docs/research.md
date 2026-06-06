@@ -53,6 +53,8 @@ References:
 Established editors avoid treating the whole filesystem as an always-resident in-memory tree:
 
 - VS Code delegates closed-file workspace search to ripgrep and applies `search.exclude`, `files.exclude`, ignore files, and `.gitignore` patterns before searching. That is a useful guardrail for this project: excludes and ignore files are part of performance, not just UI polish.
+- VS Code also exposes the relevant limits/excludes through user and workspace settings, and its Linux guidance calls out `files.watcherExclude` for large workspaces before raising OS watcher limits.
+- JetBrains IDEs document excluded directories, unloaded modules, and shared indexes as explicit project-analysis controls. The useful lesson here is not to hide indexing scope: users should be able to see and change it.
 - ripgrep's own default behavior is to recursively search while respecting ignore rules and skipping hidden/binary data unless explicitly overridden.
 - SQLite FTS5 is a good future fit for bounded full-text search, especially with external-content tables, but the SQLite docs are explicit that external-content indexes must be kept up to date by the application.
 - Tauri exposes OS-conventional app data and app-local-data directories. User settings/recents belong in app data where backup is reasonable; disposable workspace search metadata belongs in app-local data so it can be rebuilt.
@@ -66,6 +68,7 @@ Current implementation:
 - Track expanded directory frontiers and let quick-open expand unloaded folders in layer order when the indexed metadata cannot satisfy a query.
 - Upsert/remove affected indexed paths after editor file creation, writes, renames, and deletes.
 - Remove stale directory-frontier rows when indexed paths are deleted or an indexed folder no longer exists during expansion.
+- Report disposable index coverage from Settings, including indexed file/folder counts and pending lazy-load folder count.
 - Keep current streaming content search bounded by Settings-backed result and per-file-size caps. Keep editor reads bounded by the Settings-backed editable file size cap.
 - Continue to keep generated/internal folders out of content search by default.
 
@@ -75,7 +78,10 @@ Deferred implementation:
 
 References:
 
-- https://github.com/microsoft/vscode/wiki/Search-Issues
+- https://code.visualstudio.com/docs/configure/settings
+- https://code.visualstudio.com/docs/setup/linux#_visual-studio-code-is-unable-to-watch-for-file-changes-in-this-large-workspace-error-enospc
+- https://www.jetbrains.com/help/idea/indexing.html
+- https://ripgrep.dev/docs/guide/
 - https://github.com/BurntSushi/ripgrep
 - https://www.sqlite.org/fts5.html
 - https://tauri.app/reference/javascript/api/namespacepath/

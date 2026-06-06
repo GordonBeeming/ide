@@ -374,6 +374,64 @@ describe("hosted Tauri API transport", () => {
     expect(invoke).toHaveBeenCalledWith("get_settings_locations");
   });
 
+  it("reads hosted workspace index stats", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      jsonResponse({
+        indexedEntries: 12,
+        indexedFiles: 7,
+        indexedFolders: 5,
+        loadedFolders: 3,
+        pendingFolders: 2,
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const { getWorkspaceIndexStats } = await import("./tauri");
+
+    await expect(getWorkspaceIndexStats()).resolves.toEqual({
+      indexedEntries: 12,
+      indexedFiles: 7,
+      indexedFolders: 5,
+      loadedFolders: 3,
+      pendingFolders: 2,
+    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/workspace-index",
+      expect.objectContaining({ method: "GET" }),
+    );
+  });
+
+  it("rejects malformed hosted workspace index stats", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ indexedFiles: 7 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const { getWorkspaceIndexStats } = await import("./tauri");
+
+    await expect(getWorkspaceIndexStats()).rejects.toThrow(
+      "Workspace index stats response was not valid JSON",
+    );
+  });
+
+  it("reads native workspace index stats through Tauri", async () => {
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    const { invoke } = await import("@tauri-apps/api/core");
+    vi.mocked(invoke).mockResolvedValue({
+      indexedEntries: 12,
+      indexedFiles: 7,
+      indexedFolders: 5,
+      loadedFolders: 3,
+      pendingFolders: 2,
+    });
+    const { getWorkspaceIndexStats } = await import("./tauri");
+
+    await expect(getWorkspaceIndexStats()).resolves.toEqual({
+      indexedEntries: 12,
+      indexedFiles: 7,
+      indexedFolders: 5,
+      loadedFolders: 3,
+      pendingFolders: 2,
+    });
+    expect(invoke).toHaveBeenCalledWith("get_workspace_index_stats", undefined);
+  });
+
   it("passes explicit search limits through hosted search requests", async () => {
     const fetchMock = vi.fn().mockImplementation(async () => jsonResponse([]));
     vi.stubGlobal("fetch", fetchMock);

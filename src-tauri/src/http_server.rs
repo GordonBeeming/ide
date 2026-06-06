@@ -184,6 +184,7 @@ pub async fn start_http_server(config: HttpServerConfig) -> Result<HttpServerInf
         .route("/api/workspace-root", get(workspace_root))
         .route("/api/files", get(files))
         .route("/api/file-search", get(indexed_files))
+        .route("/api/workspace-index", get(workspace_index_stats))
         .route("/api/directory", get(directory))
         .route("/api/search", get(search))
         .route(
@@ -381,6 +382,13 @@ async fn indexed_files(
         query.show_dotfiles.unwrap_or(false),
         query.show_generated_internal.unwrap_or(false),
     )?))
+}
+
+async fn workspace_index_stats(
+    State(state): State<HttpServerState>,
+) -> Result<Json<crate::workspace_index::WorkspaceIndexStats>, ApiError> {
+    let workspace_root = state.workspace_root.read().await.clone();
+    Ok(Json(state.workspace_index.stats_for_root(&workspace_root)?))
 }
 
 fn search_indexed_files_with_expansion(

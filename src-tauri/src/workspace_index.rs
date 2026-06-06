@@ -2,6 +2,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 
 use rusqlite::{params, Connection};
+use serde::Serialize;
 
 use crate::workspace::FileEntry;
 
@@ -20,6 +21,16 @@ pub enum WorkspaceIndexError {
     Io(#[from] std::io::Error),
     #[error("workspace index database error: {0}")]
     Database(#[from] rusqlite::Error),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceIndexStats {
+    pub indexed_entries: u64,
+    pub indexed_files: u64,
+    pub indexed_folders: u64,
+    pub loaded_folders: u64,
+    pub pending_folders: u64,
 }
 
 impl WorkspaceIndex {
@@ -232,6 +243,56 @@ impl WorkspaceIndex {
         Ok(directories)
     }
 
+    pub fn stats_for_root(&self, root: &Path) -> Result<WorkspaceIndexStats, WorkspaceIndexError> {
+        let root_key = root_key(root);
+        let connection = self.connection()?;
+        let indexed_entries = count_rows(
+            &connection,
+            "SELECT COUNT(*) FROM workspace_entries WHERE root = ?1",
+            &root_key,
+        )?;
+        let indexed_files = count_rows(
+            &connection,
+            "SELECT COUNT(*) FROM workspace_entries WHERE root = ?1 AND is_dir = 0",
+            &root_key,
+        )?;
+        let indexed_folders = count_rows(
+            &connection,
+            "SELECT COUNT(*) FROM workspace_entries WHERE root = ?1 AND is_dir = 1",
+            &root_key,
+        )?;
+        let loaded_folders = count_rows(
+            &connection,
+            "SELECT COUNT(*) FROM workspace_indexed_directories WHERE root = ?1",
+            &root_key,
+        )?;
+        let pending_folders = if directory_is_indexed(&connection, &root_key, "")? {
+            count_rows(
+                &connection,
+                "SELECT COUNT(*)
+                 FROM workspace_entries AS entry
+                 WHERE entry.root = ?1
+                    AND entry.is_dir = 1
+                    AND NOT EXISTS (
+                        SELECT 1
+                        FROM workspace_indexed_directories AS indexed
+                        WHERE indexed.root = entry.root AND indexed.path = entry.path
+                    )",
+                &root_key,
+            )?
+        } else {
+            1
+        };
+
+        Ok(WorkspaceIndexStats {
+            indexed_entries,
+            indexed_files,
+            indexed_folders,
+            loaded_folders,
+            pending_folders,
+        })
+    }
+
     #[cfg(test)]
     pub fn entries_for_root(&self, root: &Path) -> Result<Vec<FileEntry>, WorkspaceIndexError> {
         let root_key = root_key(root);
@@ -259,6 +320,15 @@ impl WorkspaceIndex {
             .ok_or(WorkspaceIndexError::NotInitialized)?;
         open_database(&path)
     }
+}
+
+fn count_rows(
+    connection: &Connection,
+    sql: &str,
+    root_key: &str,
+) -> Result<u64, WorkspaceIndexError> {
+    let count: i64 = connection.query_row(sql, [root_key], |row| row.get(0))?;
+    Ok(u64::try_from(count).unwrap_or(u64::MAX))
 }
 
 fn escape_like(value: &str) -> String {
@@ -671,5 +741,55 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert_eq!(paths, vec!["100% literal.txt"]);
+    }
+
+    #[test]
+    fn stats_report_indexed_and_pending_folder_counts() {
+        let dir = tempdir().unwrap();
+        let index = WorkspaceIndex::new();
+        index
+            .set_database_path(dir.path().join("workspace-index.sqlite"))
+            .unwrap();
+
+        assert_eq!(
+            index.stats_for_root(dir.path()).unwrap(),
+            WorkspaceIndexStats {
+                indexed_entries: 0,
+                indexed_files: 0,
+                indexed_folders: 0,
+                loaded_folders: 0,
+                pending_folders: 1,
+            },
+        );
+
+        index
+            .replace_directory_entries(
+                dir.path(),
+                "",
+                &[
+                    entry("src", None, true),
+                    entry("target", None, true),
+                    entry("README.md", None, false),
+                ],
+            )
+            .unwrap();
+        index
+            .replace_directory_entries(
+                dir.path(),
+                "src",
+                &[entry("src/main.rs", Some("src"), false)],
+            )
+            .unwrap();
+
+        assert_eq!(
+            index.stats_for_root(dir.path()).unwrap(),
+            WorkspaceIndexStats {
+                indexed_entries: 4,
+                indexed_files: 2,
+                indexed_folders: 2,
+                loaded_folders: 2,
+                pending_folders: 1,
+            },
+        );
     }
 }

@@ -75,6 +75,7 @@ const tauriMocks = vi.hoisted(() => ({
   setWorkspaceRootPath: vi.fn(),
   getUiState: vi.fn(),
   getSettingsLocations: vi.fn(),
+  getWorkspaceIndexStats: vi.fn(),
   updateUiState: vi.fn(),
   updateAgentContext: vi.fn(),
   getLspServers: vi.fn(),
@@ -134,6 +135,7 @@ vi.mock("./tauri", async () => {
     setWorkspaceRootPath: tauriMocks.setWorkspaceRootPath,
     getUiState: tauriMocks.getUiState,
     getSettingsLocations: tauriMocks.getSettingsLocations,
+    getWorkspaceIndexStats: tauriMocks.getWorkspaceIndexStats,
     updateUiState: tauriMocks.updateUiState,
     updateAgentContext: tauriMocks.updateAgentContext,
     getLspServers: tauriMocks.getLspServers,
@@ -271,6 +273,13 @@ describe("App shell interactions", () => {
       settingsFile: "/Users/gordon/Library/Application Support/com.gordonbeeming.ide/ui-state.json",
       recentsFile: "/Users/gordon/Library/Application Support/com.gordonbeeming.ide/recents.json",
       workspaceIndexFile: "/Users/gordon/Library/Application Support/com.gordonbeeming.ide/workspace-index.sqlite",
+    });
+    tauriMocks.getWorkspaceIndexStats.mockResolvedValue({
+      indexedEntries: 12,
+      indexedFiles: 7,
+      indexedFolders: 5,
+      loadedFolders: 3,
+      pendingFolders: 2,
     });
     tauriMocks.updateUiState.mockResolvedValue(undefined);
     tauriMocks.updateAgentContext.mockResolvedValue(undefined);
@@ -793,6 +802,12 @@ describe("App shell interactions", () => {
       ),
     ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Copy settings file path" })).toBeInTheDocument();
+    expect(await screen.findByLabelText("Workspace index coverage")).toBeInTheDocument();
+    expect(screen.getByText("Indexed files")).toBeInTheDocument();
+    expect(screen.getByText("7")).toBeInTheDocument();
+    expect(screen.getByText("Pending folders")).toBeInTheDocument();
+    expect(screen.getByText("2")).toBeInTheDocument();
+    expect(tauriMocks.getWorkspaceIndexStats).toHaveBeenCalledTimes(1);
   });
 
   it("reloads the tree with dotfiles when changed from Settings", async () => {

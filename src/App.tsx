@@ -82,6 +82,7 @@ import {
   getLspServers,
   getSettingsLocations,
   getUiState,
+  getWorkspaceIndexStats,
   getWorkspaceRoot,
   isNativeTauri,
   listDirectory,
@@ -104,6 +105,7 @@ import {
   type OpenLaunchRequest,
   type PersistedUiSnapshot,
   type SettingsLocations,
+  type WorkspaceIndexStats,
   type WorkspaceUiState,
 } from "./tauri";
 import {
@@ -377,6 +379,7 @@ export default function App() {
     Record<string, EditorDiagnostic[]>
   >({});
   const [settingsLocations, setSettingsLocations] = useState<SettingsLocations>({});
+  const [workspaceIndexStats, setWorkspaceIndexStats] = useState<WorkspaceIndexStats>();
   const [httpEndpoint, setHttpEndpoint] = useState<string>();
   const [codexMcp, setCodexMcp] = useState<CodexMcpStatus>();
   const [claudeBridge, setClaudeBridge] = useState<ClaudeBridgeStatus>();
@@ -780,6 +783,14 @@ export default function App() {
     }
   }, [refreshFiles]);
 
+  const refreshWorkspaceIndexStats = useCallback(async () => {
+    try {
+      setWorkspaceIndexStats(await getWorkspaceIndexStats());
+    } catch (reason) {
+      setError(`Unable to load workspace index stats: ${String(reason)}`);
+    }
+  }, []);
+
   useEffect(() => {
     loadPersistedUiState();
   }, [loadPersistedUiState]);
@@ -791,6 +802,12 @@ export default function App() {
         setError(`Unable to load settings storage paths: ${String(reason)}`);
       });
   }, []);
+
+  useEffect(() => {
+    if (settingsOpen && settingsCategory === "storage") {
+      void refreshWorkspaceIndexStats();
+    }
+  }, [refreshWorkspaceIndexStats, settingsCategory, settingsOpen]);
 
   useEffect(() => {
     if (!uiStateLoaded || !launchTargetLoaded) return;
@@ -3692,6 +3709,33 @@ export default function App() {
                           ) : null}
                         </div>
                       </div>
+                      <div className="settings-section__title">Workspace Index</div>
+                      {workspaceIndexStats ? (
+                        <div className="settings-stats-grid" aria-label="Workspace index coverage">
+                          <div className="settings-stat">
+                            <span>Indexed files</span>
+                            <strong>{workspaceIndexStats.indexedFiles.toLocaleString()}</strong>
+                          </div>
+                          <div className="settings-stat">
+                            <span>Indexed folders</span>
+                            <strong>{workspaceIndexStats.indexedFolders.toLocaleString()}</strong>
+                          </div>
+                          <div className="settings-stat">
+                            <span>Loaded folders</span>
+                            <strong>{workspaceIndexStats.loadedFolders.toLocaleString()}</strong>
+                          </div>
+                          <div className="settings-stat">
+                            <span>Pending folders</span>
+                            <strong>{workspaceIndexStats.pendingFolders.toLocaleString()}</strong>
+                          </div>
+                          <div className="settings-stat settings-stat--wide">
+                            <span>Indexed entries</span>
+                            <strong>{workspaceIndexStats.indexedEntries.toLocaleString()}</strong>
+                          </div>
+                        </div>
+                      ) : (
+                        <p className="settings-note">Workspace index stats have not loaded yet.</p>
+                      )}
                     </section>
                   ) : null}
                 </div>
