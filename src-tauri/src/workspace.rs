@@ -61,7 +61,6 @@ pub enum WorkspaceError {
 
 const MAX_OPEN_BYTES: u64 = 5 * 1024 * 1024;
 const MAX_SEARCH_QUERY_CHARS: usize = 128;
-const MAX_SEARCH_FILE_BYTES: u64 = 1_000_000;
 
 pub fn scan_workspace(
     root: &Path,
@@ -221,6 +220,7 @@ pub fn search_workspace(
     root: &Path,
     query: &str,
     max_results: usize,
+    max_file_bytes: u64,
 ) -> Result<Vec<SearchMatch>, WorkspaceError> {
     let query = query.trim();
     if query.is_empty() {
@@ -249,8 +249,7 @@ pub fn search_workspace(
         if metadata.file_type().is_symlink() {
             continue;
         }
-        if metadata.is_dir() || metadata.len() > MAX_SEARCH_FILE_BYTES || is_known_binary_path(path)
-        {
+        if metadata.is_dir() || metadata.len() > max_file_bytes || is_known_binary_path(path) {
             continue;
         }
 
@@ -1195,7 +1194,7 @@ mod tests {
         )
         .unwrap();
 
-        let results = search_workspace(dir.path(), "needle", 10).unwrap();
+        let results = search_workspace(dir.path(), "needle", 10, 1_000_000).unwrap();
 
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].path, "src/main.rs");
@@ -1207,7 +1206,7 @@ mod tests {
         let dir = tempdir().unwrap();
         fs::write(dir.path().join("README.md"), "éé 😀 Needle\n").unwrap();
 
-        let results = search_workspace(dir.path(), "needle", 10).unwrap();
+        let results = search_workspace(dir.path(), "needle", 10, 1_000_000).unwrap();
 
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].line_text, "éé 😀 Needle");
@@ -1220,7 +1219,7 @@ mod tests {
         let dir = tempdir().unwrap();
         fs::write(dir.path().join("README.md"), "İ prefix Needle\n").unwrap();
 
-        let results = search_workspace(dir.path(), "needle", 10).unwrap();
+        let results = search_workspace(dir.path(), "needle", 10, 1_000_000).unwrap();
 
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].line_text, "İ prefix Needle");
@@ -1233,7 +1232,7 @@ mod tests {
         let dir = tempdir().unwrap();
         fs::write(dir.path().join("README.md"), "Needle then needle again\n").unwrap();
 
-        let results = search_workspace(dir.path(), "needle", 10).unwrap();
+        let results = search_workspace(dir.path(), "needle", 10, 1_000_000).unwrap();
 
         assert_eq!(results.len(), 2);
         assert_eq!(results[0].path, "README.md");
@@ -1251,7 +1250,7 @@ mod tests {
         let dir = tempdir().unwrap();
         fs::write(dir.path().join("README.md"), "needle needle needle\n").unwrap();
 
-        let results = search_workspace(dir.path(), "needle", 2).unwrap();
+        let results = search_workspace(dir.path(), "needle", 2, 1_000_000).unwrap();
 
         assert_eq!(results.len(), 2);
         assert_eq!(results[0].match_start, 0);
@@ -1263,7 +1262,7 @@ mod tests {
         let dir = tempdir().unwrap();
         fs::write(dir.path().join("README.md"), "İ and i\n").unwrap();
 
-        let results = search_workspace(dir.path(), "i", 10).unwrap();
+        let results = search_workspace(dir.path(), "i", 10, 1_000_000).unwrap();
 
         assert_eq!(results.len(), 2);
         assert_eq!(results[0].match_start, 0);
@@ -1313,10 +1312,22 @@ mod tests {
         fs::write(dir.path().join("font.woff2"), "needle").unwrap();
         fs::write(dir.path().join("README.md"), "needle").unwrap();
 
-        let results = search_workspace(dir.path(), "needle", 10).unwrap();
+        let results = search_workspace(dir.path(), "needle", 10, 1_000_000).unwrap();
 
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].path, "README.md");
+    }
+
+    #[test]
+    fn search_workspace_respects_max_file_bytes() {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join("large.txt"), "prefix needle suffix").unwrap();
+        fs::write(dir.path().join("small.txt"), "needle").unwrap();
+
+        let results = search_workspace(dir.path(), "needle", 10, 8).unwrap();
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].path, "small.txt");
     }
 
     #[test]
@@ -1325,7 +1336,7 @@ mod tests {
         fs::write(dir.path().join("invalid.txt"), b"needle \xFF").unwrap();
         fs::write(dir.path().join("README.md"), "needle").unwrap();
 
-        let results = search_workspace(dir.path(), "needle", 10).unwrap();
+        let results = search_workspace(dir.path(), "needle", 10, 1_000_000).unwrap();
 
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].path, "README.md");
@@ -1344,7 +1355,7 @@ mod tests {
         )
         .unwrap();
 
-        let results = search_workspace(dir.path(), "needle", 10).unwrap();
+        let results = search_workspace(dir.path(), "needle", 10, 1_000_000).unwrap();
 
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].path, "inside.txt");
@@ -1355,7 +1366,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let query = "a".repeat(MAX_SEARCH_QUERY_CHARS + 1);
 
-        let result = search_workspace(dir.path(), &query, 10);
+        let result = search_workspace(dir.path(), &query, 10, 1_000_000);
 
         assert!(matches!(result, Err(WorkspaceError::SearchQueryTooLong)));
     }

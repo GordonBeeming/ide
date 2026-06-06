@@ -28,6 +28,8 @@ struct AppState {
     ui_state: Arc<std::sync::RwLock<AppUiState>>,
     ui_state_store_path: Arc<std::sync::RwLock<Option<PathBuf>>>,
     tree_scan_limit: Arc<std::sync::RwLock<usize>>,
+    workspace_search_result_limit: Arc<std::sync::RwLock<usize>>,
+    workspace_search_max_file_bytes: Arc<std::sync::RwLock<u64>>,
     workspace_index: workspace_index::WorkspaceIndex,
     agent_context: Arc<RwLock<AgentContext>>,
     lsp_manager: lsp::LspManager,
@@ -120,6 +122,16 @@ struct PersistedViewSettings {
     show_generated_internal: bool,
     #[serde(default = "default_tree_scan_limit")]
     tree_scan_limit: usize,
+    #[serde(default = "default_workspace_search_result_limit")]
+    workspace_search_result_limit: usize,
+    #[serde(default = "default_workspace_search_max_file_kb")]
+    workspace_search_max_file_kb: u64,
+    #[serde(default = "default_current_file_search_result_limit")]
+    current_file_search_result_limit: usize,
+    #[serde(default = "default_quick_open_result_limit")]
+    quick_open_result_limit: usize,
+    #[serde(default = "default_command_palette_result_limit")]
+    command_palette_result_limit: usize,
 }
 
 impl Default for PersistedViewSettings {
@@ -128,6 +140,11 @@ impl Default for PersistedViewSettings {
             show_dotfiles: false,
             show_generated_internal: false,
             tree_scan_limit: default_tree_scan_limit(),
+            workspace_search_result_limit: default_workspace_search_result_limit(),
+            workspace_search_max_file_kb: default_workspace_search_max_file_kb(),
+            current_file_search_result_limit: default_current_file_search_result_limit(),
+            quick_open_result_limit: default_quick_open_result_limit(),
+            command_palette_result_limit: default_command_palette_result_limit(),
         }
     }
 }
@@ -135,15 +152,69 @@ impl Default for PersistedViewSettings {
 const MIN_TREE_SCAN_LIMIT: usize = 500;
 const DEFAULT_TREE_SCAN_LIMIT: usize = 4_000;
 const MAX_TREE_SCAN_LIMIT: usize = 100_000;
+const MIN_WORKSPACE_SEARCH_RESULT_LIMIT: usize = 25;
+const DEFAULT_WORKSPACE_SEARCH_RESULT_LIMIT: usize = 200;
+const MAX_WORKSPACE_SEARCH_RESULT_LIMIT: usize = 5_000;
+const MIN_WORKSPACE_SEARCH_MAX_FILE_KB: u64 = 64;
+const DEFAULT_WORKSPACE_SEARCH_MAX_FILE_KB: u64 = 1_024;
+const MAX_WORKSPACE_SEARCH_MAX_FILE_KB: u64 = 16_384;
+const MIN_CURRENT_FILE_SEARCH_RESULT_LIMIT: usize = 25;
+const DEFAULT_CURRENT_FILE_SEARCH_RESULT_LIMIT: usize = 200;
+const MAX_CURRENT_FILE_SEARCH_RESULT_LIMIT: usize = 5_000;
+const MIN_QUICK_OPEN_RESULT_LIMIT: usize = 5;
+const DEFAULT_QUICK_OPEN_RESULT_LIMIT: usize = 12;
+const MAX_QUICK_OPEN_RESULT_LIMIT: usize = 100;
+const MIN_COMMAND_PALETTE_RESULT_LIMIT: usize = 5;
+const DEFAULT_COMMAND_PALETTE_RESULT_LIMIT: usize = 18;
+const MAX_COMMAND_PALETTE_RESULT_LIMIT: usize = 100;
 
 fn default_tree_scan_limit() -> usize {
     DEFAULT_TREE_SCAN_LIMIT
+}
+
+fn default_workspace_search_result_limit() -> usize {
+    DEFAULT_WORKSPACE_SEARCH_RESULT_LIMIT
+}
+
+fn default_workspace_search_max_file_kb() -> u64 {
+    DEFAULT_WORKSPACE_SEARCH_MAX_FILE_KB
+}
+
+fn default_current_file_search_result_limit() -> usize {
+    DEFAULT_CURRENT_FILE_SEARCH_RESULT_LIMIT
+}
+
+fn default_quick_open_result_limit() -> usize {
+    DEFAULT_QUICK_OPEN_RESULT_LIMIT
+}
+
+fn default_command_palette_result_limit() -> usize {
+    DEFAULT_COMMAND_PALETTE_RESULT_LIMIT
 }
 
 fn sanitize_view_settings(mut settings: PersistedViewSettings) -> PersistedViewSettings {
     settings.tree_scan_limit = settings
         .tree_scan_limit
         .clamp(MIN_TREE_SCAN_LIMIT, MAX_TREE_SCAN_LIMIT);
+    settings.workspace_search_result_limit = settings.workspace_search_result_limit.clamp(
+        MIN_WORKSPACE_SEARCH_RESULT_LIMIT,
+        MAX_WORKSPACE_SEARCH_RESULT_LIMIT,
+    );
+    settings.workspace_search_max_file_kb = settings.workspace_search_max_file_kb.clamp(
+        MIN_WORKSPACE_SEARCH_MAX_FILE_KB,
+        MAX_WORKSPACE_SEARCH_MAX_FILE_KB,
+    );
+    settings.current_file_search_result_limit = settings.current_file_search_result_limit.clamp(
+        MIN_CURRENT_FILE_SEARCH_RESULT_LIMIT,
+        MAX_CURRENT_FILE_SEARCH_RESULT_LIMIT,
+    );
+    settings.quick_open_result_limit = settings
+        .quick_open_result_limit
+        .clamp(MIN_QUICK_OPEN_RESULT_LIMIT, MAX_QUICK_OPEN_RESULT_LIMIT);
+    settings.command_palette_result_limit = settings.command_palette_result_limit.clamp(
+        MIN_COMMAND_PALETTE_RESULT_LIMIT,
+        MAX_COMMAND_PALETTE_RESULT_LIMIT,
+    );
     settings
 }
 
@@ -394,9 +465,36 @@ async fn delete_file(state: State<'_, AppState>, path: String) -> Result<(), Com
 async fn search_files(
     state: State<'_, AppState>,
     query: String,
+    max_results: Option<usize>,
+    max_file_bytes: Option<u64>,
 ) -> Result<Vec<workspace::SearchMatch>, CommandError> {
     let workspace_root = state.workspace_root.read().await.clone();
-    search_workspace(&workspace_root, &query, 200).map_err(CommandError::from)
+    let max_results = max_results
+        .unwrap_or_else(|| {
+            state
+                .workspace_search_result_limit
+                .read()
+                .map(|limit| *limit)
+                .unwrap_or_else(|_| default_workspace_search_result_limit())
+        })
+        .clamp(
+            MIN_WORKSPACE_SEARCH_RESULT_LIMIT,
+            MAX_WORKSPACE_SEARCH_RESULT_LIMIT,
+        );
+    let max_file_bytes = max_file_bytes
+        .unwrap_or_else(|| {
+            state
+                .workspace_search_max_file_bytes
+                .read()
+                .map(|limit| *limit)
+                .unwrap_or_else(|_| default_workspace_search_max_file_kb().saturating_mul(1024))
+        })
+        .clamp(
+            MIN_WORKSPACE_SEARCH_MAX_FILE_KB.saturating_mul(1024),
+            MAX_WORKSPACE_SEARCH_MAX_FILE_KB.saturating_mul(1024),
+        );
+    search_workspace(&workspace_root, &query, max_results, max_file_bytes)
+        .map_err(CommandError::from)
 }
 
 #[tauri::command]
@@ -502,6 +600,12 @@ async fn update_ui_state(
         .write()
         .map_err(|_| CommandError::UiState("tree scan limit lock poisoned".to_string()))? =
         view.tree_scan_limit;
+    *state.workspace_search_result_limit.write().map_err(|_| {
+        CommandError::UiState("workspace search result limit lock poisoned".to_string())
+    })? = view.workspace_search_result_limit;
+    *state.workspace_search_max_file_bytes.write().map_err(|_| {
+        CommandError::UiState("workspace search file limit lock poisoned".to_string())
+    })? = view.workspace_search_max_file_kb.saturating_mul(1024);
     ui_state.view = view;
     let persisted = PersistedWorkspaceUiState {
         workspace_root: workspace_root.clone(),
@@ -615,6 +719,12 @@ pub fn run() {
         ui_state: Arc::new(std::sync::RwLock::new(AppUiState::default())),
         ui_state_store_path: Arc::new(std::sync::RwLock::new(None)),
         tree_scan_limit: Arc::new(std::sync::RwLock::new(default_tree_scan_limit())),
+        workspace_search_result_limit: Arc::new(std::sync::RwLock::new(
+            default_workspace_search_result_limit(),
+        )),
+        workspace_search_max_file_bytes: Arc::new(std::sync::RwLock::new(
+            default_workspace_search_max_file_kb().saturating_mul(1024),
+        )),
         workspace_index: workspace_index::WorkspaceIndex::new(),
         agent_context,
         lsp_manager,
@@ -664,6 +774,21 @@ pub fn run() {
                 .map_err(|_| std::io::Error::other("tree scan limit lock poisoned"))? =
                 loaded_ui_state.view.tree_scan_limit;
             *http_state
+                .workspace_search_result_limit
+                .write()
+                .map_err(|_| {
+                    std::io::Error::other("workspace search result limit lock poisoned")
+                })? = loaded_ui_state.view.workspace_search_result_limit;
+            *http_state
+                .workspace_search_max_file_bytes
+                .write()
+                .map_err(|_| {
+                    std::io::Error::other("workspace search file limit lock poisoned")
+                })? = loaded_ui_state
+                .view
+                .workspace_search_max_file_kb
+                .saturating_mul(1024);
+            *http_state
                 .ui_state
                 .write()
                 .map_err(|_| std::io::Error::other("ui state lock poisoned"))? = loaded_ui_state;
@@ -686,6 +811,9 @@ pub fn run() {
 
             let workspace_root = http_state.workspace_root.clone();
             let tree_scan_limit = http_state.tree_scan_limit.clone();
+            let workspace_search_result_limit = http_state.workspace_search_result_limit.clone();
+            let workspace_search_max_file_bytes =
+                http_state.workspace_search_max_file_bytes.clone();
             let workspace_index = http_state.workspace_index.clone();
             let agent_context = http_state.agent_context.clone();
             let lsp_manager = http_state.lsp_manager.clone();
@@ -701,6 +829,8 @@ pub fn run() {
                 match http_server::start_http_server(http_server::HttpServerConfig {
                     root_path: workspace_root,
                     tree_scan_limit,
+                    workspace_search_result_limit,
+                    workspace_search_max_file_bytes,
                     workspace_index,
                     agent_context,
                     lsp_manager,
@@ -1677,6 +1807,11 @@ mod tests {
                 show_dotfiles: true,
                 show_generated_internal: true,
                 tree_scan_limit: 12_000,
+                workspace_search_result_limit: 750,
+                workspace_search_max_file_kb: 2_048,
+                current_file_search_result_limit: 350,
+                quick_open_result_limit: 24,
+                command_palette_result_limit: 32,
             },
             workspaces: vec![PersistedWorkspaceUiState {
                 workspace_root: "/workspace".to_string(),
@@ -1692,6 +1827,11 @@ mod tests {
         let loaded = load_ui_state(&ui_state_path).unwrap();
         assert!(loaded.view.show_dotfiles);
         assert!(loaded.view.show_generated_internal);
+        assert_eq!(loaded.view.workspace_search_result_limit, 750);
+        assert_eq!(loaded.view.workspace_search_max_file_kb, 2_048);
+        assert_eq!(loaded.view.current_file_search_result_limit, 350);
+        assert_eq!(loaded.view.quick_open_result_limit, 24);
+        assert_eq!(loaded.view.command_palette_result_limit, 32);
         assert_eq!(loaded.workspaces.len(), 1);
 
         *state.ui_state.write().unwrap() = loaded;
@@ -1718,6 +1858,12 @@ mod tests {
             ui_state: Arc::new(std::sync::RwLock::new(AppUiState::default())),
             ui_state_store_path: Arc::new(std::sync::RwLock::new(Some(ui_state_path))),
             tree_scan_limit: Arc::new(std::sync::RwLock::new(default_tree_scan_limit())),
+            workspace_search_result_limit: Arc::new(std::sync::RwLock::new(
+                default_workspace_search_result_limit(),
+            )),
+            workspace_search_max_file_bytes: Arc::new(std::sync::RwLock::new(
+                default_workspace_search_max_file_kb().saturating_mul(1024),
+            )),
             workspace_index: workspace_index::WorkspaceIndex::new(),
             agent_context: Arc::new(RwLock::new(AgentContext::default())),
             lsp_manager: lsp::LspManager::new(),

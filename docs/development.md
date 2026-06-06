@@ -115,10 +115,10 @@ Current constraints:
 
 - No Monaco editor.
 - No filesystem plugin for broad client-side filesystem access.
-- Hide dotfiles, dot folders, and generated/internal folders by default, with the native Settings dialog controlling tree visibility and the initial tree scan limit.
+- Hide dotfiles, dot folders, and generated/internal folders by default, with the native Settings dialog controlling tree visibility, initial tree scan entries, search caps, and UI result counts.
 - Store tree metadata in the app-local SQLite index instead of keeping an unbounded in-memory tree. The index is disposable and can be rebuilt when the workspace reopens.
 - Always ignore `node_modules`, `target`, `dist`, `.git`, and common generated folders during content search.
-- Workspace content search runs in Rust, skips generated folders and binary-looking files, caps searched file size, and limits returned matches.
+- Workspace content search runs in Rust, skips generated folders and binary-looking files, and applies the Settings-backed result/file-size caps before scanning.
 - Keep syntax language packages dynamically imported by extension.
 - Keep the editor theme tied to `prefers-color-scheme`; the app shell and CodeMirror surface should not drift into different light/dark modes.
 - Keep LSP optional and lazy. Language servers should start only when a matching file type is opened.

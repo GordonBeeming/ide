@@ -318,6 +318,11 @@ describe("hosted Tauri API transport", () => {
         showDotfiles: false,
         showGeneratedInternal: false,
         treeScanLimit: 4000,
+        workspaceSearchResultLimit: 200,
+        workspaceSearchMaxFileKb: 1024,
+        currentFileSearchResultLimit: 200,
+        quickOpenResultLimit: 12,
+        commandPaletteResultLimit: 18,
       },
       workspace: {
         expandedFolders: [],
@@ -329,6 +334,11 @@ describe("hosted Tauri API transport", () => {
         showDotfiles: true,
         showGeneratedInternal: true,
         treeScanLimit: 4000,
+        workspaceSearchResultLimit: 200,
+        workspaceSearchMaxFileKb: 1024,
+        currentFileSearchResultLimit: 200,
+        quickOpenResultLimit: 12,
+        commandPaletteResultLimit: 18,
       },
       {
         expandedFolders: ["src"],
@@ -339,6 +349,18 @@ describe("hosted Tauri API transport", () => {
     );
 
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("passes explicit search limits through hosted search requests", async () => {
+    const fetchMock = vi.fn().mockImplementation(async () => jsonResponse([]));
+    vi.stubGlobal("fetch", fetchMock);
+    const { searchFiles } = await import("./tauri");
+
+    await searchFiles("needle", 500, 512 * 1024);
+
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      "/api/search?query=needle&maxResults=500&maxFileBytes=524288",
+    );
   });
 
   it("passes dotfile visibility through hosted file listing requests", async () => {
@@ -445,6 +467,21 @@ describe("hosted Tauri API transport", () => {
       showDotfiles: false,
       showGeneratedInternal: false,
       treeScanLimit: 8000,
+    });
+  });
+
+  it("passes explicit search limits through native search commands", async () => {
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    const { invoke } = await import("@tauri-apps/api/core");
+    vi.mocked(invoke).mockResolvedValue([]);
+    const { searchFiles } = await import("./tauri");
+
+    await searchFiles("needle", 500, 512 * 1024);
+
+    expect(invoke).toHaveBeenCalledWith("search_files", {
+      query: "needle",
+      maxResults: 500,
+      maxFileBytes: 512 * 1024,
     });
   });
 

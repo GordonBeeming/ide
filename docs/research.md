@@ -64,6 +64,7 @@ Current implementation:
 - Replace indexed rows on initial workspace scans.
 - Refresh indexed direct children when a folder is lazily expanded.
 - Upsert/remove affected indexed paths after editor file creation, writes, renames, and deletes.
+- Keep current streaming content search bounded by Settings-backed result and per-file-size caps.
 - Continue to keep generated/internal folders out of content search by default.
 
 Deferred implementation:

@@ -156,11 +156,40 @@ type SidebarSearchMode = "filter" | "content";
 const minTreeScanLimit = 500;
 const maxTreeScanLimit = 100000;
 const defaultTreeScanLimit = 4000;
+const minWorkspaceSearchResultLimit = 25;
+const maxWorkspaceSearchResultLimit = 5000;
+const defaultWorkspaceSearchResultLimit = 200;
+const minWorkspaceSearchMaxFileKb = 64;
+const maxWorkspaceSearchMaxFileKb = 16384;
+const defaultWorkspaceSearchMaxFileKb = 1024;
+const minCurrentFileSearchResultLimit = 25;
+const maxCurrentFileSearchResultLimit = 5000;
+const defaultCurrentFileSearchResultLimit = 200;
+const minQuickOpenResultLimit = 5;
+const maxQuickOpenResultLimit = 100;
+const defaultQuickOpenResultLimit = 12;
+const minCommandPaletteResultLimit = 5;
+const maxCommandPaletteResultLimit = 100;
+const defaultCommandPaletteResultLimit = 18;
+
+function sanitizeNumberLimit(
+  value: number | undefined,
+  min: number,
+  max: number,
+  fallback: number,
+) {
+  if (!Number.isFinite(value)) return fallback;
+  const finiteValue = value as number;
+  return Math.min(max, Math.max(min, Math.trunc(finiteValue)));
+}
 
 function sanitizeTreeScanLimit(value: number | undefined) {
-  if (!Number.isFinite(value)) return defaultTreeScanLimit;
-  const finiteValue = value as number;
-  return Math.min(maxTreeScanLimit, Math.max(minTreeScanLimit, Math.trunc(finiteValue)));
+  return sanitizeNumberLimit(
+    value,
+    minTreeScanLimit,
+    maxTreeScanLimit,
+    defaultTreeScanLimit,
+  );
 }
 
 function fileEntryForDirectOpen(path: string): FileEntry {
@@ -278,6 +307,21 @@ export default function App() {
   const [showDotfiles, setShowDotfiles] = useState(false);
   const [showGeneratedInternal, setShowGeneratedInternal] = useState(false);
   const [treeScanLimit, setTreeScanLimit] = useState(defaultTreeScanLimit);
+  const [workspaceSearchResultLimit, setWorkspaceSearchResultLimit] = useState(
+    defaultWorkspaceSearchResultLimit,
+  );
+  const [workspaceSearchMaxFileKb, setWorkspaceSearchMaxFileKb] = useState(
+    defaultWorkspaceSearchMaxFileKb,
+  );
+  const [currentFileSearchResultLimit, setCurrentFileSearchResultLimit] = useState(
+    defaultCurrentFileSearchResultLimit,
+  );
+  const [quickOpenResultLimit, setQuickOpenResultLimit] = useState(
+    defaultQuickOpenResultLimit,
+  );
+  const [commandPaletteResultLimit, setCommandPaletteResultLimit] = useState(
+    defaultCommandPaletteResultLimit,
+  );
   const [prefersDark, setPrefersDark] = useState(systemPrefersDark);
   const [uiStateLoaded, setUiStateLoaded] = useState(false);
   const [workspaceUiRestored, setWorkspaceUiRestored] = useState(false);
@@ -339,15 +383,20 @@ export default function App() {
     [filter, tree],
   );
   const quickOpenResults = useMemo(
-    () => quickOpenMatches(sidebarFiles, quickOpenQuery, 12),
-    [quickOpenQuery, sidebarFiles],
+    () => quickOpenMatches(sidebarFiles, quickOpenQuery, quickOpenResultLimit),
+    [quickOpenQuery, quickOpenResultLimit, sidebarFiles],
   );
   const currentFindResults = useMemo(
     () =>
       activeFile
-        ? currentFileMatches(activeFile.path, activeFile.contents, currentFileQuery)
+        ? currentFileMatches(
+            activeFile.path,
+            activeFile.contents,
+            currentFileQuery,
+            currentFileSearchResultLimit,
+          )
         : [],
-    [activeFile, currentFileQuery],
+    [activeFile, currentFileQuery, currentFileSearchResultLimit],
   );
   const diagnostics = useMemo(
     () => sortDiagnostics(Object.values(diagnosticsByPath).flat()),
@@ -436,6 +485,46 @@ export default function App() {
     setShowDotfiles(snapshot.view.showDotfiles);
     setShowGeneratedInternal(snapshot.view.showGeneratedInternal);
     setTreeScanLimit(sanitizeTreeScanLimit(snapshot.view.treeScanLimit));
+    setWorkspaceSearchResultLimit(
+      sanitizeNumberLimit(
+        snapshot.view.workspaceSearchResultLimit,
+        minWorkspaceSearchResultLimit,
+        maxWorkspaceSearchResultLimit,
+        defaultWorkspaceSearchResultLimit,
+      ),
+    );
+    setWorkspaceSearchMaxFileKb(
+      sanitizeNumberLimit(
+        snapshot.view.workspaceSearchMaxFileKb,
+        minWorkspaceSearchMaxFileKb,
+        maxWorkspaceSearchMaxFileKb,
+        defaultWorkspaceSearchMaxFileKb,
+      ),
+    );
+    setCurrentFileSearchResultLimit(
+      sanitizeNumberLimit(
+        snapshot.view.currentFileSearchResultLimit,
+        minCurrentFileSearchResultLimit,
+        maxCurrentFileSearchResultLimit,
+        defaultCurrentFileSearchResultLimit,
+      ),
+    );
+    setQuickOpenResultLimit(
+      sanitizeNumberLimit(
+        snapshot.view.quickOpenResultLimit,
+        minQuickOpenResultLimit,
+        maxQuickOpenResultLimit,
+        defaultQuickOpenResultLimit,
+      ),
+    );
+    setCommandPaletteResultLimit(
+      sanitizeNumberLimit(
+        snapshot.view.commandPaletteResultLimit,
+        minCommandPaletteResultLimit,
+        maxCommandPaletteResultLimit,
+        defaultCommandPaletteResultLimit,
+      ),
+    );
     setExpandedFolders(new Set(snapshot.workspace.expandedFolders));
     setSelectedPath(snapshot.workspace.selectedPath);
   }, []);
@@ -601,9 +690,18 @@ export default function App() {
     const timeout = window.setTimeout(() => {
       const searchPromise = singleFileMode && singleFilePath
         ? readFile(singleFilePath).then((contents) =>
-            currentFileMatches(singleFilePath, contents, query),
+            currentFileMatches(
+              singleFilePath,
+              contents,
+              query,
+              currentFileSearchResultLimit,
+            ),
           )
-        : searchFiles(query);
+        : searchFiles(
+            query,
+            workspaceSearchResultLimit,
+            workspaceSearchMaxFileKb * 1024,
+          );
 
       searchPromise
         .then((results) => {
@@ -625,7 +723,14 @@ export default function App() {
       cancelled = true;
       window.clearTimeout(timeout);
     };
-  }, [contentQuery, singleFileMode, singleFilePath]);
+  }, [
+    contentQuery,
+    currentFileSearchResultLimit,
+    singleFileMode,
+    singleFilePath,
+    workspaceSearchMaxFileKb,
+    workspaceSearchResultLimit,
+  ]);
 
   useEffect(() => {
     setLspErrorHandler(setError);
@@ -858,6 +963,11 @@ export default function App() {
           showDotfiles,
           showGeneratedInternal,
           treeScanLimit,
+          workspaceSearchResultLimit,
+          workspaceSearchMaxFileKb,
+          currentFileSearchResultLimit,
+          quickOpenResultLimit,
+          commandPaletteResultLimit,
         },
         {
           expandedFolders: [...expandedFolders],
@@ -880,6 +990,11 @@ export default function App() {
     showGeneratedInternal,
     singleFileMode,
     treeScanLimit,
+    workspaceSearchResultLimit,
+    workspaceSearchMaxFileKb,
+    currentFileSearchResultLimit,
+    quickOpenResultLimit,
+    commandPaletteResultLimit,
     uiStateLoaded,
     workspaceUiRestored,
   ]);
@@ -1882,8 +1997,13 @@ export default function App() {
     ],
   );
   const commandPaletteResults = useMemo(
-    () => commandPaletteMatches(commandPaletteCommands, commandPaletteQuery, 18),
-    [commandPaletteCommands, commandPaletteQuery],
+    () =>
+      commandPaletteMatches(
+        commandPaletteCommands,
+        commandPaletteQuery,
+        commandPaletteResultLimit,
+      ),
+    [commandPaletteCommands, commandPaletteQuery, commandPaletteResultLimit],
   );
   const runCommandPaletteCommand = useCallback(
     (command: AppCommand) => {
@@ -2966,48 +3086,168 @@ export default function App() {
               <div className="eyebrow">Preferences</div>
               <h2 id="settings-title">Settings</h2>
               <div className="settings-list">
-                <label className="settings-row">
-                  <input
-                    type="checkbox"
-                    checked={showDotfiles}
-                    onChange={(event) => {
-                      setShowDotfiles(event.target.checked);
-                      setStatus(event.target.checked ? "Showing dotfiles" : "Hiding dotfiles");
-                    }}
-                  />
-                  <span>Show dotfiles and dot folders</span>
-                </label>
-                <label className="settings-row">
-                  <input
-                    type="checkbox"
-                    checked={showGeneratedInternal}
-                    onChange={(event) => {
-                      setShowGeneratedInternal(event.target.checked);
-                      setStatus(
-                        event.target.checked
-                          ? "Showing generated/internal folders"
-                          : "Hiding generated/internal folders",
-                      );
-                    }}
-                  />
-                  <span>Show generated and internal folders</span>
-                </label>
-                <label className="dialog-field">
-                  <span>Initial tree scan limit</span>
-                  <input
-                    inputMode="numeric"
-                    min={minTreeScanLimit}
-                    max={maxTreeScanLimit}
-                    step={500}
-                    type="number"
-                    value={treeScanLimit}
-                    onChange={(event) => {
-                      const next = sanitizeTreeScanLimit(Number(event.target.value));
-                      setTreeScanLimit(next);
-                      setStatus(`Tree scan limit set to ${next}`);
-                    }}
-                  />
-                </label>
+                <section className="settings-section" aria-label="Workspace view">
+                  <div className="settings-section__title">Workspace View</div>
+                  <label className="settings-row">
+                    <input
+                      type="checkbox"
+                      checked={showDotfiles}
+                      onChange={(event) => {
+                        setShowDotfiles(event.target.checked);
+                        setStatus(event.target.checked ? "Showing dotfiles" : "Hiding dotfiles");
+                      }}
+                    />
+                    <span>Show dotfiles and dot folders</span>
+                  </label>
+                  <label className="settings-row">
+                    <input
+                      type="checkbox"
+                      checked={showGeneratedInternal}
+                      onChange={(event) => {
+                        setShowGeneratedInternal(event.target.checked);
+                        setStatus(
+                          event.target.checked
+                            ? "Showing generated/internal folders"
+                            : "Hiding generated/internal folders",
+                        );
+                      }}
+                    />
+                    <span>Show generated and internal folders</span>
+                  </label>
+                </section>
+
+                <section className="settings-section" aria-label="Workspace indexing">
+                  <div className="settings-section__title">Workspace Indexing</div>
+                  <label className="dialog-field">
+                    <span>Initial tree scan entries</span>
+                    <input
+                      inputMode="numeric"
+                      min={minTreeScanLimit}
+                      max={maxTreeScanLimit}
+                      step={500}
+                      type="number"
+                      value={treeScanLimit}
+                      onChange={(event) => {
+                        const next = sanitizeTreeScanLimit(Number(event.target.value));
+                        setTreeScanLimit(next);
+                        setStatus(`Tree scan limit set to ${next}`);
+                      }}
+                    />
+                  </label>
+                </section>
+
+                <section className="settings-section" aria-label="Search limits">
+                  <div className="settings-section__title">Search Limits</div>
+                  <label className="dialog-field">
+                    <span>Workspace search results</span>
+                    <input
+                      inputMode="numeric"
+                      min={minWorkspaceSearchResultLimit}
+                      max={maxWorkspaceSearchResultLimit}
+                      step={25}
+                      type="number"
+                      value={workspaceSearchResultLimit}
+                      onChange={(event) => {
+                        const next = sanitizeNumberLimit(
+                          Number(event.target.value),
+                          minWorkspaceSearchResultLimit,
+                          maxWorkspaceSearchResultLimit,
+                          defaultWorkspaceSearchResultLimit,
+                        );
+                        setWorkspaceSearchResultLimit(next);
+                        setStatus(`Workspace search result limit set to ${next}`);
+                      }}
+                    />
+                  </label>
+                  <label className="dialog-field">
+                    <span>Workspace search file KB</span>
+                    <input
+                      inputMode="numeric"
+                      min={minWorkspaceSearchMaxFileKb}
+                      max={maxWorkspaceSearchMaxFileKb}
+                      step={64}
+                      type="number"
+                      value={workspaceSearchMaxFileKb}
+                      onChange={(event) => {
+                        const next = sanitizeNumberLimit(
+                          Number(event.target.value),
+                          minWorkspaceSearchMaxFileKb,
+                          maxWorkspaceSearchMaxFileKb,
+                          defaultWorkspaceSearchMaxFileKb,
+                        );
+                        setWorkspaceSearchMaxFileKb(next);
+                        setStatus(`Workspace search file limit set to ${next} KB`);
+                      }}
+                    />
+                  </label>
+                  <label className="dialog-field">
+                    <span>Current-file search results</span>
+                    <input
+                      inputMode="numeric"
+                      min={minCurrentFileSearchResultLimit}
+                      max={maxCurrentFileSearchResultLimit}
+                      step={25}
+                      type="number"
+                      value={currentFileSearchResultLimit}
+                      onChange={(event) => {
+                        const next = sanitizeNumberLimit(
+                          Number(event.target.value),
+                          minCurrentFileSearchResultLimit,
+                          maxCurrentFileSearchResultLimit,
+                          defaultCurrentFileSearchResultLimit,
+                        );
+                        setCurrentFileSearchResultLimit(next);
+                        setStatus(`Current-file search result limit set to ${next}`);
+                      }}
+                    />
+                  </label>
+                </section>
+
+                <section className="settings-section" aria-label="Interface limits">
+                  <div className="settings-section__title">Interface Limits</div>
+                  <label className="dialog-field">
+                    <span>Quick open results</span>
+                    <input
+                      inputMode="numeric"
+                      min={minQuickOpenResultLimit}
+                      max={maxQuickOpenResultLimit}
+                      step={1}
+                      type="number"
+                      value={quickOpenResultLimit}
+                      onChange={(event) => {
+                        const next = sanitizeNumberLimit(
+                          Number(event.target.value),
+                          minQuickOpenResultLimit,
+                          maxQuickOpenResultLimit,
+                          defaultQuickOpenResultLimit,
+                        );
+                        setQuickOpenResultLimit(next);
+                        setStatus(`Quick open result limit set to ${next}`);
+                      }}
+                    />
+                  </label>
+                  <label className="dialog-field">
+                    <span>Command palette results</span>
+                    <input
+                      inputMode="numeric"
+                      min={minCommandPaletteResultLimit}
+                      max={maxCommandPaletteResultLimit}
+                      step={1}
+                      type="number"
+                      value={commandPaletteResultLimit}
+                      onChange={(event) => {
+                        const next = sanitizeNumberLimit(
+                          Number(event.target.value),
+                          minCommandPaletteResultLimit,
+                          maxCommandPaletteResultLimit,
+                          defaultCommandPaletteResultLimit,
+                        );
+                        setCommandPaletteResultLimit(next);
+                        setStatus(`Command palette result limit set to ${next}`);
+                      }}
+                    />
+                  </label>
+                </section>
               </div>
             </div>
             <div className="confirm-dialog__actions">

@@ -644,11 +644,16 @@ describe("App shell interactions", () => {
 
     await waitFor(() =>
       expect(tauriMocks.updateUiState).toHaveBeenCalledWith(
-        {
+        expect.objectContaining({
           showDotfiles: false,
           showGeneratedInternal: false,
           treeScanLimit: 4000,
-        },
+          workspaceSearchResultLimit: 200,
+          workspaceSearchMaxFileKb: 1024,
+          currentFileSearchResultLimit: 200,
+          quickOpenResultLimit: 12,
+          commandPaletteResultLimit: 18,
+        }),
         expect.objectContaining({
           expandedFolders: [],
           openFiles: ["src/App.tsx"],
@@ -690,11 +695,11 @@ describe("App shell interactions", () => {
     );
     await waitFor(() =>
       expect(tauriMocks.updateUiState).toHaveBeenLastCalledWith(
-        {
+        expect.objectContaining({
           showDotfiles: true,
           showGeneratedInternal: false,
           treeScanLimit: 4000,
-        },
+        }),
         expect.any(Object),
       ),
     );
@@ -731,11 +736,11 @@ describe("App shell interactions", () => {
     );
     await waitFor(() =>
       expect(tauriMocks.updateUiState).toHaveBeenLastCalledWith(
-        {
+        expect.objectContaining({
           showDotfiles: false,
           showGeneratedInternal: true,
           treeScanLimit: 4000,
-        },
+        }),
         expect.any(Object),
       ),
     );
@@ -754,7 +759,7 @@ describe("App shell interactions", () => {
     );
 
     eventMocks.listeners.get("menu://show-settings")?.({ payload: undefined });
-    fireEvent.change(await screen.findByLabelText("Initial tree scan limit"), {
+    fireEvent.change(await screen.findByLabelText("Initial tree scan entries"), {
       target: { value: "8000" },
     });
 
@@ -763,11 +768,49 @@ describe("App shell interactions", () => {
     );
     await waitFor(() =>
       expect(tauriMocks.updateUiState).toHaveBeenLastCalledWith(
-        {
+        expect.objectContaining({
           showDotfiles: false,
           showGeneratedInternal: false,
           treeScanLimit: 8000,
-        },
+        }),
+        expect.any(Object),
+      ),
+    );
+  });
+
+  it("applies workspace search limits from Settings", async () => {
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    tauriMocks.searchFiles.mockResolvedValueOnce([]);
+
+    render(<App />);
+
+    expect(await treeButton("README.md")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(eventMocks.listeners.has("menu://show-settings")).toBe(true),
+    );
+
+    eventMocks.listeners.get("menu://show-settings")?.({ payload: undefined });
+    fireEvent.change(await screen.findByLabelText("Workspace search results"), {
+      target: { value: "500" },
+    });
+    fireEvent.change(await screen.findByLabelText("Workspace search file KB"), {
+      target: { value: "512" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+
+    fireEvent.change(await openContentSearch(), {
+      target: { value: "needle" },
+    });
+
+    await waitFor(() =>
+      expect(tauriMocks.searchFiles).toHaveBeenCalledWith("needle", 500, 512 * 1024),
+    );
+    await waitFor(() =>
+      expect(tauriMocks.updateUiState).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          workspaceSearchResultLimit: 500,
+          workspaceSearchMaxFileKb: 512,
+        }),
         expect.any(Object),
       ),
     );
@@ -1978,7 +2021,9 @@ describe("App shell interactions", () => {
       target: { value: "needle" },
     });
 
-    await waitFor(() => expect(tauriMocks.searchFiles).toHaveBeenCalledWith("needle"));
+    await waitFor(() =>
+      expect(tauriMocks.searchFiles).toHaveBeenCalledWith("needle", 200, 1024 * 1024),
+    );
     const resultPath = await screen.findByText("src/App.tsx:4");
     expect(screen.getByLabelText("Content search results")).toHaveTextContent(
       "Results1src/App.tsx:4const needle = true;",
@@ -2046,7 +2091,7 @@ describe("App shell interactions", () => {
     });
 
     await screen.findByText("Search failed: Error: index unavailable");
-    expect(tauriMocks.searchFiles).toHaveBeenCalledWith("needle");
+    expect(tauriMocks.searchFiles).toHaveBeenCalledWith("needle", 200, 1024 * 1024);
     expect(screen.getByText("No matches")).toBeInTheDocument();
   });
 

@@ -14,7 +14,7 @@ Implemented:
 - Native folder picker for switching workspaces.
 - Native toolbar buttons for opening files and folders in the desktop app.
 - Native File menu with New File, New Folder, Open File, Open Folder, Recents, Save, Reload, Rename/Delete, Close Tab, and Close All.
-- Native Settings dialog for dotfile/generated-folder visibility and the initial tree scan limit.
+- Native Settings dialog for dotfile/generated-folder visibility, initial tree scan entries, workspace search caps, current-file search caps, and UI result counts.
 - File/folder launch targets through the local runner and macOS Finder Quick Action.
 - Packaged-app file associations for common text, code, web, config, and .NET project files.
 - Runtime handling for native OS file-open events, including cold-start opens before the frontend has registered listeners.
@@ -37,6 +37,7 @@ Implemented:
 - Stale-save protection so externally modified files are not silently overwritten.
 - Guarded Rust-native workspace scanning, file/folder creation, rename, deletion, and file read/write commands.
 - SQLite-backed workspace metadata index stored in OS app-local data, refreshed from initial scans, lazy folder loads, and editor file mutations.
+- User preferences and recents are stored in OS app data; disposable workspace indexes stay in OS app-local data so they can be rebuilt.
 - Common binary/media/font/archive files select in the tree without attempting text-editor reads.
 - CodeMirror 6 editor.
 - Syntax highlighting for common code and config files, including Rust, TypeScript, JavaScript, React/TSX/JSX, JSON, Markdown, shell scripts, HTML, CSS/SCSS/Sass, C#, C/C++, Java/Kotlin/Scala, Python, Go, Ruby, SQL, XML/YAML/TOML, Dockerfiles, PowerShell, diffs, and .NET project files.

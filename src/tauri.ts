@@ -94,6 +94,11 @@ export interface PersistedViewSettings {
   showDotfiles: boolean;
   showGeneratedInternal: boolean;
   treeScanLimit?: number;
+  workspaceSearchResultLimit?: number;
+  workspaceSearchMaxFileKb?: number;
+  currentFileSearchResultLimit?: number;
+  quickOpenResultLimit?: number;
+  commandPaletteResultLimit?: number;
 }
 
 export interface WorkspaceUiState {
@@ -113,6 +118,11 @@ const defaultUiSnapshot: PersistedUiSnapshot = {
     showDotfiles: false,
     showGeneratedInternal: false,
     treeScanLimit: 4000,
+    workspaceSearchResultLimit: 200,
+    workspaceSearchMaxFileKb: 1024,
+    currentFileSearchResultLimit: 200,
+    quickOpenResultLimit: 12,
+    commandPaletteResultLimit: 18,
   },
   workspace: {
     expandedFolders: [],
@@ -264,10 +274,21 @@ export function deleteFile(path: string) {
   });
 }
 
-export function searchFiles(query: string) {
-  return callApi<SearchMatch[]>("search_files", `/api/search?query=${encodeURIComponent(query)}`, {
+export function searchFiles(
+  query: string,
+  maxResults?: number,
+  maxFileBytes?: number,
+) {
+  const params = new URLSearchParams({ query });
+  if (maxResults !== undefined) params.set("maxResults", String(maxResults));
+  if (maxFileBytes !== undefined) params.set("maxFileBytes", String(maxFileBytes));
+  return callApi<SearchMatch[]>("search_files", `/api/search?${params.toString()}`, {
     method: "GET",
-    invokeArgs: { query },
+    invokeArgs: {
+      query,
+      ...(maxResults === undefined ? {} : { maxResults }),
+      ...(maxFileBytes === undefined ? {} : { maxFileBytes }),
+    },
   });
 }
 
