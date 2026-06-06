@@ -43,6 +43,8 @@ pub struct WorkspaceSearch {
     pub matches: Vec<SearchMatch>,
     pub truncated: bool,
     pub limit: usize,
+    pub searched_files: usize,
+    pub skipped_files: usize,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -276,7 +278,7 @@ fn search_workspace(
     max_results: usize,
     max_file_bytes: u64,
 ) -> Result<Vec<SearchMatch>, WorkspaceError> {
-    Ok(search_workspace_with_metadata(root, query, max_results, max_file_bytes)?.matches)
+    Ok(search_workspace_with_metadata(root, query, max_results, max_file_bytes, false)?.matches)
 }
 
 pub fn search_workspace_with_metadata(
@@ -284,6 +286,7 @@ pub fn search_workspace_with_metadata(
     query: &str,
     max_results: usize,
     max_file_bytes: u64,
+    show_dotfiles: bool,
 ) -> Result<WorkspaceSearch, WorkspaceError> {
     let query = query.trim();
     if query.is_empty() {
@@ -291,6 +294,8 @@ pub fn search_workspace_with_metadata(
             matches: Vec::new(),
             truncated: false,
             limit: max_results,
+            searched_files: 0,
+            skipped_files: 0,
         });
     }
     if query.chars().count() > MAX_SEARCH_QUERY_CHARS {
@@ -301,18 +306,22 @@ pub fn search_workspace_with_metadata(
             matches: Vec::new(),
             truncated: false,
             limit: max_results,
+            searched_files: 0,
+            skipped_files: 0,
         });
     }
 
     let normalized_query = query.to_lowercase();
     let mut matches = Vec::new();
     let mut seen_paths = HashSet::new();
+    let mut searched_files = 0;
+    let mut skipped_files = 0;
     let collection_limit = max_results.saturating_add(1);
     let mut max_depth = 1;
 
     loop {
         let previous_seen_count = seen_paths.len();
-        let mut walker = workspace_walker(root, false, false);
+        let mut walker = workspace_walker(root, show_dotfiles, false);
         walker.max_depth(Some(max_depth));
 
         for result in walker.build() {
@@ -323,6 +332,8 @@ pub fn search_workspace_with_metadata(
                     matches,
                     truncated,
                     limit: max_results,
+                    searched_files,
+                    skipped_files,
                 });
             }
 
@@ -342,20 +353,28 @@ pub fn search_workspace_with_metadata(
 
             let metadata = fs::symlink_metadata(path)?;
             if metadata.file_type().is_symlink() {
+                skipped_files += 1;
                 continue;
             }
-            if metadata.is_dir() || metadata.len() > max_file_bytes || is_known_binary_path(path) {
+            if metadata.is_dir() {
+                continue;
+            }
+            if metadata.len() > max_file_bytes || is_known_binary_path(path) {
+                skipped_files += 1;
                 continue;
             }
 
             let bytes = fs::read(path)?;
             if bytes.contains(&0) {
+                skipped_files += 1;
                 continue;
             }
 
             let Ok(contents) = std::str::from_utf8(&bytes) else {
+                skipped_files += 1;
                 continue;
             };
+            searched_files += 1;
             'line_matches: for (index, line) in contents.lines().enumerate() {
                 if matches.len() >= collection_limit {
                     break;
@@ -394,6 +413,8 @@ pub fn search_workspace_with_metadata(
         matches,
         truncated,
         limit: max_results,
+        searched_files,
+        skipped_files,
     })
 }
 
@@ -1427,7 +1448,8 @@ mod tests {
         let dir = tempdir().unwrap();
         fs::write(dir.path().join("README.md"), "needle needle needle\n").unwrap();
 
-        let search = search_workspace_with_metadata(dir.path(), "needle", 2, 1_000_000).unwrap();
+        let search =
+            search_workspace_with_metadata(dir.path(), "needle", 2, 1_000_000, false).unwrap();
 
         assert_eq!(search.matches.len(), 2);
         assert_eq!(search.limit, 2);
@@ -1439,11 +1461,45 @@ mod tests {
         let dir = tempdir().unwrap();
         fs::write(dir.path().join("README.md"), "needle needle\n").unwrap();
 
-        let search = search_workspace_with_metadata(dir.path(), "needle", 2, 1_000_000).unwrap();
+        let search =
+            search_workspace_with_metadata(dir.path(), "needle", 2, 1_000_000, false).unwrap();
 
         assert_eq!(search.matches.len(), 2);
         assert_eq!(search.limit, 2);
         assert!(!search.truncated);
+    }
+
+    #[test]
+    fn search_workspace_reports_searched_and_skipped_file_counts() {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join("README.md"), "hit").unwrap();
+        fs::write(dir.path().join("large.txt"), "needle").unwrap();
+        fs::write(dir.path().join("image.png"), "needle").unwrap();
+        fs::write(dir.path().join("binary.txt"), b"n\0").unwrap();
+
+        let search = search_workspace_with_metadata(dir.path(), "hit", 10, 4, false).unwrap();
+
+        assert_eq!(search.matches.len(), 1);
+        assert_eq!(search.matches[0].path, "README.md");
+        assert_eq!(search.searched_files, 1);
+        assert_eq!(search.skipped_files, 3);
+    }
+
+    #[test]
+    fn search_workspace_honors_dotfile_visibility_scope() {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join(".env"), "needle").unwrap();
+        fs::write(dir.path().join("README.md"), "needle").unwrap();
+
+        let hidden =
+            search_workspace_with_metadata(dir.path(), "needle", 10, 1_000_000, false).unwrap();
+        let visible =
+            search_workspace_with_metadata(dir.path(), "needle", 10, 1_000_000, true).unwrap();
+
+        assert_eq!(hidden.matches.len(), 1);
+        assert_eq!(hidden.matches[0].path, "README.md");
+        assert_eq!(visible.matches.len(), 2);
+        assert!(visible.matches.iter().any(|match_| match_.path == ".env"));
     }
 
     #[test]

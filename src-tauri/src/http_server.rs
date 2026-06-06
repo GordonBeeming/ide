@@ -613,6 +613,7 @@ struct SearchQuery {
     query: String,
     max_results: Option<usize>,
     max_file_bytes: Option<u64>,
+    show_dotfiles: Option<bool>,
 }
 
 async fn search(
@@ -645,6 +646,7 @@ async fn search(
         &query.query,
         max_results,
         max_file_bytes,
+        query.show_dotfiles.unwrap_or(false),
     )?))
 }
 

@@ -308,6 +308,10 @@ export default function App() {
   const [searchResultLimitHit, setSearchResultLimitHit] = useState(
     defaultWorkspaceSearchResultLimit,
   );
+  const [searchStats, setSearchStats] = useState<{
+    searchedFiles?: number;
+    skippedFiles?: number;
+  }>({});
   const [searching, setSearching] = useState(false);
   const [quickOpenVisible, setQuickOpenVisible] = useState(false);
   const [quickOpenQuery, setQuickOpenQuery] = useState("");
@@ -448,6 +452,12 @@ export default function App() {
   const filterExpanded = activeSidebarSearch === "filter" || filter.trim().length > 0;
   const contentSearchExpanded =
     activeSidebarSearch === "content" || contentQuery.trim().length > 0;
+  const contentSearchStatsText =
+    searchStats.searchedFiles === undefined
+      ? undefined
+      : `${searchStats.searchedFiles.toLocaleString()} files searched${
+          searchStats.skippedFiles ? `, ${searchStats.skippedFiles.toLocaleString()} skipped` : ""
+        }`;
   const currentFindExpanded =
     Boolean(activeFile) && (currentFindOpen || currentFileQuery.trim().length > 0);
   const suggestedNewFilePath = useMemo(
@@ -784,6 +794,7 @@ export default function App() {
     if (query.length < 2) {
       setSearchResults([]);
       setSearchResultsTruncated(false);
+      setSearchStats({});
       setSearching(false);
       return;
     }
@@ -807,12 +818,15 @@ export default function App() {
               matches: matches.slice(0, limit),
               truncated,
               limit,
+              searchedFiles: 1,
+              skippedFiles: 0,
             };
           })
         : searchFiles(
             query,
             workspaceSearchResultLimit,
             workspaceSearchMaxFileKb * 1024,
+            showDotfiles,
           );
 
       searchPromise
@@ -825,6 +839,10 @@ export default function App() {
           setSearchResults(normalized.matches);
           setSearchResultsTruncated(normalized.truncated);
           setSearchResultLimitHit(normalized.limit);
+          setSearchStats({
+            searchedFiles: normalized.searchedFiles,
+            skippedFiles: normalized.skippedFiles,
+          });
           setStatus(
             normalized.truncated
               ? `First ${normalized.matches.length} matches`
@@ -838,6 +856,7 @@ export default function App() {
           setError(`Search failed: ${String(reason)}`);
           setSearchResults([]);
           setSearchResultsTruncated(false);
+          setSearchStats({});
         })
         .finally(() => {
           if (!cancelled) setSearching(false);
@@ -854,6 +873,7 @@ export default function App() {
     maxOpenFileKb,
     singleFileMode,
     singleFilePath,
+    showDotfiles,
     workspaceSearchMaxFileKb,
     workspaceSearchResultLimit,
   ]);
@@ -2773,7 +2793,11 @@ export default function App() {
           <div className="search-results" aria-label="Content search results">
             <div className="search-results__header">
               <span>{searching ? "Searching" : "Results"}</span>
-              <span>{searchResults.length}</span>
+              <span>
+                {contentSearchStatsText
+                  ? `${searchResults.length} / ${contentSearchStatsText}`
+                  : searchResults.length}
+              </span>
             </div>
             {searchResultsTruncated ? (
               <div className="search-results__notice" role="status">

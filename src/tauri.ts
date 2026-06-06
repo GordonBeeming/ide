@@ -82,6 +82,8 @@ export interface SearchResult {
   matches: SearchMatch[];
   truncated: boolean;
   limit: number;
+  searchedFiles?: number;
+  skippedFiles?: number;
 }
 
 export interface OpenFileRequest {
@@ -331,16 +333,19 @@ export function searchFiles(
   query: string,
   maxResults?: number,
   maxFileBytes?: number,
+  showDotfiles?: boolean,
 ) {
   const params = new URLSearchParams({ query });
   if (maxResults !== undefined) params.set("maxResults", String(maxResults));
   if (maxFileBytes !== undefined) params.set("maxFileBytes", String(maxFileBytes));
+  if (showDotfiles !== undefined) params.set("showDotfiles", String(showDotfiles));
   return callApi<unknown>("search_files", `/api/search?${params.toString()}`, {
     method: "GET",
     invokeArgs: {
       query,
       ...(maxResults === undefined ? {} : { maxResults }),
       ...(maxFileBytes === undefined ? {} : { maxFileBytes }),
+      ...(showDotfiles === undefined ? {} : { showDotfiles }),
     },
   }).then((result) => {
     const normalized = normalizeSearchResult(result);
@@ -357,6 +362,8 @@ export function normalizeSearchResult(value: unknown): SearchResult | undefined 
       matches: value as SearchMatch[],
       truncated: false,
       limit: value.length,
+      searchedFiles: undefined,
+      skippedFiles: undefined,
     };
   }
 
@@ -369,11 +376,17 @@ export function normalizeSearchResult(value: unknown): SearchResult | undefined 
       matches: SearchMatch[];
       truncated?: unknown;
       limit?: unknown;
+      searchedFiles?: unknown;
+      skippedFiles?: unknown;
     };
     return {
       matches: candidate.matches,
       truncated: candidate.truncated === true,
       limit: typeof candidate.limit === "number" ? candidate.limit : candidate.matches.length,
+      searchedFiles:
+        typeof candidate.searchedFiles === "number" ? candidate.searchedFiles : undefined,
+      skippedFiles:
+        typeof candidate.skippedFiles === "number" ? candidate.skippedFiles : undefined,
     };
   }
 

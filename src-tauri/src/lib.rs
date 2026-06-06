@@ -593,6 +593,7 @@ async fn search_files(
     query: String,
     max_results: Option<usize>,
     max_file_bytes: Option<u64>,
+    show_dotfiles: Option<bool>,
 ) -> Result<workspace::WorkspaceSearch, CommandError> {
     let workspace_root = state.workspace_root.read().await.clone();
     let max_results = max_results
@@ -619,8 +620,14 @@ async fn search_files(
             MIN_WORKSPACE_SEARCH_MAX_FILE_KB.saturating_mul(1024),
             MAX_WORKSPACE_SEARCH_MAX_FILE_KB.saturating_mul(1024),
         );
-    search_workspace_with_metadata(&workspace_root, &query, max_results, max_file_bytes)
-        .map_err(CommandError::from)
+    search_workspace_with_metadata(
+        &workspace_root,
+        &query,
+        max_results,
+        max_file_bytes,
+        show_dotfiles.unwrap_or(false),
+    )
+    .map_err(CommandError::from)
 }
 
 #[tauri::command]

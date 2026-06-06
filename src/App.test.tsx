@@ -888,7 +888,7 @@ describe("App shell interactions", () => {
     });
 
     await waitFor(() =>
-      expect(tauriMocks.searchFiles).toHaveBeenCalledWith("needle", 500, 512 * 1024),
+      expect(tauriMocks.searchFiles).toHaveBeenCalledWith("needle", 500, 512 * 1024, false),
     );
     await waitFor(() =>
       expect(tauriMocks.updateUiState).toHaveBeenLastCalledWith(
@@ -898,6 +898,29 @@ describe("App shell interactions", () => {
         }),
         expect.any(Object),
       ),
+    );
+  });
+
+  it("applies dotfile visibility to workspace content search scope", async () => {
+    tauriMocks.getUiState.mockResolvedValueOnce({
+      view: {
+        showDotfiles: true,
+        showGeneratedInternal: false,
+      },
+      workspace: {
+        expandedFolders: [],
+        openFiles: [],
+      },
+    });
+    tauriMocks.searchFiles.mockResolvedValueOnce([]);
+    render(<App />);
+
+    fireEvent.change(await openContentSearch(), {
+      target: { value: "needle" },
+    });
+
+    await waitFor(() =>
+      expect(tauriMocks.searchFiles).toHaveBeenCalledWith("needle", 200, 1024 * 1024, true),
     );
   });
 
@@ -2299,7 +2322,7 @@ describe("App shell interactions", () => {
     });
 
     await waitFor(() =>
-      expect(tauriMocks.searchFiles).toHaveBeenCalledWith("needle", 200, 1024 * 1024),
+      expect(tauriMocks.searchFiles).toHaveBeenCalledWith("needle", 200, 1024 * 1024, false),
     );
     const resultPath = await screen.findByText("src/App.tsx:4");
     expect(screen.getByLabelText("Content search results")).toHaveTextContent(
@@ -2368,7 +2391,7 @@ describe("App shell interactions", () => {
     });
 
     await screen.findByText("Search failed: Error: index unavailable");
-    expect(tauriMocks.searchFiles).toHaveBeenCalledWith("needle", 200, 1024 * 1024);
+    expect(tauriMocks.searchFiles).toHaveBeenCalledWith("needle", 200, 1024 * 1024, false);
     expect(screen.getByText("No matches")).toBeInTheDocument();
   });
 
@@ -2385,6 +2408,8 @@ describe("App shell interactions", () => {
       ],
       truncated: true,
       limit: 1,
+      searchedFiles: 2,
+      skippedFiles: 1,
     });
     render(<App />);
 
@@ -2398,6 +2423,7 @@ describe("App shell interactions", () => {
       .closest(".search-results__notice");
     expect(notice).not.toBeNull();
     expect(screen.getByText("First 1 matches")).toBeInTheDocument();
+    expect(screen.getByText("1 / 2 files searched, 1 skipped")).toBeInTheDocument();
 
     fireEvent.click(within(notice as HTMLElement).getByRole("button", { name: "Settings" }));
 

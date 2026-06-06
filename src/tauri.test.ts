@@ -360,10 +360,10 @@ describe("hosted Tauri API transport", () => {
     vi.stubGlobal("fetch", fetchMock);
     const { searchFiles } = await import("./tauri");
 
-    await searchFiles("needle", 500, 512 * 1024);
+    await searchFiles("needle", 500, 512 * 1024, true);
 
     expect(fetchMock.mock.calls[0][0]).toBe(
-      "/api/search?query=needle&maxResults=500&maxFileBytes=524288",
+      "/api/search?query=needle&maxResults=500&maxFileBytes=524288&showDotfiles=true",
     );
   });
 
@@ -381,6 +381,8 @@ describe("hosted Tauri API transport", () => {
         ],
         truncated: true,
         limit: 1,
+        searchedFiles: 2,
+        skippedFiles: 1,
       }),
     );
     vi.stubGlobal("fetch", fetchMock);
@@ -390,6 +392,8 @@ describe("hosted Tauri API transport", () => {
       matches: [{ path: "README.md" }],
       truncated: true,
       limit: 1,
+      searchedFiles: 2,
+      skippedFiles: 1,
     });
   });
 
@@ -563,12 +567,13 @@ describe("hosted Tauri API transport", () => {
     vi.mocked(invoke).mockResolvedValue([]);
     const { searchFiles } = await import("./tauri");
 
-    await searchFiles("needle", 500, 512 * 1024);
+    await searchFiles("needle", 500, 512 * 1024, true);
 
     expect(invoke).toHaveBeenCalledWith("search_files", {
       query: "needle",
       maxResults: 500,
       maxFileBytes: 512 * 1024,
+      showDotfiles: true,
     });
   });
 
@@ -587,6 +592,8 @@ describe("hosted Tauri API transport", () => {
       ],
       truncated: true,
       limit: 1,
+      searchedFiles: 2,
+      skippedFiles: 1,
     });
     const { searchFiles } = await import("./tauri");
 
@@ -594,6 +601,8 @@ describe("hosted Tauri API transport", () => {
       matches: [{ path: "README.md" }],
       truncated: true,
       limit: 1,
+      searchedFiles: 2,
+      skippedFiles: 1,
     });
   });
 
