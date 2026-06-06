@@ -528,6 +528,53 @@ describe("App shell interactions", () => {
     expect(await treeButton("App.tsx")).toBeInTheDocument();
   });
 
+  it("does not duplicate an in-flight folder child load when re-expanding a folder", async () => {
+    let resolveDirectory: (entries: FileEntry[]) => void = () => undefined;
+    const directoryPromise = new Promise<FileEntry[]>((resolve) => {
+      resolveDirectory = resolve;
+    });
+
+    tauriMocks.listFiles.mockResolvedValueOnce([
+      {
+        path: "src",
+        name: "src",
+        isDir: true,
+        depth: 0,
+        size: 0,
+      },
+    ]);
+    tauriMocks.listDirectory.mockReturnValueOnce(directoryPromise);
+
+    render(<App />);
+
+    const srcRow = await treeButton("src");
+    fireEvent.click(srcRow);
+    await waitFor(() => expect(srcRow).toHaveAttribute("aria-expanded", "true"));
+
+    fireEvent.click(srcRow);
+    await waitFor(() => expect(srcRow).toHaveAttribute("aria-expanded", "false"));
+
+    fireEvent.click(srcRow);
+    await waitFor(() => expect(srcRow).toHaveAttribute("aria-expanded", "true"));
+    expect(tauriMocks.listDirectory).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      resolveDirectory([
+        {
+          path: "src/App.tsx",
+          name: "App.tsx",
+          parent: "src",
+          isDir: false,
+          depth: 1,
+          size: 12,
+          modifiedMs: 202,
+        },
+      ]);
+    });
+
+    expect(await treeButton("App.tsx")).toBeInTheDocument();
+  });
+
   it("exposes file tree selection and folder expansion state", async () => {
     render(<App />);
 

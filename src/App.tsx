@@ -268,6 +268,7 @@ export default function App() {
   const [singleFilePath, setSingleFilePath] = useState<string>();
   const [files, setFiles] = useState<FileEntry[]>([]);
   const [loadedFolders, setLoadedFolders] = useState<Set<string>>(() => new Set());
+  const loadingFoldersRef = useRef<Set<string>>(new Set());
   const [activePath, setActivePath] = useState<string>();
   const [selectedPath, setSelectedPath] = useState<string>();
   const [revealTarget, setRevealTarget] = useState<RevealTarget>();
@@ -548,8 +549,15 @@ export default function App() {
 
   const loadFolderChildren = useCallback(
     async (path: string) => {
-      if (singleFileMode || loadedFolders.has(path)) return;
+      if (
+        singleFileMode ||
+        loadedFolders.has(path) ||
+        loadingFoldersRef.current.has(path)
+      ) {
+        return;
+      }
 
+      loadingFoldersRef.current.add(path);
       try {
         const entries = await listDirectory(path, showDotfiles, showGeneratedInternal);
         setFiles((current) => mergeFileEntries(current, entries));
@@ -557,6 +565,8 @@ export default function App() {
       } catch (reason) {
         setError(`Unable to load folder ${path}: ${String(reason)}`);
         setStatus("Folder load failed");
+      } finally {
+        loadingFoldersRef.current.delete(path);
       }
     },
     [loadedFolders, showDotfiles, showGeneratedInternal, singleFileMode],
@@ -606,6 +616,7 @@ export default function App() {
         const entry = await statFile(effectiveSingleFilePath);
         setFiles([entry]);
         setLoadedFolders(new Set());
+        loadingFoldersRef.current.clear();
         setWorkspaceLoadFailed(false);
         setWorkspaceUiRestored(true);
         await refreshIntegrationStatus();
@@ -615,6 +626,7 @@ export default function App() {
       const entries = await listFiles(showDotfiles, showGeneratedInternal, treeScanLimit);
       setFiles(entries);
       setLoadedFolders(new Set());
+      loadingFoldersRef.current.clear();
       setWorkspaceLoadFailed(false);
       await refreshIntegrationStatus();
       return entries;
