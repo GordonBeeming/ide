@@ -415,12 +415,15 @@ fn window_session_for_label(state: &AppState, label: &str) -> WorkspaceSessionSt
         .unwrap_or_else(|| default_workspace_session(state))
 }
 
-fn window_session_exists(state: &AppState, label: &str) -> bool {
+fn registered_window_session_for_label(
+    state: &AppState,
+    label: &str,
+) -> Option<WorkspaceSessionState> {
     state
         .window_sessions
         .read()
         .ok()
-        .is_some_and(|sessions| sessions.contains_key(label))
+        .and_then(|sessions| sessions.get(label).cloned())
 }
 
 fn register_window_session(state: &AppState, label: &str, target: LaunchTarget) {
@@ -462,6 +465,21 @@ async fn workspace_root_string_for_window(state: &AppState, window: &tauri::Wind
         .await
         .to_string_lossy()
         .to_string()
+}
+
+async fn workspace_root_is_used_by_any_session(state: &AppState, workspace_root: &Path) -> bool {
+    let sessions = state
+        .window_sessions
+        .read()
+        .ok()
+        .map(|sessions| sessions.values().cloned().collect::<Vec<_>>())
+        .unwrap_or_default();
+    for session in sessions {
+        if *session.workspace_root.read().await == workspace_root {
+            return true;
+        }
+    }
+    false
 }
 
 async fn agent_context_for_window(
@@ -1625,30 +1643,35 @@ async fn set_workspace_root_path(
     }
 
     let updates_shared_workspace = window_label.is_none() || window_label == Some("main");
-    let previous_workspace_root = if updates_shared_workspace {
+    let registered_session =
+        window_label.and_then(|label| registered_window_session_for_label(state, label));
+    let previous_workspace_root = if let Some(session) = registered_session.as_ref() {
+        Some(session.workspace_root.read().await.clone())
+    } else if updates_shared_workspace {
         Some(state.workspace_root.read().await.clone())
     } else {
         None
     };
-    if let Some(label) = window_label {
-        if !updates_shared_workspace && window_session_exists(state, label) {
-            let session = window_session_for_label(state, label);
+    if !updates_shared_workspace {
+        if let Some(session) = registered_session.as_ref() {
             *session.workspace_root.write().await = canonical.clone();
             *session.initial_file.write().await = None;
             *session.agent_context.write().await = AgentContext::default();
-        }
+        };
     }
     if updates_shared_workspace {
         *state.workspace_root.write().await = canonical.clone();
         *state.initial_file.write().await = None;
         *state.agent_context.write().await = AgentContext::default();
-        if let Some(previous_workspace_root) = previous_workspace_root {
-            if previous_workspace_root != canonical {
-                state
-                    .lsp_manager
-                    .stop_for_root(&previous_workspace_root)
-                    .await;
-            }
+    }
+    if let Some(previous_workspace_root) = previous_workspace_root {
+        if previous_workspace_root != canonical
+            && !workspace_root_is_used_by_any_session(state, &previous_workspace_root).await
+        {
+            state
+                .lsp_manager
+                .stop_for_root(&previous_workspace_root)
+                .await;
         }
     }
     record_recent_workspace_item(state, &canonical)?;

@@ -140,7 +140,13 @@ impl LspManager {
             .await
             .get(&key)
             .cloned()
-            .ok_or_else(|| LspError::NotRunning(language.to_string()))?;
+            .ok_or_else(|| {
+                LspError::NotRunning(format!(
+                    "{} in {}",
+                    language,
+                    workspace_root.to_string_lossy()
+                ))
+            })?;
         let payload = format!("Content-Length: {}\r\n\r\n{}", message.len(), message);
         session
             .stdin
