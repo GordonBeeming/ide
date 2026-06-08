@@ -317,13 +317,14 @@ describe("hosted Tauri API transport", () => {
       view: {
         showDotfiles: false,
         showGeneratedInternal: false,
-        treeScanLimit: 4000,
+        treeScanLimit: 10000,
         maxOpenFileKb: 5120,
         workspaceSearchResultLimit: 200,
         workspaceSearchMaxFileKb: 1024,
         currentFileSearchResultLimit: 200,
         currentFileResultPreviewLimit: 12,
         quickOpenResultLimit: 12,
+        backgroundIndexBatchEntries: 2000,
         commandPaletteResultLimit: 18,
       },
       workspace: {
@@ -336,13 +337,14 @@ describe("hosted Tauri API transport", () => {
       {
         showDotfiles: true,
         showGeneratedInternal: true,
-        treeScanLimit: 4000,
+        treeScanLimit: 10000,
         maxOpenFileKb: 5120,
         workspaceSearchResultLimit: 200,
         workspaceSearchMaxFileKb: 1024,
         currentFileSearchResultLimit: 200,
         currentFileResultPreviewLimit: 12,
         quickOpenResultLimit: 12,
+        backgroundIndexBatchEntries: 2000,
         commandPaletteResultLimit: 18,
       },
       {
@@ -430,6 +432,67 @@ describe("hosted Tauri API transport", () => {
       pendingFolders: 2,
     });
     expect(invoke).toHaveBeenCalledWith("get_workspace_index_stats", undefined);
+  });
+
+  it("advances hosted workspace indexing with a bounded authenticated request", async () => {
+    const fetchMock = vi.fn().mockImplementation(async (url: string) => {
+      if (url === "/api/codex-mcp") {
+        return jsonResponse({ endpoint: "http://127.0.0.1:17877/mcp", bearerToken: "token" });
+      }
+      return jsonResponse({
+        indexedEntries: 30,
+        indexedFiles: 20,
+        indexedFolders: 10,
+        loadedFolders: 5,
+        pendingFolders: 0,
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const { advanceWorkspaceIndex } = await import("./tauri");
+
+    await expect(advanceWorkspaceIndex(2000, true, true)).resolves.toEqual({
+      indexedEntries: 30,
+      indexedFiles: 20,
+      indexedFolders: 10,
+      loadedFolders: 5,
+      pendingFolders: 0,
+    });
+
+    expect(fetchMock.mock.calls[1][0]).toBe(
+      "/api/workspace-index/advance?entryLimit=2000&showDotfiles=true&showGeneratedInternal=true",
+    );
+    expect(fetchMock.mock.calls[1][1]).toEqual(
+      expect.objectContaining({
+        method: "POST",
+        headers: expect.any(Headers),
+      }),
+    );
+  });
+
+  it("advances native workspace indexing through Tauri", async () => {
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    const { invoke } = await import("@tauri-apps/api/core");
+    vi.mocked(invoke).mockResolvedValue({
+      indexedEntries: 30,
+      indexedFiles: 20,
+      indexedFolders: 10,
+      loadedFolders: 5,
+      pendingFolders: 0,
+    });
+    const { advanceWorkspaceIndex } = await import("./tauri");
+
+    await expect(advanceWorkspaceIndex(2000, true, true)).resolves.toEqual({
+      indexedEntries: 30,
+      indexedFiles: 20,
+      indexedFolders: 10,
+      loadedFolders: 5,
+      pendingFolders: 0,
+    });
+    expect(invoke).toHaveBeenCalledWith("advance_workspace_index", {
+      entryLimit: 2000,
+      showDotfiles: true,
+      showGeneratedInternal: true,
+    });
   });
 
   it("passes explicit search limits through hosted search requests", async () => {

@@ -194,7 +194,7 @@ async fn handle_request(state: &ClaudeBridgeState, request: JsonRpcMessage, id: 
             json!({
                 "protocolVersion": "2025-03-26",
                 "capabilities": { "tools": {} },
-                "serverInfo": { "name": "Ide", "version": env!("CARGO_PKG_VERSION") }
+                "serverInfo": { "name": "ide", "version": env!("CARGO_PKG_VERSION") }
             }),
         ),
         Some("ping") => success_response(id, json!({})),
@@ -387,7 +387,7 @@ fn write_lock_file(
     let lock = LockFile {
         pid: std::process::id(),
         workspace_folders: vec![workspace_root.to_string_lossy().to_string()],
-        ide_name: "Ide".to_string(),
+        ide_name: "ide".to_string(),
         transport: "ws".to_string(),
         auth_token: auth_token.to_string(),
     };

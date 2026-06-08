@@ -1,4 +1,4 @@
-# Ide
+# ide
 
 A lean Tauri-based integrated development environment built for speed, local control, and agent-friendly editor context.
 
@@ -75,7 +75,30 @@ Open a specific folder or file:
 ./run.sh /path/to/workspace/src/App.tsx
 ```
 
-If Ide is already running, `./run.sh /path/to/file-or-folder` hands the target to the running app through the authenticated loopback API instead of starting a second dev instance.
+If ide is already running, `./run.sh /path/to/file-or-folder` hands the target to the running app through the authenticated loopback API instead of starting a second dev instance.
+
+Install the lowercase shell commands:
+
+```bash
+./build.sh
+```
+
+The build script creates the packaged macOS `.app` and installs the command launchers. It intentionally skips DMG creation for local command installs. If `/Applications` is writable, it also replaces `/Applications/ide.app`; otherwise use the interactive developer installer:
+
+```bash
+./dev-install.sh
+```
+
+`dev-install.sh` runs the build, prompts for the `/Applications/ide.app` replacement when admin permission is needed, refreshes Spotlight/Launch Services metadata where possible, and reveals the installed app in Finder. macOS can still cache app icons briefly, so quit/reopen ide and give Spotlight a moment if the old icon is still visible.
+
+After installation, `ide <target>` opens a new packaged app instance for that target without holding the terminal, bare `ide` focuses an existing running app or opens the last context, and `ide-dev` runs this checkout's dev runner:
+
+```bash
+ide .
+ide-dev .
+```
+
+Use `./scripts/install-cli-command.sh` only when the packaged app already exists and you just need to refresh the links.
 
 On macOS, install the Finder Quick Action for direct file/folder opening:
 
@@ -83,11 +106,11 @@ On macOS, install the Finder Quick Action for direct file/folder opening:
 ./scripts/install-macos-finder-quick-action.sh
 ```
 
-After installation, use Finder's right-click menu: Quick Actions > Open in Ide. Recent folders and files are stored in the OS app-data location and exposed through the native File menu, not as in-app sidebar content.
+After installation, use Finder's right-click menu: Quick Actions > Open in ide. Recent folders and files are stored in the OS app-data location and exposed through the native File menu, not as in-app sidebar content.
 
 The Finder Quick Action generator is covered by `npm run finder:check`, which installs into a temporary directory and validates the generated service, file/folder UTI coverage, and loopback handoff script without touching your real Finder services.
 
-Packaged builds also declare file associations for common editor-supported file types, so macOS and other platforms can offer Ide from native `Open With` flows for those files. Folder opening is still handled through the native Open Folder menu, `./run.sh /path/to/folder`, and the macOS Finder Quick Action because OS file associations are file-oriented.
+Packaged builds also declare file associations for common editor-supported file types, so macOS and other platforms can offer ide from native `Open With` flows for those files. Folder opening is still handled through the native Open Folder menu, `./run.sh /path/to/folder`, and the macOS Finder Quick Action because OS file associations are file-oriented.
 
 ## Requirements
 

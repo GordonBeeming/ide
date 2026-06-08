@@ -10,8 +10,8 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.resolve(__dirname, "..");
 const installScript = path.join(rootDir, "scripts", "install-macos-finder-quick-action.sh");
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "ide-finder-action-"));
-const serviceRoot = path.join(tempDir, "Services", "Open in Ide.workflow");
-const supportDir = path.join(tempDir, "Support", "Ide");
+const serviceRoot = path.join(tempDir, "Services", "Open in ide.workflow");
+const supportDir = path.join(tempDir, "Support", "ide");
 
 try {
   execFileSync("bash", [installScript], {
@@ -47,7 +47,7 @@ try {
   assertIncludes(runner, "cargo run --no-default-features");
 
   const infoPlist = fs.readFileSync(infoPlistPath, "utf8");
-  assertIncludes(infoPlist, "<string>Open in Ide</string>");
+  assertIncludes(infoPlist, "<string>Open in ide</string>");
   assertIncludes(infoPlist, "<string>public.item</string>");
   assertIncludes(infoPlist, "<string>public.folder</string>");
   assertIncludes(infoPlist, "<string>public.data</string>");
@@ -55,7 +55,7 @@ try {
   assertIncludes(infoPlist, "<string>NSFilenamesPboardType</string>");
 
   const workflow = fs.readFileSync(workflowPath, "utf8");
-  assertIncludes(workflow, "Application Support/Ide/open-from-finder.sh");
+  assertIncludes(workflow, "Application Support/ide/open-from-finder.sh");
   assertIncludes(workflow, 'for target in "$@"; do');
   assertIncludes(workflow, "Finder did not pass a file or folder");
   assertIncludes(workflow, "com.apple.Automator.fileSystemObject");

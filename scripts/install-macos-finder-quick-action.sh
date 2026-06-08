@@ -3,10 +3,10 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RUN_SH="$ROOT_DIR/run.sh"
-SERVICE_NAME="Open in Ide"
+SERVICE_NAME="Open in ide"
 SERVICE_ROOT="${IDE_SERVICE_ROOT:-$HOME/Library/Services/$SERVICE_NAME.workflow}"
 SERVICE_DIR="$SERVICE_ROOT/Contents"
-SUPPORT_DIR="${IDE_SUPPORT_DIR:-$HOME/Library/Application Support/Ide}"
+SUPPORT_DIR="${IDE_SUPPORT_DIR:-$HOME/Library/Application Support/ide}"
 RUNNER="$SUPPORT_DIR/open-from-finder.sh"
 SERVICES_DIR="$(dirname "$SERVICE_ROOT")"
 
@@ -31,15 +31,15 @@ if ! command -v npm >/dev/null 2>&1 && command -v fnm >/dev/null 2>&1; then
   eval "\$(fnm env --shell bash)"
 fi
 
-LOG_DIR="\$HOME/Library/Logs/Ide"
+LOG_DIR="\$HOME/Library/Logs/ide"
 mkdir -p "\$LOG_DIR"
 exec >> "\$LOG_DIR/finder-open.log" 2>&1
 echo
-echo "=== \$(date '+%Y-%m-%dT%H:%M:%S%z') Open in Ide ==="
+echo "=== \$(date '+%Y-%m-%dT%H:%M:%S%z') Open in ide ==="
 
 if [ -z "\$TARGET" ] || [ ! -e "\$TARGET" ]; then
   echo "Invalid Finder target: \${TARGET:-<empty>}"
-  osascript -e 'display alert "Ide" message "The selected file or folder could not be opened." as critical' >/dev/null 2>&1 || true
+  osascript -e 'display alert "ide" message "The selected file or folder could not be opened." as critical' >/dev/null 2>&1 || true
   exit 1
 fi
 echo "Target: \$TARGET"
@@ -67,7 +67,7 @@ handoff_to_running_app() {
     -X POST \\
     --data "{\\"path\\":\\"\$escaped_target\\"}" \\
     "\$API_BASE/api/open-path" >/dev/null; then
-    echo "Handed target to running Ide at \$API_BASE."
+    echo "Handed target to running ide at \$API_BASE."
     return 0
   fi
 
@@ -82,7 +82,7 @@ ensure_command() {
     return 0
   fi
   echo "\$name is required. \$install_hint"
-  osascript -e "display alert \\"Ide\\" message \\"\$name is required. \$install_hint\\" as critical" >/dev/null 2>&1 || true
+  osascript -e "display alert \\"ide\\" message \\"\$name is required. \$install_hint\\" as critical" >/dev/null 2>&1 || true
   exit 1
 }
 
@@ -103,7 +103,7 @@ ensure_frontend_server() {
     fi
 
     echo "Port 1420 is owned by another process: pid=\$pid command=\${command:-unknown}"
-    osascript -e 'display alert "Ide" message "Port 1420 is already in use by another process." as critical' >/dev/null 2>&1 || true
+    osascript -e 'display alert "ide" message "Port 1420 is already in use by another process." as critical' >/dev/null 2>&1 || true
     exit 1
   done
 
@@ -122,12 +122,12 @@ ensure_frontend_server() {
   done
 
   echo "Timed out waiting for Vite server at \$FRONTEND_URL."
-  osascript -e 'display alert "Ide" message "Timed out waiting for the Ide frontend dev server." as critical' >/dev/null 2>&1 || true
+  osascript -e 'display alert "ide" message "Timed out waiting for the ide frontend dev server." as critical' >/dev/null 2>&1 || true
   exit 1
 }
 
 launch_app() {
-  echo "Launching Ide dev binary."
+  echo "Launching ide dev binary."
   (
     cd "\$ROOT_DIR/src-tauri"
     IDE_OPEN_PATH="\$TARGET" nohup cargo run --no-default-features >> "\$LOG_DIR/finder-app.log" 2>&1 &
@@ -156,7 +156,7 @@ for attempt in {1..80}; do
   sleep 0.25
 done
 
-echo "Ide was launched, but did not become reachable on \$API_BASE before the Finder action timed out."
+echo "ide was launched, but did not become reachable on \$API_BASE before the Finder action timed out."
 EOF
 chmod 755 "$RUNNER"
 
@@ -173,7 +173,7 @@ cat > "$SERVICE_DIR/Info.plist" <<'EOF'
       <key>NSMenuItem</key>
       <dict>
         <key>default</key>
-        <string>Open in Ide</string>
+        <string>Open in ide</string>
       </dict>
       <key>NSMessage</key>
       <string>runWorkflowAsService</string>
@@ -252,19 +252,19 @@ cat > "$SERVICE_DIR/document.wflow" <<'EOF'
           <key>COMMAND_STRING</key>
           <string>if [ "$#" -gt 0 ]; then
   for target in "$@"; do
-    "$HOME/Library/Application Support/Ide/open-from-finder.sh" "$target"
+    "$HOME/Library/Application Support/ide/open-from-finder.sh" "$target"
     exit 0
   done
 fi
 
 while IFS= read -r target; do
   if [ -n "$target" ]; then
-    "$HOME/Library/Application Support/Ide/open-from-finder.sh" "$target"
+    "$HOME/Library/Application Support/ide/open-from-finder.sh" "$target"
     exit 0
   fi
 done
 
-osascript -e 'display alert "Ide" message "Finder did not pass a file or folder to Open in Ide." as critical' >/dev/null 2&gt;&amp;1 || true
+osascript -e 'display alert "ide" message "Finder did not pass a file or folder to Open in ide." as critical' >/dev/null 2&gt;&amp;1 || true
 exit 1</string>
           <key>CheckedForUserDefaultShell</key>
           <true/>

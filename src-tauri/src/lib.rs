@@ -33,6 +33,7 @@ struct AppState {
     workspace_search_result_limit: Arc<std::sync::RwLock<usize>>,
     workspace_search_max_file_bytes: Arc<std::sync::RwLock<u64>>,
     quick_open_result_limit: Arc<std::sync::RwLock<usize>>,
+    background_index_batch_entries: Arc<std::sync::RwLock<usize>>,
     workspace_index: workspace_index::WorkspaceIndex,
     agent_context: Arc<RwLock<AgentContext>>,
     lsp_manager: lsp::LspManager,
@@ -93,6 +94,15 @@ struct SettingsLocations {
     workspace_index_file: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct WorkspaceDisplayContext {
+    app_title: String,
+    workspace_label: String,
+    full_label: String,
+    git_root: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 struct RecentItems {
@@ -145,6 +155,10 @@ struct PersistedViewSettings {
     current_file_result_preview_limit: usize,
     #[serde(default = "default_quick_open_result_limit")]
     quick_open_result_limit: usize,
+    #[serde(default = "default_background_index_batch_entries")]
+    background_index_batch_entries: usize,
+    #[serde(default = "default_workspace_title_max_chars")]
+    workspace_title_max_chars: usize,
     #[serde(default = "default_command_palette_result_limit")]
     command_palette_result_limit: usize,
 }
@@ -161,13 +175,15 @@ impl Default for PersistedViewSettings {
             current_file_search_result_limit: default_current_file_search_result_limit(),
             current_file_result_preview_limit: default_current_file_result_preview_limit(),
             quick_open_result_limit: default_quick_open_result_limit(),
+            background_index_batch_entries: default_background_index_batch_entries(),
+            workspace_title_max_chars: default_workspace_title_max_chars(),
             command_palette_result_limit: default_command_palette_result_limit(),
         }
     }
 }
 
 const MIN_TREE_SCAN_LIMIT: usize = 500;
-const DEFAULT_TREE_SCAN_LIMIT: usize = 4_000;
+const DEFAULT_TREE_SCAN_LIMIT: usize = 10_000;
 const MAX_TREE_SCAN_LIMIT: usize = 100_000;
 const MIN_MAX_OPEN_FILE_KB: u64 = 64;
 const DEFAULT_MAX_OPEN_FILE_KB: u64 = 5_120;
@@ -187,6 +203,12 @@ const MAX_CURRENT_FILE_RESULT_PREVIEW_LIMIT: usize = 100;
 const MIN_QUICK_OPEN_RESULT_LIMIT: usize = 5;
 const DEFAULT_QUICK_OPEN_RESULT_LIMIT: usize = 12;
 const MAX_QUICK_OPEN_RESULT_LIMIT: usize = 100;
+const MIN_BACKGROUND_INDEX_BATCH_ENTRIES: usize = 100;
+const DEFAULT_BACKGROUND_INDEX_BATCH_ENTRIES: usize = 2_000;
+const MAX_BACKGROUND_INDEX_BATCH_ENTRIES: usize = 20_000;
+const MIN_WORKSPACE_TITLE_MAX_CHARS: usize = 20;
+const DEFAULT_WORKSPACE_TITLE_MAX_CHARS: usize = 50;
+const MAX_WORKSPACE_TITLE_MAX_CHARS: usize = 120;
 const MIN_COMMAND_PALETTE_RESULT_LIMIT: usize = 5;
 const DEFAULT_COMMAND_PALETTE_RESULT_LIMIT: usize = 18;
 const MAX_COMMAND_PALETTE_RESULT_LIMIT: usize = 100;
@@ -219,6 +241,14 @@ fn default_quick_open_result_limit() -> usize {
     DEFAULT_QUICK_OPEN_RESULT_LIMIT
 }
 
+fn default_background_index_batch_entries() -> usize {
+    DEFAULT_BACKGROUND_INDEX_BATCH_ENTRIES
+}
+
+fn default_workspace_title_max_chars() -> usize {
+    DEFAULT_WORKSPACE_TITLE_MAX_CHARS
+}
+
 fn default_command_palette_result_limit() -> usize {
     DEFAULT_COMMAND_PALETTE_RESULT_LIMIT
 }
@@ -249,6 +279,14 @@ fn sanitize_view_settings(mut settings: PersistedViewSettings) -> PersistedViewS
     settings.quick_open_result_limit = settings
         .quick_open_result_limit
         .clamp(MIN_QUICK_OPEN_RESULT_LIMIT, MAX_QUICK_OPEN_RESULT_LIMIT);
+    settings.background_index_batch_entries = settings.background_index_batch_entries.clamp(
+        MIN_BACKGROUND_INDEX_BATCH_ENTRIES,
+        MAX_BACKGROUND_INDEX_BATCH_ENTRIES,
+    );
+    settings.workspace_title_max_chars = settings.workspace_title_max_chars.clamp(
+        MIN_WORKSPACE_TITLE_MAX_CHARS,
+        MAX_WORKSPACE_TITLE_MAX_CHARS,
+    );
     settings.command_palette_result_limit = settings.command_palette_result_limit.clamp(
         MIN_COMMAND_PALETTE_RESULT_LIMIT,
         MAX_COMMAND_PALETTE_RESULT_LIMIT,
@@ -338,6 +376,8 @@ enum CommandError {
     UiState(String),
     #[error("workspace index failed: {0}")]
     WorkspaceIndex(#[from] workspace_index::WorkspaceIndexError),
+    #[error("workspace index failed: {0}")]
+    WorkspaceIndexAdvance(#[from] workspace_index::WorkspaceIndexAdvanceError),
 }
 
 impl serde::Serialize for CommandError {
@@ -398,9 +438,11 @@ async fn list_files(
         show_generated_internal,
     )
     .map_err(CommandError::from)?;
-    state
-        .workspace_index
-        .replace_root_entries(&workspace_root, &scan.entries)?;
+    state.workspace_index.reconcile_scanned_entries(
+        &workspace_root,
+        &scan.entries,
+        !scan.truncated,
+    )?;
     Ok(scan)
 }
 
@@ -728,6 +770,18 @@ fn get_settings_locations(state: State<'_, AppState>) -> Result<SettingsLocation
 }
 
 #[tauri::command]
+async fn get_workspace_display_context(
+    state: State<'_, AppState>,
+    title_max_chars: Option<usize>,
+) -> Result<WorkspaceDisplayContext, CommandError> {
+    let workspace_root = state.workspace_root.read().await.clone();
+    Ok(workspace_display_context(
+        &workspace_root,
+        title_max_chars.unwrap_or_else(default_workspace_title_max_chars),
+    ))
+}
+
+#[tauri::command]
 async fn get_workspace_index_stats(
     state: State<'_, AppState>,
 ) -> Result<workspace_index::WorkspaceIndexStats, CommandError> {
@@ -808,6 +862,11 @@ async fn update_ui_state(
     *state.quick_open_result_limit.write().map_err(|_| {
         CommandError::UiState("quick-open result limit lock poisoned".to_string())
     })? = view.quick_open_result_limit;
+    *state
+        .background_index_batch_entries
+        .write()
+        .map_err(|_| CommandError::UiState("background index batch lock poisoned".to_string()))? =
+        view.background_index_batch_entries;
     ui_state.view = view;
     let persisted = PersistedWorkspaceUiState {
         workspace_root: workspace_root.clone(),
@@ -824,6 +883,37 @@ async fn update_ui_state(
     ui_state.workspaces.truncate(24);
     drop(ui_state);
     persist_ui_state(&state)
+}
+
+#[tauri::command]
+async fn advance_workspace_index(
+    state: State<'_, AppState>,
+    entry_limit: Option<usize>,
+    show_dotfiles: bool,
+    show_generated_internal: bool,
+) -> Result<workspace_index::WorkspaceIndexStats, CommandError> {
+    let workspace_root = state.workspace_root.read().await.clone();
+    let entry_limit = entry_limit
+        .unwrap_or_else(|| {
+            state
+                .background_index_batch_entries
+                .read()
+                .map(|limit| *limit)
+                .unwrap_or_else(|_| default_background_index_batch_entries())
+        })
+        .clamp(
+            MIN_BACKGROUND_INDEX_BATCH_ENTRIES,
+            MAX_BACKGROUND_INDEX_BATCH_ENTRIES,
+        );
+
+    workspace_index::advance_workspace_index(
+        &state.workspace_index,
+        &workspace_root,
+        entry_limit,
+        show_dotfiles,
+        show_generated_internal,
+    )
+    .map_err(CommandError::from)
 }
 
 #[tauri::command]
@@ -903,8 +993,12 @@ async fn send_lsp_message(
 }
 
 pub fn run() {
-    let launch_target =
-        resolve_launch_target().expect("failed to determine current workspace directory");
+    let explicit_launch_target =
+        resolve_explicit_launch_target().expect("failed to determine requested launch target");
+    let initial_launch_target = explicit_launch_target.clone().unwrap_or_else(|| {
+        fallback_launch_target_from_process_dir()
+            .expect("failed to determine current workspace directory")
+    });
     let agent_context = Arc::new(RwLock::new(AgentContext::default()));
     let lsp_manager = lsp::LspManager::new();
     let http_endpoint = Arc::new(RwLock::new(None));
@@ -913,8 +1007,8 @@ pub fn run() {
     let claude_bridge = Arc::new(RwLock::new(None));
     let claude_bridge_error = Arc::new(RwLock::new(None));
     let app_state = AppState {
-        workspace_root: Arc::new(RwLock::new(launch_target.workspace_root)),
-        initial_file: Arc::new(RwLock::new(launch_target.initial_file)),
+        workspace_root: Arc::new(RwLock::new(initial_launch_target.workspace_root)),
+        initial_file: Arc::new(RwLock::new(initial_launch_target.initial_file)),
         pending_open_requests: Arc::new(std::sync::RwLock::new(Vec::new())),
         recent_items: Arc::new(std::sync::RwLock::new(RecentItems::default())),
         recent_store_path: Arc::new(std::sync::RwLock::new(None)),
@@ -933,6 +1027,9 @@ pub fn run() {
         quick_open_result_limit: Arc::new(
             std::sync::RwLock::new(default_quick_open_result_limit()),
         ),
+        background_index_batch_entries: Arc::new(std::sync::RwLock::new(
+            default_background_index_batch_entries(),
+        )),
         workspace_index: workspace_index::WorkspaceIndex::new(),
         agent_context,
         lsp_manager,
@@ -960,11 +1057,12 @@ pub fn run() {
                 .write()
                 .map_err(|_| std::io::Error::other("recent store lock poisoned"))? =
                 Some(recent_store_path.clone());
+            let loaded_recent_items = load_recent_items(&recent_store_path)?;
             *http_state
                 .recent_items
                 .write()
                 .map_err(|_| std::io::Error::other("recent items lock poisoned"))? =
-                load_recent_items(&recent_store_path)?;
+                loaded_recent_items.clone();
             let ui_state_store_path = app
                 .path()
                 .app_data_dir()
@@ -976,6 +1074,17 @@ pub fn run() {
                 .map_err(|_| std::io::Error::other("ui state store lock poisoned"))? =
                 Some(ui_state_store_path.clone());
             let loaded_ui_state = load_ui_state(&ui_state_store_path)?;
+            let launch_target = explicit_launch_target
+                .clone()
+                .or_else(|| {
+                    launch_target_from_saved_context(&loaded_recent_items, &loaded_ui_state)
+                })
+                .or_else(|| fallback_launch_target_from_process_dir().ok())
+                .ok_or_else(|| {
+                    std::io::Error::other("failed to determine current workspace directory")
+                })?;
+            *http_state.workspace_root.blocking_write() = launch_target.workspace_root;
+            *http_state.initial_file.blocking_write() = launch_target.initial_file;
             *http_state
                 .tree_scan_limit
                 .write()
@@ -1007,6 +1116,11 @@ pub fn run() {
                 .map_err(|_| std::io::Error::other("quick-open limit lock poisoned"))? =
                 loaded_ui_state.view.quick_open_result_limit;
             *http_state
+                .background_index_batch_entries
+                .write()
+                .map_err(|_| std::io::Error::other("background index batch lock poisoned"))? =
+                loaded_ui_state.view.background_index_batch_entries;
+            *http_state
                 .ui_state
                 .write()
                 .map_err(|_| std::io::Error::other("ui state lock poisoned"))? = loaded_ui_state;
@@ -1034,6 +1148,7 @@ pub fn run() {
             let workspace_search_max_file_bytes =
                 http_state.workspace_search_max_file_bytes.clone();
             let quick_open_result_limit = http_state.quick_open_result_limit.clone();
+            let background_index_batch_entries = http_state.background_index_batch_entries.clone();
             let workspace_index = http_state.workspace_index.clone();
             let agent_context = http_state.agent_context.clone();
             let lsp_manager = http_state.lsp_manager.clone();
@@ -1053,6 +1168,7 @@ pub fn run() {
                     workspace_search_result_limit,
                     workspace_search_max_file_bytes,
                     quick_open_result_limit,
+                    background_index_batch_entries,
                     workspace_index,
                     agent_context,
                     lsp_manager,
@@ -1309,7 +1425,9 @@ pub fn run() {
             record_recent_file,
             get_ui_state,
             get_settings_locations,
+            get_workspace_display_context,
             get_workspace_index_stats,
+            advance_workspace_index,
             update_ui_state,
             update_agent_context,
             get_agent_context,
@@ -1721,6 +1839,121 @@ fn load_ui_state(path: &Path) -> Result<AppUiState, std::io::Error> {
     Ok(state)
 }
 
+pub(crate) fn workspace_display_context(
+    workspace_root: &Path,
+    title_max_chars: usize,
+) -> WorkspaceDisplayContext {
+    let title_max_chars = title_max_chars.clamp(
+        MIN_WORKSPACE_TITLE_MAX_CHARS,
+        MAX_WORKSPACE_TITLE_MAX_CHARS,
+    );
+    let canonical_root = workspace_root
+        .canonicalize()
+        .unwrap_or_else(|_| workspace_root.to_path_buf());
+    let git_root = nearest_git_root(&canonical_root);
+    let full_label = git_root
+        .as_ref()
+        .map(|root| git_relative_label(root, &canonical_root))
+        .unwrap_or_else(|| {
+            canonical_root
+                .file_name()
+                .and_then(|name| name.to_str())
+                .filter(|name| !name.is_empty())
+                .map(ToString::to_string)
+                .unwrap_or_else(|| canonical_root.to_string_lossy().to_string())
+        });
+    let workspace_label = abbreviate_workspace_label(&full_label, title_max_chars);
+
+    WorkspaceDisplayContext {
+        app_title: format!("ide - {workspace_label}"),
+        workspace_label,
+        full_label,
+        git_root: git_root.map(|path| path_to_string(&path)),
+    }
+}
+
+fn nearest_git_root(path: &Path) -> Option<PathBuf> {
+    let mut current = if path.is_file() {
+        path.parent()?.to_path_buf()
+    } else {
+        path.to_path_buf()
+    };
+
+    loop {
+        if current.join(".git").exists() {
+            return Some(current);
+        }
+        if !current.pop() {
+            return None;
+        }
+    }
+}
+
+fn git_relative_label(git_root: &Path, workspace_root: &Path) -> String {
+    let root_name = git_root
+        .file_name()
+        .and_then(|name| name.to_str())
+        .filter(|name| !name.is_empty())
+        .unwrap_or("workspace")
+        .to_string();
+    let relative = workspace_root
+        .strip_prefix(git_root)
+        .ok()
+        .map(normalize_display_path)
+        .filter(|path| !path.is_empty());
+
+    relative
+        .map(|path| format!("{root_name}/{path}"))
+        .unwrap_or(root_name)
+}
+
+fn normalize_display_path(path: &Path) -> String {
+    path.components()
+        .filter_map(|component| match component {
+            std::path::Component::Normal(value) => Some(value.to_string_lossy().to_string()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+fn abbreviate_workspace_label(label: &str, max_chars: usize) -> String {
+    if label.chars().count() <= max_chars {
+        return label.to_string();
+    }
+
+    let segments = label.split('/').collect::<Vec<_>>();
+    if segments.len() < 3 {
+        return truncate_label_end(label, max_chars);
+    }
+
+    let repo = segments[0];
+    let current = segments[segments.len() - 1];
+    let parent = segments[segments.len() - 2];
+    let with_parent = format!("{repo}/.../{parent}/{current}");
+    if with_parent.chars().count() <= max_chars {
+        return with_parent;
+    }
+
+    let without_parent = format!("{repo}/.../{current}");
+    if without_parent.chars().count() <= max_chars {
+        return without_parent;
+    }
+
+    truncate_label_end(&without_parent, max_chars)
+}
+
+fn truncate_label_end(label: &str, max_chars: usize) -> String {
+    if label.chars().count() <= max_chars {
+        return label.to_string();
+    }
+    if max_chars <= 3 {
+        return ".".repeat(max_chars);
+    }
+    let keep = max_chars.saturating_sub(3);
+    format!("{}...", label.chars().take(keep).collect::<String>())
+}
+
 fn now_ms() -> u128 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -1740,9 +1973,9 @@ struct LaunchTarget {
     initial_file: Option<String>,
 }
 
-fn resolve_launch_target() -> Result<LaunchTarget, std::io::Error> {
+fn resolve_explicit_launch_target() -> Result<Option<LaunchTarget>, std::io::Error> {
     if let Some(path) = std::env::var_os("IDE_OPEN_PATH").filter(|value| !value.is_empty()) {
-        return launch_target_for_path(PathBuf::from(path));
+        return launch_target_for_path(PathBuf::from(path)).map(Some);
     }
 
     if let Some(path) = std::env::args_os()
@@ -1750,12 +1983,56 @@ fn resolve_launch_target() -> Result<LaunchTarget, std::io::Error> {
         .map(PathBuf::from)
         .find(|path| path.exists())
     {
-        return launch_target_for_path(path);
+        return launch_target_for_path(path).map(Some);
     }
 
+    Ok(None)
+}
+
+fn fallback_launch_target_from_process_dir() -> Result<LaunchTarget, std::io::Error> {
     let current_dir = std::env::current_dir()?;
+    let workspace_root = project_root_for_process_dir(&current_dir);
+    let workspace_root = if workspace_root.parent().is_none() {
+        std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .filter(|path| path.is_dir())
+            .unwrap_or(workspace_root)
+    } else {
+        workspace_root
+    };
+
     Ok(LaunchTarget {
-        workspace_root: project_root_for_process_dir(&current_dir),
+        workspace_root,
+        initial_file: None,
+    })
+}
+
+fn launch_target_from_saved_context(
+    recent_items: &RecentItems,
+    ui_state: &AppUiState,
+) -> Option<LaunchTarget> {
+    recent_items
+        .workspaces
+        .iter()
+        .find_map(|workspace| launch_target_for_saved_workspace(&workspace.path))
+        .or_else(|| {
+            let mut workspaces = ui_state.workspaces.iter().collect::<Vec<_>>();
+            workspaces.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+            workspaces
+                .into_iter()
+                .find_map(|workspace| launch_target_for_saved_workspace(&workspace.workspace_root))
+        })
+}
+
+fn launch_target_for_saved_workspace(path: &str) -> Option<LaunchTarget> {
+    let path = PathBuf::from(path);
+    let canonical = path.canonicalize().ok()?;
+    if !canonical.is_dir() || canonical.parent().is_none() {
+        return None;
+    }
+
+    Some(LaunchTarget {
+        workspace_root: canonical,
         initial_file: None,
     })
 }
@@ -1966,6 +2243,105 @@ mod tests {
     }
 
     #[test]
+    fn saved_launch_context_uses_most_recent_existing_workspace() {
+        let dir = tempdir().unwrap();
+        let workspace_a = dir.path().join("workspace-a");
+        let workspace_b = dir.path().join("workspace-b");
+        std::fs::create_dir(&workspace_a).unwrap();
+        std::fs::create_dir(&workspace_b).unwrap();
+        let recent_items = RecentItems {
+            workspaces: vec![
+                RecentWorkspace {
+                    path: "/missing".to_string(),
+                    name: "missing".to_string(),
+                    last_opened: 3,
+                },
+                RecentWorkspace {
+                    path: workspace_b.to_string_lossy().to_string(),
+                    name: "workspace-b".to_string(),
+                    last_opened: 2,
+                },
+                RecentWorkspace {
+                    path: workspace_a.to_string_lossy().to_string(),
+                    name: "workspace-a".to_string(),
+                    last_opened: 1,
+                },
+            ],
+            files: Vec::new(),
+        };
+
+        let target = launch_target_from_saved_context(&recent_items, &AppUiState::default())
+            .expect("expected saved launch target");
+
+        assert_eq!(
+            target,
+            LaunchTarget {
+                workspace_root: workspace_b.canonicalize().unwrap(),
+                initial_file: None,
+            }
+        );
+    }
+
+    #[test]
+    fn saved_launch_context_falls_back_to_latest_ui_workspace() {
+        let dir = tempdir().unwrap();
+        let older = dir.path().join("older");
+        let newer = dir.path().join("newer");
+        std::fs::create_dir(&older).unwrap();
+        std::fs::create_dir(&newer).unwrap();
+        let ui_state = AppUiState {
+            view: PersistedViewSettings::default(),
+            workspaces: vec![
+                PersistedWorkspaceUiState {
+                    workspace_root: older.to_string_lossy().to_string(),
+                    expanded_folders: Vec::new(),
+                    open_files: Vec::new(),
+                    active_file: None,
+                    selected_path: None,
+                    updated_at: 1,
+                },
+                PersistedWorkspaceUiState {
+                    workspace_root: newer.to_string_lossy().to_string(),
+                    expanded_folders: Vec::new(),
+                    open_files: Vec::new(),
+                    active_file: None,
+                    selected_path: None,
+                    updated_at: 2,
+                },
+            ],
+        };
+
+        let target = launch_target_from_saved_context(&RecentItems::default(), &ui_state)
+            .expect("expected saved launch target");
+
+        assert_eq!(
+            target,
+            LaunchTarget {
+                workspace_root: newer.canonicalize().unwrap(),
+                initial_file: None,
+            }
+        );
+    }
+
+    #[test]
+    fn saved_launch_context_ignores_drive_root() {
+        let recent_items = RecentItems {
+            workspaces: vec![RecentWorkspace {
+                path: Path::new(std::path::MAIN_SEPARATOR_STR)
+                    .to_string_lossy()
+                    .to_string(),
+                name: "root".to_string(),
+                last_opened: 1,
+            }],
+            files: Vec::new(),
+        };
+
+        let target = launch_target_from_saved_context(&recent_items, &AppUiState::default());
+
+        assert_eq!(target, None);
+    }
+
+    #[test]
     fn recent_items_are_deduplicated_ordered_and_persisted() {
         let dir = tempdir().unwrap();
         let recents_path = dir.path().join("recents.json");
@@ -2038,6 +2414,7 @@ mod tests {
                 current_file_search_result_limit: 350,
                 current_file_result_preview_limit: 16,
                 quick_open_result_limit: 24,
+                background_index_batch_entries: 3_000,
                 command_palette_result_limit: 32,
             },
             workspaces: vec![PersistedWorkspaceUiState {
@@ -2191,6 +2568,9 @@ mod tests {
             )),
             quick_open_result_limit: Arc::new(std::sync::RwLock::new(
                 default_quick_open_result_limit(),
+            )),
+            background_index_batch_entries: Arc::new(std::sync::RwLock::new(
+                default_background_index_batch_entries(),
             )),
             workspace_index: workspace_index::WorkspaceIndex::new(),
             agent_context: Arc::new(RwLock::new(AgentContext::default())),

@@ -7,9 +7,18 @@ import { fileURLToPath } from "node:url";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.resolve(__dirname, "..");
 const configPath = path.join(rootDir, "src-tauri", "tauri.conf.json");
+const defaultCapabilityPath = path.join(
+  rootDir,
+  "src-tauri",
+  "capabilities",
+  "default.json",
+);
 
 const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
+const defaultCapability = JSON.parse(fs.readFileSync(defaultCapabilityPath, "utf8"));
 const associations = config.bundle?.fileAssociations;
+const bundleIcons = config.bundle?.icon;
+const mainWindowPermissions = defaultCapability.permissions ?? [];
 
 const requiredAssociatedExtensions = [
   "rs",
@@ -65,8 +74,51 @@ if (config.identifier !== "com.gordonbeeming.ide") {
   errors.push("identifier must remain com.gordonbeeming.ide");
 }
 
+if (config.productName !== "ide") {
+  errors.push('productName must remain lowercase "ide"');
+}
+
+const mainWindow = config.app?.windows?.[0];
+if (mainWindow?.title !== "ide") {
+  errors.push('main window title must remain lowercase "ide"');
+}
+
+if (!Array.isArray(mainWindowPermissions)) {
+  errors.push("main window capability permissions must be an array");
+} else {
+  for (const permission of [
+    "core:default",
+    "core:window:allow-destroy",
+    "core:window:allow-set-title",
+  ]) {
+    if (!mainWindowPermissions.includes(permission)) {
+      errors.push(`main window capability is missing ${permission}`);
+    }
+  }
+}
+
 if (config.bundle?.category !== "DeveloperTool") {
   errors.push("bundle.category must be DeveloperTool");
+}
+
+const requiredBundleIcons = [
+  "icons/32x32.png",
+  "icons/128x128.png",
+  "icons/128x128@2x.png",
+  "icons/icon.icns",
+  "icons/icon.ico",
+];
+if (!Array.isArray(bundleIcons) || bundleIcons.length === 0) {
+  errors.push("bundle.icon must declare packaged app icons");
+} else {
+  for (const iconPath of requiredBundleIcons) {
+    if (!bundleIcons.includes(iconPath)) {
+      errors.push(`bundle.icon is missing ${iconPath}`);
+    }
+    if (!fs.existsSync(path.join(rootDir, "src-tauri", iconPath))) {
+      errors.push(`bundle icon file does not exist: ${iconPath}`);
+    }
+  }
 }
 
 if (!Array.isArray(associations) || associations.length === 0) {

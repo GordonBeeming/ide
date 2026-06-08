@@ -62,7 +62,7 @@ import {
   moveCommandPaletteSelection,
   type CommandPaletteEntry,
 } from "./commandPalette";
-import { destroyNativeWindow, onNativeWindowCloseRequested } from "./appWindow";
+import { destroyNativeWindow, onNativeWindowCloseRequested, setNativeWindowTitle } from "./appWindow";
 import {
   AgentContext,
   ClaudeBridgeStatus,
@@ -72,6 +72,7 @@ import {
   FileEntry,
   LspServerStatus,
   SearchMatch,
+  advanceWorkspaceIndex,
   createFile,
   createFolder,
   deleteFile,
@@ -82,6 +83,7 @@ import {
   getLspServers,
   getSettingsLocations,
   getUiState,
+  getWorkspaceDisplayContext,
   getWorkspaceIndexStats,
   getWorkspaceRoot,
   isNativeTauri,
@@ -106,6 +108,7 @@ import {
   type PersistedUiSnapshot,
   type SettingsLocations,
   type WorkspaceIndexStats,
+  type WorkspaceDisplayContext,
   type WorkspaceUiState,
 } from "./tauri";
 import {
@@ -174,7 +177,7 @@ const settingsCategories: Array<{
 
 const minTreeScanLimit = 500;
 const maxTreeScanLimit = 100000;
-const defaultTreeScanLimit = 4000;
+const defaultTreeScanLimit = 10000;
 const minMaxOpenFileKb = 64;
 const maxMaxOpenFileKb = 65536;
 const defaultMaxOpenFileKb = 5120;
@@ -193,6 +196,12 @@ const defaultCurrentFileResultPreviewLimit = 12;
 const minQuickOpenResultLimit = 5;
 const maxQuickOpenResultLimit = 100;
 const defaultQuickOpenResultLimit = 12;
+const minBackgroundIndexBatchEntries = 100;
+const maxBackgroundIndexBatchEntries = 20000;
+const defaultBackgroundIndexBatchEntries = 2000;
+const minWorkspaceTitleMaxChars = 20;
+const maxWorkspaceTitleMaxChars = 120;
+const defaultWorkspaceTitleMaxChars = 50;
 const minCommandPaletteResultLimit = 5;
 const maxCommandPaletteResultLimit = 100;
 const defaultCommandPaletteResultLimit = 18;
@@ -362,6 +371,14 @@ export default function App() {
   const [quickOpenResultLimit, setQuickOpenResultLimit] = useState(
     defaultQuickOpenResultLimit,
   );
+  const [backgroundIndexBatchEntries, setBackgroundIndexBatchEntries] = useState(
+    defaultBackgroundIndexBatchEntries,
+  );
+  const [workspaceTitleMaxChars, setWorkspaceTitleMaxChars] = useState(
+    defaultWorkspaceTitleMaxChars,
+  );
+  const [workspaceDisplayContext, setWorkspaceDisplayContext] =
+    useState<WorkspaceDisplayContext>();
   const [commandPaletteResultLimit, setCommandPaletteResultLimit] = useState(
     defaultCommandPaletteResultLimit,
   );
@@ -480,7 +497,10 @@ export default function App() {
   );
   const workspaceTitle = singleFileMode && singleFilePath
     ? lastSegment(singleFilePath)
-    : lastSegment(workspaceRoot);
+    : workspaceDisplayContext?.workspaceLabel || lastSegment(workspaceRoot);
+  const appTitle = singleFileMode && singleFilePath
+    ? `ide - ${lastSegment(singleFilePath)}`
+    : workspaceDisplayContext?.appTitle || (workspaceTitle ? `ide - ${workspaceTitle}` : "ide");
   const nativePickerAvailable = isNativeTauri();
   const emptyEditorState = emptyEditorStateForSelection(selectedEntry, openFailure);
   const modalUiOpen =
@@ -550,6 +570,27 @@ export default function App() {
   }, [activeFile]);
 
   useEffect(() => {
+    let disposed = false;
+
+    getWorkspaceDisplayContext(workspaceTitleMaxChars)
+      .then((context) => {
+        if (!disposed) setWorkspaceDisplayContext(context);
+      })
+      .catch(() => {
+        if (!disposed) setWorkspaceDisplayContext(undefined);
+      });
+
+    return () => {
+      disposed = true;
+    };
+  }, [workspaceRoot, workspaceTitleMaxChars]);
+
+  useEffect(() => {
+    document.title = appTitle;
+    setNativeWindowTitle(appTitle).catch(() => undefined);
+  }, [appTitle]);
+
+  useEffect(() => {
     setCurrentFindIndex(-1);
   }, [activePath, currentFileQuery]);
 
@@ -614,6 +655,14 @@ export default function App() {
         minQuickOpenResultLimit,
         maxQuickOpenResultLimit,
         defaultQuickOpenResultLimit,
+      ),
+    );
+    setBackgroundIndexBatchEntries(
+      sanitizeNumberLimit(
+        snapshot.view.backgroundIndexBatchEntries,
+        minBackgroundIndexBatchEntries,
+        maxBackgroundIndexBatchEntries,
+        defaultBackgroundIndexBatchEntries,
       ),
     );
     setCommandPaletteResultLimit(
@@ -1143,6 +1192,7 @@ export default function App() {
           currentFileSearchResultLimit,
           currentFileResultPreviewLimit,
           quickOpenResultLimit,
+          backgroundIndexBatchEntries,
           commandPaletteResultLimit,
         },
         {
@@ -1172,9 +1222,55 @@ export default function App() {
     currentFileSearchResultLimit,
     currentFileResultPreviewLimit,
     quickOpenResultLimit,
+    backgroundIndexBatchEntries,
     commandPaletteResultLimit,
     uiStateLoaded,
     workspaceUiRestored,
+  ]);
+
+  useEffect(() => {
+    if (singleFileMode || workspaceLoading || workspaceLoadFailed || files.length === 0) {
+      return;
+    }
+
+    let disposed = false;
+    let timer: number | undefined;
+
+    const runBatch = async () => {
+      try {
+        const stats = await advanceWorkspaceIndex(
+          backgroundIndexBatchEntries,
+          showDotfiles,
+          showGeneratedInternal,
+        );
+        if (disposed) return;
+
+        setWorkspaceIndexStats(stats);
+        if (stats.pendingFolders > 0) {
+          timer = window.setTimeout(runBatch, 800);
+        }
+      } catch (reason) {
+        if (!disposed) {
+          setError(`Workspace background indexing failed: ${String(reason)}`);
+        }
+      }
+    };
+
+    timer = window.setTimeout(runBatch, 600);
+
+    return () => {
+      disposed = true;
+      window.clearTimeout(timer);
+    };
+  }, [
+    backgroundIndexBatchEntries,
+    files.length,
+    showDotfiles,
+    showGeneratedInternal,
+    singleFileMode,
+    workspaceLoading,
+    workspaceLoadFailed,
+    workspaceRoot,
   ]);
 
   const closeQuickOpen = useCallback(() => {
@@ -2709,14 +2805,7 @@ export default function App() {
       data-ide-theme={prefersDark ? "dark" : "light"}
     >
       <aside className="sidebar" aria-hidden={sidebarCollapsed}>
-        <div className="sidebar__header">
-          <div className="sidebar__title">
-            <div className="eyebrow">Workspace</div>
-            <strong>
-              {workspaceTitle ||
-                (workspaceLoadFailed ? "Workspace unavailable" : "Loading")}
-            </strong>
-          </div>
+        <div className="sidebar__header" title={appTitle}>
           <div className="sidebar__actions">
             <button
               className="icon-button"
@@ -2865,24 +2954,6 @@ export default function App() {
         ) : null}
 
         <nav className="file-tree" role="tree" aria-label="Workspace files">
-          {workspaceScanTruncated && !singleFileMode ? (
-            <div className="tree-notice" role="status">
-              <TriangleAlert size={14} />
-              <span>
-                Initial scan reached {workspaceScanLimitHit.toLocaleString()} entries.
-                Expand folders to load more, or raise the limit in Settings.
-              </span>
-              <button
-                className="command-button command-button--quiet"
-                onClick={() => {
-                  setSettingsCategory("performance");
-                  setSettingsOpen(true);
-                }}
-              >
-                Settings
-              </button>
-            </div>
-          ) : null}
           {workspaceLoading && files.length === 0 ? (
             <div className="tree-empty" role="status">Loading workspace</div>
           ) : workspaceLoadFailed && files.length === 0 ? (
@@ -2911,6 +2982,23 @@ export default function App() {
             ))
           )}
         </nav>
+
+        {workspaceScanTruncated && !singleFileMode ? (
+          <div className="sidebar-scan-status" role="status">
+            <button
+              className="sidebar-scan-status__button"
+              title={`Initial scan reached ${workspaceScanLimitHit.toLocaleString()} entries. Expand folders to load more, or open Performance settings.`}
+              aria-label={`Initial scan reached ${workspaceScanLimitHit.toLocaleString()} entries. Open Performance settings.`}
+              onClick={() => {
+                setSettingsCategory("performance");
+                setSettingsOpen(true);
+              }}
+            >
+              <TriangleAlert size={14} />
+              <span>{workspaceScanLimitHit.toLocaleString()}</span>
+            </button>
+          </div>
+        ) : null}
 
         <div className="diagnostics-panel" aria-label="Diagnostics">
           <div className="diagnostics-panel__header">
@@ -3474,6 +3562,27 @@ export default function App() {
                             const next = sanitizeTreeScanLimit(Number(event.target.value));
                             setTreeScanLimit(next);
                             setStatus(`Tree scan limit set to ${next}`);
+                          }}
+                        />
+                      </label>
+                      <label className="dialog-field">
+                        <span>Background index batch entries</span>
+                        <input
+                          inputMode="numeric"
+                          min={minBackgroundIndexBatchEntries}
+                          max={maxBackgroundIndexBatchEntries}
+                          step={100}
+                          type="number"
+                          value={backgroundIndexBatchEntries}
+                          onChange={(event) => {
+                            const next = sanitizeNumberLimit(
+                              Number(event.target.value),
+                              minBackgroundIndexBatchEntries,
+                              maxBackgroundIndexBatchEntries,
+                              defaultBackgroundIndexBatchEntries,
+                            );
+                            setBackgroundIndexBatchEntries(next);
+                            setStatus(`Background index batch set to ${next}`);
                           }}
                         />
                       </label>
@@ -4099,7 +4208,7 @@ export default function App() {
           >
             <div>
               <div className="eyebrow">Unsaved changes</div>
-              <h2 id="app-close-title">Close IDE?</h2>
+              <h2 id="app-close-title">Close ide?</h2>
               <p>
                 {dirtyFiles.length === 1
                   ? `${dirtyFiles[0].path} has edits that have not been saved.`

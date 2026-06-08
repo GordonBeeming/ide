@@ -75,7 +75,9 @@ const tauriMocks = vi.hoisted(() => ({
   setWorkspaceRootPath: vi.fn(),
   getUiState: vi.fn(),
   getSettingsLocations: vi.fn(),
+  getWorkspaceDisplayContext: vi.fn(),
   getWorkspaceIndexStats: vi.fn(),
+  advanceWorkspaceIndex: vi.fn(),
   updateUiState: vi.fn(),
   updateAgentContext: vi.fn(),
   getLspServers: vi.fn(),
@@ -88,6 +90,7 @@ const appWindowMocks = vi.hoisted(() => ({
   closeHandler: undefined as ((event: { preventDefault: () => void }) => void) | undefined,
   destroyNativeWindow: vi.fn(),
   onNativeWindowCloseRequested: vi.fn(),
+  setNativeWindowTitle: vi.fn(),
   unlisten: vi.fn(),
 }));
 
@@ -135,7 +138,9 @@ vi.mock("./tauri", async () => {
     setWorkspaceRootPath: tauriMocks.setWorkspaceRootPath,
     getUiState: tauriMocks.getUiState,
     getSettingsLocations: tauriMocks.getSettingsLocations,
+    getWorkspaceDisplayContext: tauriMocks.getWorkspaceDisplayContext,
     getWorkspaceIndexStats: tauriMocks.getWorkspaceIndexStats,
+    advanceWorkspaceIndex: tauriMocks.advanceWorkspaceIndex,
     updateUiState: tauriMocks.updateUiState,
     updateAgentContext: tauriMocks.updateAgentContext,
     getLspServers: tauriMocks.getLspServers,
@@ -156,6 +161,7 @@ vi.mock("./lsp", () => ({
 vi.mock("./appWindow", () => ({
   destroyNativeWindow: appWindowMocks.destroyNativeWindow,
   onNativeWindowCloseRequested: appWindowMocks.onNativeWindowCloseRequested,
+  setNativeWindowTitle: appWindowMocks.setNativeWindowTitle,
 }));
 
 vi.mock("./EditorPane", () => ({
@@ -216,6 +222,8 @@ describe("App shell interactions", () => {
       appWindowMocks.closeHandler = handler;
       return appWindowMocks.unlisten;
     });
+    appWindowMocks.setNativeWindowTitle.mockReset();
+    appWindowMocks.setNativeWindowTitle.mockResolvedValue(false);
     appWindowMocks.unlisten.mockReset();
     eventMocks.listeners.clear();
     eventMocks.listen.mockReset();
@@ -274,12 +282,24 @@ describe("App shell interactions", () => {
       recentsFile: "/Users/gordon/Library/Application Support/com.gordonbeeming.ide/recents.json",
       workspaceIndexFile: "/Users/gordon/Library/Application Support/com.gordonbeeming.ide/workspace-index.sqlite",
     });
+    tauriMocks.getWorkspaceDisplayContext.mockResolvedValue({
+      appTitle: "ide - workspace",
+      workspaceLabel: "workspace",
+      fullLabel: "workspace",
+    });
     tauriMocks.getWorkspaceIndexStats.mockResolvedValue({
       indexedEntries: 12,
       indexedFiles: 7,
       indexedFolders: 5,
       loadedFolders: 3,
       pendingFolders: 2,
+    });
+    tauriMocks.advanceWorkspaceIndex.mockResolvedValue({
+      indexedEntries: 12,
+      indexedFiles: 7,
+      indexedFolders: 5,
+      loadedFolders: 3,
+      pendingFolders: 0,
     });
     tauriMocks.updateUiState.mockResolvedValue(undefined);
     tauriMocks.updateAgentContext.mockResolvedValue(undefined);
@@ -301,7 +321,28 @@ describe("App shell interactions", () => {
     render(<App />);
 
     expect(screen.getByText("Loading workspace")).toBeInTheDocument();
-    expect(screen.getByText("Loading")).toBeInTheDocument();
+    expect(screen.queryByText("Workspace")).not.toBeInTheDocument();
+  });
+
+  it("uses workspace display context for the native title and compact sidebar header", async () => {
+    tauriMocks.getWorkspaceDisplayContext.mockResolvedValue({
+      appTitle: "ide - sample-repo/packages/editor",
+      workspaceLabel: "sample-repo/packages/editor",
+      fullLabel: "sample-repo/packages/editor",
+      gitRoot: "/workspace",
+    });
+
+    render(<App />);
+
+    expect(await treeButton("README.md")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(appWindowMocks.setNativeWindowTitle).toHaveBeenLastCalledWith(
+        "ide - sample-repo/packages/editor",
+      ),
+    );
+    await waitFor(() => expect(document.title).toBe("ide - sample-repo/packages/editor"));
+    expect(screen.queryByText("sample-repo/packages/editor")).not.toBeInTheDocument();
+    expect(screen.queryByText("Workspace")).not.toBeInTheDocument();
   });
 
   it("surfaces workspace load failures and retries the scan", async () => {
@@ -332,7 +373,7 @@ describe("App shell interactions", () => {
     expect(screen.queryByText("Workspace load failed")).not.toBeInTheDocument();
   });
 
-  it("surfaces bounded initial scans and opens performance settings", async () => {
+  it("surfaces bounded initial scans as a compact sidebar status and opens performance settings", async () => {
     tauriMocks.listFiles.mockResolvedValueOnce({
       entries: files,
       truncated: true,
@@ -342,12 +383,13 @@ describe("App shell interactions", () => {
     render(<App />);
 
     expect(await treeButton("README.md")).toBeInTheDocument();
-    const notice = screen
-      .getByText(/Initial scan reached 3 entries/)
-      .closest(".tree-notice");
-    expect(notice).not.toBeNull();
+    expect(screen.queryByText(/Initial scan reached 3 entries/)).not.toBeInTheDocument();
 
-    fireEvent.click(within(notice as HTMLElement).getByRole("button", { name: "Settings" }));
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Initial scan reached 3 entries. Open Performance settings.",
+      }),
+    );
 
     expect(await screen.findByRole("dialog", { name: "Settings" })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: /Performance/ })).toHaveAttribute(
@@ -355,6 +397,41 @@ describe("App shell interactions", () => {
       "true",
     );
     expect(screen.getByLabelText("Initial tree scan entries")).toBeInTheDocument();
+  });
+
+  it("advances workspace indexing in background batches after initial load", async () => {
+    tauriMocks.advanceWorkspaceIndex
+      .mockResolvedValueOnce({
+        indexedEntries: 20,
+        indexedFiles: 12,
+        indexedFolders: 8,
+        loadedFolders: 4,
+        pendingFolders: 1,
+      })
+      .mockResolvedValueOnce({
+        indexedEntries: 30,
+        indexedFiles: 20,
+        indexedFolders: 10,
+        loadedFolders: 5,
+        pendingFolders: 0,
+      });
+
+    render(<App />);
+
+    expect(await treeButton("README.md")).toBeInTheDocument();
+    await waitFor(
+      () =>
+        expect(tauriMocks.advanceWorkspaceIndex).toHaveBeenCalledWith(
+          2000,
+          false,
+          false,
+        ),
+      { timeout: 1500 },
+    );
+    await waitFor(
+      () => expect(tauriMocks.advanceWorkspaceIndex).toHaveBeenCalledTimes(2),
+      { timeout: 2500 },
+    );
   });
 
   it("keeps the empty editor pane on the active light theme", async () => {
@@ -738,13 +815,14 @@ describe("App shell interactions", () => {
         expect.objectContaining({
           showDotfiles: false,
           showGeneratedInternal: false,
-          treeScanLimit: 4000,
+          treeScanLimit: 10000,
           maxOpenFileKb: 5120,
           workspaceSearchResultLimit: 200,
           workspaceSearchMaxFileKb: 1024,
           currentFileSearchResultLimit: 200,
           currentFileResultPreviewLimit: 12,
           quickOpenResultLimit: 12,
+          backgroundIndexBatchEntries: 2000,
           commandPaletteResultLimit: 18,
         }),
         expect.objectContaining({
@@ -833,14 +911,15 @@ describe("App shell interactions", () => {
     fireEvent.click(await screen.findByLabelText("Show dotfiles and dot folders"));
 
     await waitFor(() =>
-      expect(tauriMocks.listFiles).toHaveBeenLastCalledWith(true, false, 4000),
+      expect(tauriMocks.listFiles).toHaveBeenLastCalledWith(true, false, 10000),
     );
     await waitFor(() =>
       expect(tauriMocks.updateUiState).toHaveBeenLastCalledWith(
         expect.objectContaining({
           showDotfiles: true,
           showGeneratedInternal: false,
-          treeScanLimit: 4000,
+          treeScanLimit: 10000,
+          backgroundIndexBatchEntries: 2000,
         }),
         expect.any(Object),
       ),
@@ -870,14 +949,15 @@ describe("App shell interactions", () => {
     fireEvent.click(await screen.findByLabelText("Show generated and internal folders"));
 
     await waitFor(() =>
-      expect(tauriMocks.listFiles).toHaveBeenLastCalledWith(false, true, 4000),
+      expect(tauriMocks.listFiles).toHaveBeenLastCalledWith(false, true, 10000),
     );
     await waitFor(() =>
       expect(tauriMocks.updateUiState).toHaveBeenLastCalledWith(
         expect.objectContaining({
           showDotfiles: false,
           showGeneratedInternal: true,
-          treeScanLimit: 4000,
+          treeScanLimit: 10000,
+          backgroundIndexBatchEntries: 2000,
         }),
         expect.any(Object),
       ),
@@ -1057,7 +1137,7 @@ describe("App shell interactions", () => {
     await waitFor(() =>
       expect(appWindowMocks.destroyNativeWindow).toHaveBeenCalledTimes(1),
     );
-    expect(screen.queryByText("Close IDE?")).not.toBeInTheDocument();
+    expect(screen.queryByText("Close ide?")).not.toBeInTheDocument();
   });
 
   it("prompts before native window close when there are unsaved files", async () => {
@@ -1073,7 +1153,7 @@ describe("App shell interactions", () => {
     appWindowMocks.closeHandler?.({ preventDefault });
 
     expect(preventDefault).toHaveBeenCalledTimes(1);
-    expect(await screen.findByText("Close IDE?")).toBeInTheDocument();
+    expect(await screen.findByText("Close ide?")).toBeInTheDocument();
     expect(appWindowMocks.destroyNativeWindow).not.toHaveBeenCalled();
   });
 
@@ -1403,6 +1483,18 @@ describe("App shell interactions", () => {
         },
       ]);
     tauriMocks.pickWorkspaceFolder.mockResolvedValueOnce("/workspace-next");
+    tauriMocks.getWorkspaceDisplayContext.mockReset();
+    tauriMocks.getWorkspaceDisplayContext
+      .mockResolvedValueOnce({
+        appTitle: "ide - workspace",
+        workspaceLabel: "workspace",
+        fullLabel: "workspace",
+      })
+      .mockResolvedValue({
+        appTitle: "ide - workspace-next",
+        workspaceLabel: "workspace-next",
+        fullLabel: "workspace-next",
+      });
 
     render(<App />);
 
@@ -1410,7 +1502,12 @@ describe("App shell interactions", () => {
     fireEvent.keyDown(window, { key: "o", metaKey: true, shiftKey: true });
 
     expect(await treeButton("next.md")).toBeInTheDocument();
-    expect(screen.getByText("workspace-next")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(appWindowMocks.setNativeWindowTitle).toHaveBeenLastCalledWith(
+        "ide - workspace-next",
+      ),
+    );
+    expect(document.title).toBe("ide - workspace-next");
     expect(screen.getByText("Opened workspace-next")).toBeInTheDocument();
   });
 
