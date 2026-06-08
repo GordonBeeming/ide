@@ -1046,9 +1046,11 @@ async fn get_agent_context(
 
 #[tauri::command]
 async fn get_lsp_servers(
+    window: tauri::Window,
     state: State<'_, AppState>,
 ) -> Result<Vec<lsp::LspServerStatus>, CommandError> {
-    Ok(state.lsp_manager.statuses().await)
+    let workspace_root = workspace_root_for_window(&state, &window).await;
+    Ok(state.lsp_manager.statuses(&workspace_root).await)
 }
 
 #[tauri::command]
@@ -1623,9 +1625,13 @@ async fn set_workspace_root_path(
     }
 
     let updates_shared_workspace = window_label.is_none() || window_label == Some("main");
+    let previous_workspace_root = if updates_shared_workspace {
+        Some(state.workspace_root.read().await.clone())
+    } else {
+        None
+    };
     if let Some(label) = window_label {
-        let session_exists = window_session_exists(state, label);
-        if updates_shared_workspace || session_exists {
+        if !updates_shared_workspace && window_session_exists(state, label) {
             let session = window_session_for_label(state, label);
             *session.workspace_root.write().await = canonical.clone();
             *session.initial_file.write().await = None;
@@ -1633,14 +1639,17 @@ async fn set_workspace_root_path(
         }
     }
     if updates_shared_workspace {
-        let previous_workspace_root = state.workspace_root.read().await.clone();
         *state.workspace_root.write().await = canonical.clone();
         *state.initial_file.write().await = None;
         *state.agent_context.write().await = AgentContext::default();
-        state
-            .lsp_manager
-            .stop_for_root(&previous_workspace_root)
-            .await;
+        if let Some(previous_workspace_root) = previous_workspace_root {
+            if previous_workspace_root != canonical {
+                state
+                    .lsp_manager
+                    .stop_for_root(&previous_workspace_root)
+                    .await;
+            }
+        }
     }
     record_recent_workspace_item(state, &canonical)?;
     if updates_shared_workspace {
@@ -2310,7 +2319,9 @@ fn open_launch_target_window(
         return Ok(());
     }
 
-    let window = tauri::WebviewWindowBuilder::new(
+    let state = app.state::<AppState>();
+    register_window_session(&state, &label, target);
+    let window = match tauri::WebviewWindowBuilder::new(
         app,
         label.clone(),
         tauri::WebviewUrl::App("index.html".into()),
@@ -2318,9 +2329,14 @@ fn open_launch_target_window(
     .title("ide")
     .inner_size(1440.0, 960.0)
     .min_inner_size(960.0, 640.0)
-    .build()?;
-    let state = app.state::<AppState>();
-    register_window_session(&state, window.label(), target);
+    .build()
+    {
+        Ok(window) => window,
+        Err(error) => {
+            remove_window_session(&state, &label);
+            return Err(error);
+        }
+    };
     focus_window(&window);
     Ok(())
 }

@@ -733,7 +733,8 @@ async fn put_agent_context(
 }
 
 async fn lsp_servers(State(state): State<HttpServerState>) -> Json<Vec<LspServerStatus>> {
-    Json(state.lsp_manager.statuses().await)
+    let workspace_root = state.workspace_root.read().await.clone();
+    Json(state.lsp_manager.statuses(&workspace_root).await)
 }
 
 async fn codex_mcp_status(

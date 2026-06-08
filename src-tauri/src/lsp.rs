@@ -23,13 +23,14 @@ impl LspManager {
         }
     }
 
-    pub async fn statuses(&self) -> Vec<LspServerStatus> {
+    pub async fn statuses(&self, workspace_root: &Path) -> Vec<LspServerStatus> {
         let sessions = self.sessions.read().await;
         server_configs()
             .iter()
             .map(|config| {
                 let probe = probe_command(config);
-                let running = sessions.keys().any(|key| key.language == config.language);
+                let running =
+                    sessions.contains_key(&LspSessionKey::new(config.language, workspace_root));
                 LspServerStatus {
                     language: config.language.to_string(),
                     display_name: config.display_name.to_string(),
@@ -84,7 +85,17 @@ impl LspManager {
             stdin: Arc::new(Mutex::new(stdin)),
         };
 
-        self.sessions.write().await.insert(key.clone(), session);
+        let mut sessions = self.sessions.write().await;
+        if let Some(existing) = sessions.get(&key) {
+            let _ = child.kill().await;
+            return Ok(LspStartResult {
+                language: language.to_string(),
+                session_id: existing.session_id.clone(),
+                running: true,
+            });
+        }
+        sessions.insert(key.clone(), session);
+        drop(sessions);
 
         spawn_stdout_reader(
             app.clone(),
