@@ -184,6 +184,7 @@ For each feature, include:
     existing patterns that informed the estimate.
   - Make clear these are not implementation instructions and may change before
     the PBI is worked.
+
 ## GitHub Issue Creation
 
 Only run this phase after Gordon has reviewed the artifact and approved
@@ -221,6 +222,20 @@ has another label from the same planning group, replace it so only one value per
 group remains. Keep each group on a single hue ramp, with lighter shades for
 lower/easier values and darker shades for higher/harder values.
 
+Create missing planning labels with the exact name, color, and description from
+the table before creating or updating PBIs. Use `gh label create` for labels
+that do not exist yet:
+
+```bash
+gh label create "effort:M" --repo OWNER/REPO --color "58a6ff" --description "Medium effort"
+```
+
+For an existing label with the wrong color or description, use `gh label edit`:
+
+```bash
+gh label edit "effort:M" --repo OWNER/REPO --color "58a6ff" --description "Medium effort"
+```
+
 1. Determine the repo:
    ```bash
    gh repo view --json nameWithOwner --jq .nameWithOwner
@@ -246,13 +261,13 @@ lower/easier values and darker shades for higher/harder values.
    Put concrete file/path/code-symbol references only in `Likely Touch Points`
    or evidence sections, never in the task checklist.
 
-5. Use a temporary body file and `gh issue create`:
+5. Use a static, shell-safe temporary body file and `gh issue create`:
    ```bash
-   gh issue create --repo OWNER/REPO --title "TITLE" --body-file /tmp/new-feature-TITLE.md
+   gh issue create --repo OWNER/REPO --title "TITLE" --body-file /tmp/new-feature-body.md
    ```
    Apply the selected planning labels during creation, for example:
    ```bash
-   gh issue create --repo OWNER/REPO --title "TITLE" --body-file /tmp/new-feature-TITLE.md \
+   gh issue create --repo OWNER/REPO --title "TITLE" --body-file /tmp/new-feature-body.md \
      --label "enhancement" \
      --label "effort:M" \
      --label "complexity:3" \
