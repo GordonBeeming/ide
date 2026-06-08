@@ -175,6 +175,49 @@ const settingsCategories: Array<{
   { id: "storage", title: "Storage", detail: "Settings and index files" },
 ];
 
+type KeyBindingCategory = "File" | "Search" | "Navigate" | "View" | "Tabs" | "Tree" | "Dialogs";
+
+interface KeyBindingInfo {
+  category: KeyBindingCategory;
+  command: string;
+  shortcut: string;
+  when?: string;
+}
+
+const keyBindings: KeyBindingInfo[] = [
+  { category: "File", command: "New File", shortcut: "Cmd/Ctrl+N" },
+  { category: "File", command: "New Folder", shortcut: "Cmd/Ctrl+Shift+N" },
+  { category: "File", command: "Open File", shortcut: "Cmd/Ctrl+O" },
+  { category: "File", command: "Open Folder", shortcut: "Cmd/Ctrl+Shift+O" },
+  { category: "File", command: "Save", shortcut: "Cmd/Ctrl+S" },
+  { category: "File", command: "Save All", shortcut: "Cmd/Ctrl+Shift+S" },
+  { category: "File", command: "Reload from Disk", shortcut: "Cmd/Ctrl+R" },
+  { category: "File", command: "Rename Selected", shortcut: "F2" },
+  { category: "File", command: "Close Tab", shortcut: "Cmd/Ctrl+W" },
+  { category: "File", command: "Close All", shortcut: "Cmd/Ctrl+Shift+W" },
+  { category: "Search", command: "Command Palette", shortcut: "Cmd/Ctrl+Shift+P" },
+  { category: "Search", command: "Go to File", shortcut: "Cmd/Ctrl+P" },
+  { category: "Search", command: "Go to Line", shortcut: "Ctrl+G" },
+  { category: "Search", command: "Find in File", shortcut: "Cmd/Ctrl+F" },
+  { category: "Search", command: "Find in Files", shortcut: "Cmd/Ctrl+Shift+F" },
+  { category: "Navigate", command: "Go to Definition", shortcut: "F12" },
+  { category: "Navigate", command: "Find References", shortcut: "Shift+F12" },
+  { category: "View", command: "Collapse or expand sidebar", shortcut: "Cmd/Ctrl+B" },
+  { category: "View", command: "Settings", shortcut: "Cmd/Ctrl+," },
+  { category: "Tabs", command: "Activate tab 1-9", shortcut: "Cmd/Ctrl+1...9" },
+  { category: "Tabs", command: "Next tab", shortcut: "Ctrl+Tab" },
+  { category: "Tabs", command: "Previous tab", shortcut: "Ctrl+Shift+Tab" },
+  { category: "Tree", command: "Open selected file or toggle folder", shortcut: "Enter" },
+  { category: "Tree", command: "Toggle selected folder", shortcut: "Space" },
+  { category: "Tree", command: "Expand selected folder", shortcut: "ArrowRight" },
+  { category: "Tree", command: "Collapse selected folder", shortcut: "ArrowLeft" },
+  { category: "Dialogs", command: "Close active dialog or palette", shortcut: "Escape" },
+  { category: "Dialogs", command: "Move selection", shortcut: "ArrowUp / ArrowDown", when: "Quick open and command palette" },
+  { category: "Dialogs", command: "Run selected item", shortcut: "Enter", when: "Quick open and command palette" },
+  { category: "Dialogs", command: "Next find result", shortcut: "Enter", when: "Find in file" },
+  { category: "Dialogs", command: "Previous find result", shortcut: "Shift+Enter", when: "Find in file" },
+];
+
 const minTreeScanLimit = 500;
 const maxTreeScanLimit = 100000;
 const defaultTreeScanLimit = 10000;
@@ -350,6 +393,8 @@ export default function App() {
   const [pendingCloseAll, setPendingCloseAll] = useState(false);
   const [pendingAppClose, setPendingAppClose] = useState(false);
   const [integrationsOpen, setIntegrationsOpen] = useState(false);
+  const [keyBindingsOpen, setKeyBindingsOpen] = useState(false);
+  const [keyBindingsQuery, setKeyBindingsQuery] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsCategory, setSettingsCategory] = useState<SettingsCategory>("view");
   const [showDotfiles, setShowDotfiles] = useState(false);
@@ -473,6 +518,10 @@ export default function App() {
     () => (codexMcp ? codexMcpConfigSnippet(codexMcp) : ""),
     [codexMcp],
   );
+  const keyBindingResults = useMemo(
+    () => filterKeyBindings(keyBindings, keyBindingsQuery),
+    [keyBindingsQuery],
+  );
   const filterExpanded = activeSidebarSearch === "filter" || filter.trim().length > 0;
   const contentSearchExpanded =
     activeSidebarSearch === "content" || contentQuery.trim().length > 0;
@@ -516,6 +565,7 @@ export default function App() {
     pendingCloseAll ||
     pendingAppClose ||
     integrationsOpen ||
+    keyBindingsOpen ||
     settingsOpen ||
     pendingClosePath !== undefined;
   const modalUiOpenRef = useRef(false);
@@ -2025,6 +2075,9 @@ export default function App() {
       listen("menu://show-integrations", () => {
         runNativeMenuAction(() => setIntegrationsOpen(true));
       }),
+      listen("menu://show-key-bindings", () => {
+        runNativeMenuAction(() => setKeyBindingsOpen(true));
+      }),
       listen("menu://show-settings", () => {
         runNativeMenuAction(() => setSettingsOpen(true));
       }),
@@ -2290,6 +2343,14 @@ export default function App() {
         keywords: ["mcp", "claude", "codex", "lsp"],
         enabled: true,
         run: () => setIntegrationsOpen(true),
+      },
+      {
+        id: "show_key_bindings",
+        title: "Key Bindings",
+        detail: "Show supported keyboard shortcuts",
+        keywords: ["shortcuts", "hotkeys", "keyboard"],
+        enabled: true,
+        run: () => setKeyBindingsOpen(true),
       },
       {
         id: "show_settings",
@@ -2634,6 +2695,11 @@ export default function App() {
         setIntegrationsOpen(false);
         return;
       }
+      if (event.key === "Escape" && keyBindingsOpen) {
+        event.preventDefault();
+        setKeyBindingsOpen(false);
+        return;
+      }
       if (event.key === "Escape" && settingsOpen) {
         event.preventDefault();
         setSettingsOpen(false);
@@ -2770,6 +2836,7 @@ export default function App() {
     newFileDialogOpen,
     newFolderDialogOpen,
     integrationsOpen,
+    keyBindingsOpen,
     settingsOpen,
     goToLineDialogOpen,
     modalUiOpen,
@@ -3474,6 +3541,59 @@ export default function App() {
                 className="command-button command-button--primary"
                 type="button"
                 onClick={() => setIntegrationsOpen(false)}
+              >
+                Close
+              </button>
+            </div>
+          </section>
+        </div>
+      ) : null}
+
+      {keyBindingsOpen ? (
+        <div className="dialog-backdrop" role="presentation">
+          <section
+            className="confirm-dialog keybindings-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="keybindings-title"
+          >
+            <div>
+              <div className="eyebrow">View</div>
+              <h2 id="keybindings-title">Key Bindings</h2>
+            </div>
+            <label className="keybindings-search">
+              <Search size={15} aria-hidden="true" />
+              <input
+                autoFocus
+                aria-label="Search key bindings"
+                placeholder="Search key bindings"
+                value={keyBindingsQuery}
+                onChange={(event) => setKeyBindingsQuery(event.target.value)}
+              />
+            </label>
+            <div className="keybindings-list" aria-label="Supported key bindings">
+              {keyBindingResults.length === 0 ? (
+                <div className="keybindings-empty">No matching key bindings</div>
+              ) : (
+                keyBindingResults.map((binding) => (
+                  <div
+                    className="keybinding-row"
+                    key={`${binding.category}:${binding.command}:${binding.shortcut}`}
+                  >
+                    <span className="keybinding-row__command">
+                      <span>{binding.command}</span>
+                      <small>{binding.when ?? binding.category}</small>
+                    </span>
+                    <kbd>{binding.shortcut}</kbd>
+                  </div>
+                ))
+              )}
+            </div>
+            <div className="confirm-dialog__actions">
+              <button
+                className="command-button command-button--primary"
+                type="button"
+                onClick={() => setKeyBindingsOpen(false)}
               >
                 Close
               </button>
@@ -4439,6 +4559,17 @@ function isGlobalIdeShortcut(event: KeyboardEvent) {
   if (!(event.metaKey || event.ctrlKey)) return false;
   if (!event.shiftKey && /^[1-9]$/.test(event.key)) return true;
   return ["s", "r", "w", "b", "n", "o", "p", "f"].includes(key);
+}
+
+function filterKeyBindings(bindings: KeyBindingInfo[], query: string) {
+  const normalized = query.trim().toLowerCase();
+  if (!normalized) return bindings;
+  return bindings.filter((binding) =>
+    [binding.category, binding.command, binding.shortcut, binding.when ?? ""]
+      .join(" ")
+      .toLowerCase()
+      .includes(normalized),
+  );
 }
 
 function suggestNewFilePath(selectedPath: string | undefined, files: FileEntry[]) {

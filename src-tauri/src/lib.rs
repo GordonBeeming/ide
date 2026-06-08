@@ -1576,6 +1576,11 @@ pub fn run() {
                 return;
             }
 
+            if id == "show_key_bindings" {
+                emit_to_active_window(app, "menu://show-key-bindings", ());
+                return;
+            }
+
             if id == "show_settings" {
                 emit_to_active_window(app, "menu://show-settings", ());
             }
@@ -1812,6 +1817,9 @@ fn rebuild_app_menu(app: &tauri::AppHandle, state: &AppState) -> Result<(), Comm
     let show_integrations = MenuItemBuilder::with_id("show_integrations", "Integrations...")
         .build(app)
         .map_err(|error| CommandError::Recent(error.to_string()))?;
+    let show_key_bindings = MenuItemBuilder::with_id("show_key_bindings", "Key Bindings...")
+        .build(app)
+        .map_err(|error| CommandError::Recent(error.to_string()))?;
     let settings = MenuItemBuilder::with_id("show_settings", "Settings...")
         .accelerator("CmdOrCtrl+,")
         .build(app)
@@ -1848,11 +1856,13 @@ fn rebuild_app_menu(app: &tauri::AppHandle, state: &AppState) -> Result<(), Comm
     #[cfg(target_os = "macos")]
     let view_menu = SubmenuBuilder::new(app, "View")
         .item(&show_integrations)
+        .item(&show_key_bindings)
         .build()
         .map_err(|error| CommandError::Recent(error.to_string()))?;
     #[cfg(not(target_os = "macos"))]
     let view_menu = SubmenuBuilder::new(app, "View")
         .item(&show_integrations)
+        .item(&show_key_bindings)
         .item(&settings)
         .build()
         .map_err(|error| CommandError::Recent(error.to_string()))?;

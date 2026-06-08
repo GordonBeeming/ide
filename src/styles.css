@@ -1022,6 +1022,96 @@ button {
   background: var(--bg);
 }
 
+.keybindings-dialog {
+  width: min(680px, 100%);
+  max-height: min(760px, calc(100dvh - 40px));
+  overflow: hidden;
+}
+
+.keybindings-search {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  padding: 0 9px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--muted);
+}
+
+.keybindings-search input {
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+}
+
+.keybindings-list {
+  display: grid;
+  gap: 6px;
+  min-height: 0;
+  max-height: min(440px, calc(100dvh - 260px));
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.keybinding-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) max-content;
+  align-items: center;
+  gap: 14px;
+  min-height: 44px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+}
+
+.keybinding-row__command {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.keybinding-row__command span,
+.keybinding-row__command small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.keybinding-row__command span {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.keybinding-row__command small {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.keybinding-row kbd {
+  padding: 4px 7px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--panel-strong);
+  color: var(--text);
+  font-family: ui-monospace, "SF Mono", monospace;
+  font-size: 11px;
+  font-weight: 750;
+}
+
+.keybindings-empty {
+  padding: 16px 10px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
 .settings-dialog {
   width: min(720px, 100%);
 }

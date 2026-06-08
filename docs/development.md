@@ -218,6 +218,8 @@ The Search menu owns:
 - `Find in File`
 - `Find in Files`
 
+The View menu owns `Integrations...` and `Key Bindings...`. On non-macOS platforms it also keeps `Settings...` available, while macOS keeps Settings in the app menu.
+
 Menu selections are delivered to the frontend through Tauri events. The frontend reuses the toolbar and keyboard workflow handlers, including dirty-file guards before closing or reloading files, stale-write checks before saving, and collapsed search controls that open only when requested. Modal dialogs block global IDE shortcuts and native menu actions while still allowing `Escape` to dismiss the active dialog, so save/close/open commands cannot fire behind confirmations or settings.
 
 The command palette exposes the same daily-driver actions from the keyboard. Native-only actions such as `Open File` use Rust-owned Tauri dialog commands and stay disabled in hosted browser mode.

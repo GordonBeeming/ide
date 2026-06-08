@@ -29,6 +29,7 @@ const expectedFrontendEvents = new Set([
   "menu://save-all",
   "menu://save-file",
   "menu://show-integrations",
+  "menu://show-key-bindings",
   "menu://show-settings",
 ]);
 
@@ -57,6 +58,7 @@ const expectedRoutedMenuIds = new Set([
   "save_all",
   "save_file",
   "show_integrations",
+  "show_key_bindings",
   "show_settings",
 ]);
 
@@ -131,7 +133,7 @@ if (
 }
 
 if (
-  !/#\[cfg\(target_os = "macos"\)\]\s+let view_menu = SubmenuBuilder::new\(app, "View"\)\s+\.item\(&show_integrations\)\s+\.build\(\)/.test(
+  !/#\[cfg\(target_os = "macos"\)\]\s+let view_menu = SubmenuBuilder::new\(app, "View"\)\s+\.item\(&show_integrations\)\s+\.item\(&show_key_bindings\)\s+\.build\(\)/.test(
     rustSource,
   )
 ) {

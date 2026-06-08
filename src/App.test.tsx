@@ -1290,6 +1290,32 @@ describe("App shell interactions", () => {
     expect(screen.getByRole("button", { name: "Copy Codex MCP config" })).toBeInTheDocument();
   });
 
+  it("shows searchable key bindings from the native View menu", async () => {
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    render(<App />);
+
+    expect(await treeButton("README.md")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(eventMocks.listeners.has("menu://show-key-bindings")).toBe(true),
+    );
+
+    act(() => {
+      eventMocks.listeners.get("menu://show-key-bindings")?.({ payload: undefined });
+    });
+
+    expect(screen.getByRole("dialog", { name: "Key Bindings" })).toBeInTheDocument();
+    expect(screen.getByText("Save All")).toBeInTheDocument();
+    expect(screen.getByText("Cmd/Ctrl+Shift+S")).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("Search key bindings"), {
+      target: { value: "definition" },
+    });
+
+    expect(screen.getByText("Go to Definition")).toBeInTheDocument();
+    expect(screen.getByText("F12")).toBeInTheDocument();
+    expect(screen.queryByText("Save All")).not.toBeInTheDocument();
+  });
+
   it("keeps search fields collapsed until the search controls are used", async () => {
     render(<App />);
 
