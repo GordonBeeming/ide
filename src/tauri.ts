@@ -145,6 +145,14 @@ export interface WorkspaceDisplayContext {
   gitRoot?: string;
 }
 
+export interface AppInfo {
+  name: string;
+  version: string;
+  description: string;
+  authors: string[];
+  repository: string;
+}
+
 export interface WorkspaceIndexStats {
   indexedEntries: number;
   indexedFiles: number;
@@ -186,6 +194,20 @@ export function getWorkspaceRoot() {
 export function getInitialFile() {
   if (!isNativeTauri()) return Promise.resolve(undefined);
   return invoke<string | undefined>("get_initial_file");
+}
+
+export function getAppInfo() {
+  if (!isNativeTauri()) {
+    return Promise.resolve<AppInfo>({
+      name: "ide",
+      version: "dev",
+      description: "A lean local IDE.",
+      authors: ["Gordon Beeming"],
+      repository: "https://github.com/gordonbeeming/ide",
+    });
+  }
+
+  return invoke<AppInfo>("get_app_info");
 }
 
 export function takeOpenedLaunchTargets() {

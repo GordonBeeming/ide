@@ -14,6 +14,7 @@ import {
   ChevronRight,
   Circle,
   Copy,
+  ExternalLink,
   FileInput,
   FilePlus,
   FileCog,
@@ -65,6 +66,7 @@ import {
 import { destroyNativeWindow, onNativeWindowCloseRequested, setNativeWindowTitle } from "./appWindow";
 import {
   AgentContext,
+  AppInfo,
   ClaudeBridgeStatus,
   CodexMcpStatus,
   EditorDiagnostic,
@@ -80,6 +82,7 @@ import {
   getCodexMcpStatus,
   getHttpEndpoint,
   getInitialFile,
+  getAppInfo,
   getLspServers,
   getSettingsLocations,
   getUiState,
@@ -139,6 +142,14 @@ import {
 import { cursorStatus, type EditorCursor } from "./editorCursor";
 
 const EditorPane = lazy(() => import("./EditorPane"));
+
+const fallbackAppInfo: AppInfo = {
+  name: "ide",
+  version: "dev",
+  description: "A lean local IDE.",
+  authors: ["Gordon Beeming"],
+  repository: "https://github.com/gordonbeeming/ide",
+};
 
 interface AppCommand extends CommandPaletteEntry {
   detail: string;
@@ -395,6 +406,8 @@ export default function App() {
   const [integrationsOpen, setIntegrationsOpen] = useState(false);
   const [keyBindingsOpen, setKeyBindingsOpen] = useState(false);
   const [keyBindingsQuery, setKeyBindingsQuery] = useState("");
+  const [aboutOpen, setAboutOpen] = useState(false);
+  const [appInfo, setAppInfo] = useState<AppInfo>(fallbackAppInfo);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsCategory, setSettingsCategory] = useState<SettingsCategory>("view");
   const [showDotfiles, setShowDotfiles] = useState(false);
@@ -566,6 +579,7 @@ export default function App() {
     pendingAppClose ||
     integrationsOpen ||
     keyBindingsOpen ||
+    aboutOpen ||
     settingsOpen ||
     pendingClosePath !== undefined;
   const modalUiOpenRef = useRef(false);
@@ -640,6 +654,20 @@ export default function App() {
     document.title = appTitle;
     setNativeWindowTitle(appTitle).catch(() => undefined);
   }, [appTitle]);
+
+  useEffect(() => {
+    let disposed = false;
+    getAppInfo()
+      .then((info) => {
+        if (!disposed) setAppInfo(info);
+      })
+      .catch(() => {
+        if (!disposed) setAppInfo(fallbackAppInfo);
+      });
+    return () => {
+      disposed = true;
+    };
+  }, []);
 
   useEffect(() => {
     setCurrentFindIndex(-1);
@@ -2078,6 +2106,9 @@ export default function App() {
       listen("menu://show-key-bindings", () => {
         runNativeMenuAction(() => setKeyBindingsOpen(true));
       }),
+      listen("menu://show-about", () => {
+        runNativeMenuAction(() => setAboutOpen(true));
+      }),
       listen("menu://show-settings", () => {
         runNativeMenuAction(() => setSettingsOpen(true));
       }),
@@ -2351,6 +2382,14 @@ export default function App() {
         keywords: ["shortcuts", "hotkeys", "keyboard"],
         enabled: true,
         run: () => setKeyBindingsOpen(true),
+      },
+      {
+        id: "show_about",
+        title: "About ide",
+        detail: "Show app version and project details",
+        keywords: ["version", "release", "about"],
+        enabled: true,
+        run: () => setAboutOpen(true),
       },
       {
         id: "show_settings",
@@ -3544,6 +3583,53 @@ export default function App() {
               >
                 Close
               </button>
+            </div>
+          </section>
+        </div>
+      ) : null}
+
+      {aboutOpen ? (
+        <div className="dialog-backdrop" role="presentation">
+          <section
+            className="confirm-dialog about-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="about-title"
+          >
+            <button
+              aria-label="Close"
+              className="tiny-icon-button about-dialog__close"
+              onClick={() => setAboutOpen(false)}
+              title="Close"
+              type="button"
+            >
+              <X size={14} />
+            </button>
+            <img
+              alt=""
+              className="about-dialog__icon"
+              src="/icon-128.png"
+              width={96}
+              height={96}
+            />
+            <div className="about-dialog__body">
+              <div>
+                <h2 id="about-title">ide</h2>
+                <div className="about-dialog__version">Version {appInfo.version}</div>
+              </div>
+              <p>{appInfo.description}</p>
+              <a
+                className="about-dialog__link"
+                href={appInfo.repository}
+                rel="noreferrer"
+                target="_blank"
+              >
+                github.com/gordonbeeming/ide
+                <ExternalLink size={13} />
+              </a>
+              <div className="about-dialog__meta">
+                {appInfo.authors.join(", ") || "Gordon Beeming"}
+              </div>
             </div>
           </section>
         </div>

@@ -57,6 +57,7 @@ const files: FileEntry[] = [
 const tauriMocks = vi.hoisted(() => ({
   getWorkspaceRoot: vi.fn(),
   getInitialFile: vi.fn(),
+  getAppInfo: vi.fn(),
   takeOpenedLaunchTargets: vi.fn(),
   listFiles: vi.fn(),
   listDirectory: vi.fn(),
@@ -120,6 +121,7 @@ vi.mock("./tauri", async () => {
     ...actual,
     getWorkspaceRoot: tauriMocks.getWorkspaceRoot,
     getInitialFile: tauriMocks.getInitialFile,
+    getAppInfo: tauriMocks.getAppInfo,
     takeOpenedLaunchTargets: tauriMocks.takeOpenedLaunchTargets,
     listFiles: tauriMocks.listFiles,
     listDirectory: tauriMocks.listDirectory,
@@ -242,6 +244,13 @@ describe("App shell interactions", () => {
     lspMocks.setLspStatusHandler.mockReset();
     tauriMocks.getWorkspaceRoot.mockResolvedValue("/workspace");
     tauriMocks.getInitialFile.mockResolvedValue(undefined);
+    tauriMocks.getAppInfo.mockResolvedValue({
+      name: "ide",
+      version: "0.1.0",
+      description: "A lean local IDE.",
+      authors: ["Gordon Beeming"],
+      repository: "https://github.com/gordonbeeming/ide",
+    });
     tauriMocks.takeOpenedLaunchTargets.mockResolvedValue([]);
     tauriMocks.listFiles.mockResolvedValue(files);
     tauriMocks.listDirectory.mockImplementation(async (path: string) =>
@@ -1314,6 +1323,27 @@ describe("App shell interactions", () => {
     expect(screen.getByText("Go to Definition")).toBeInTheDocument();
     expect(screen.getByText("F12")).toBeInTheDocument();
     expect(screen.queryByText("Save All")).not.toBeInTheDocument();
+  });
+
+  it("shows app details from the native About menu", async () => {
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    render(<App />);
+
+    expect(await treeButton("README.md")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(eventMocks.listeners.has("menu://show-about")).toBe(true),
+    );
+
+    act(() => {
+      eventMocks.listeners.get("menu://show-about")?.({ payload: undefined });
+    });
+
+    const dialog = screen.getByRole("dialog", { name: "ide" });
+    expect(dialog).toHaveTextContent("Version 0.1.0");
+    expect(dialog).toHaveTextContent("A lean local IDE.");
+    expect(
+      within(dialog).getByRole("link", { name: /github.com\/gordonbeeming\/ide/i }),
+    ).toHaveAttribute("href", "https://github.com/gordonbeeming/ide");
   });
 
   it("keeps search fields collapsed until the search controls are used", async () => {

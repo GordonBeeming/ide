@@ -30,6 +30,7 @@ const expectedFrontendEvents = new Set([
   "menu://save-file",
   "menu://show-integrations",
   "menu://show-key-bindings",
+  "menu://show-about",
   "menu://show-settings",
 ]);
 
@@ -59,6 +60,7 @@ const expectedRoutedMenuIds = new Set([
   "save_file",
   "show_integrations",
   "show_key_bindings",
+  "show_about",
   "show_settings",
 ]);
 

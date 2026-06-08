@@ -1012,6 +1012,78 @@ button {
   padding-right: 2px;
 }
 
+.about-dialog {
+  position: relative;
+  justify-items: center;
+  width: min(380px, 100%);
+  gap: 14px;
+  padding: 28px 26px 24px;
+  text-align: center;
+}
+
+.about-dialog__close {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+}
+
+.about-dialog__icon {
+  width: 96px;
+  height: 96px;
+  border-radius: 20px;
+  box-shadow: 0 12px 34px oklch(5% 0.02 230 / 32%);
+}
+
+.about-dialog__body {
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+}
+
+.about-dialog h2 {
+  margin: 0;
+  color: var(--text);
+  font-size: 30px;
+  line-height: 1.05;
+}
+
+.about-dialog__version {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.about-dialog p {
+  max-width: 280px;
+  margin: 0;
+  color: var(--text-soft);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.about-dialog__link {
+  display: inline-grid;
+  grid-auto-flow: column;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  color: var(--accent);
+  font-size: 12px;
+  text-decoration: none;
+}
+
+.about-dialog__link:hover,
+.about-dialog__link:focus-visible {
+  text-decoration: underline;
+  outline: 0;
+}
+
+.about-dialog__meta {
+  color: var(--muted);
+  font-size: 11px;
+}
+
 .integration-section {
   display: grid;
   min-width: 0;

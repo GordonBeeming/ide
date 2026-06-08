@@ -5,6 +5,8 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  release:
+    types: [published]
 
 permissions:
   contents: read
@@ -65,3 +67,204 @@ jobs:
 
       - name: Run verification suite
         run: ./run-tests.sh
+
+  release:
+    name: Sign, Notarize & Release
+    needs: build-and-test
+    if: github.event_name == 'release'
+    runs-on: macos-14
+    timeout-minutes: 60
+    environment: prod
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build output
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src-tauri/target
+          key: ${{ runner.os }}-release-cargo-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-release-cargo-
+
+      - name: Install Node dependencies
+        run: npm ci
+
+      - name: Set release version
+        run: |
+          export VERSION="${GITHUB_REF_NAME#v}"
+          if [[ ! "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Release tag must be semver like v0.1.0; got ${GITHUB_REF_NAME}" >&2
+            exit 1
+          fi
+
+          node --input-type=module <<'NODE'
+          import fs from "node:fs";
+
+          const version = process.env.VERSION;
+          const packageJson = JSON.parse(fs.readFileSync("package.json", "utf8"));
+          packageJson.version = version;
+          fs.writeFileSync("package.json", `${JSON.stringify(packageJson, null, 2)}\n`);
+
+          const tauriConfig = JSON.parse(fs.readFileSync("src-tauri/tauri.conf.json", "utf8"));
+          tauriConfig.version = version;
+          fs.writeFileSync("src-tauri/tauri.conf.json", `${JSON.stringify(tauriConfig, null, 2)}\n`);
+
+          const cargoPath = "src-tauri/Cargo.toml";
+          const cargoToml = fs.readFileSync(cargoPath, "utf8");
+          fs.writeFileSync(
+            cargoPath,
+            cargoToml.replace(
+              /^version = "[^"]+"/m,
+              `version = "${version}"`,
+            ),
+          );
+          NODE
+
+      - name: Import signing certificate
+        env:
+          CERTIFICATE_BASE64: ${{ secrets.DEVELOPER_ID_CERTIFICATE }}
+          CERTIFICATE_PASSWORD: ${{ secrets.DEVELOPER_ID_PASSWORD }}
+        run: |
+          test -n "${CERTIFICATE_BASE64}" || { echo "DEVELOPER_ID_CERTIFICATE is not set in the prod environment." >&2; exit 1; }
+          test -n "${CERTIFICATE_PASSWORD}" || { echo "DEVELOPER_ID_PASSWORD is not set in the prod environment." >&2; exit 1; }
+
+          echo "${CERTIFICATE_BASE64}" | base64 --decode > certificate.p12
+          KEYCHAIN_PATH="${RUNNER_TEMP}/signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(openssl rand -hex 16)"
+          security create-keychain -p "${KEYCHAIN_PASSWORD}" "${KEYCHAIN_PATH}"
+          security default-keychain -s "${KEYCHAIN_PATH}"
+          security unlock-keychain -p "${KEYCHAIN_PASSWORD}" "${KEYCHAIN_PATH}"
+          security import certificate.p12 \
+            -k "${KEYCHAIN_PATH}" \
+            -P "${CERTIFICATE_PASSWORD}" \
+            -T /usr/bin/codesign
+          security set-key-partition-list \
+            -S apple-tool:,apple:,codesign: \
+            -s -k "${KEYCHAIN_PASSWORD}" \
+            "${KEYCHAIN_PATH}"
+          security find-identity -v -p codesigning "${KEYCHAIN_PATH}"
+          rm certificate.p12
+
+      - name: Build signed app bundle
+        env:
+          APPLE_SIGNING_IDENTITY: "Developer ID Application: Gordon Beeming (89DBN36T4T)"
+        run: npm run tauri -- build --bundles app
+
+      - name: Sign application
+        run: |
+          APP_BUNDLE="src-tauri/target/release/bundle/macos/ide.app"
+          codesign --deep --force \
+            --options runtime \
+            --timestamp \
+            --sign "Developer ID Application: Gordon Beeming (89DBN36T4T)" \
+            "${APP_BUNDLE}"
+          codesign --verify --deep --strict --verbose=2 "${APP_BUNDLE}"
+
+      - name: Notarize application
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: |
+          test -n "${APPLE_ID}" || { echo "APPLE_ID is not set in the prod environment." >&2; exit 1; }
+          test -n "${APPLE_TEAM_ID}" || { echo "APPLE_TEAM_ID is not set in the prod environment." >&2; exit 1; }
+          test -n "${APPLE_APP_PASSWORD}" || { echo "APPLE_APP_PASSWORD is not set in the prod environment." >&2; exit 1; }
+
+          APP_BUNDLE="src-tauri/target/release/bundle/macos/ide.app"
+          NOTARY_ZIP="${RUNNER_TEMP}/ide-notarize.zip"
+          ditto -c -k --keepParent "${APP_BUNDLE}" "${NOTARY_ZIP}"
+          xcrun notarytool submit "${NOTARY_ZIP}" \
+            --apple-id "${APPLE_ID}" \
+            --team-id "${APPLE_TEAM_ID}" \
+            --password "${APPLE_APP_PASSWORD}" \
+            --wait
+
+      - name: Staple notarization ticket
+        run: xcrun stapler staple src-tauri/target/release/bundle/macos/ide.app
+
+      - name: Create DMG
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          mkdir -p dist/release
+          hdiutil create \
+            -volname "ide" \
+            -srcfolder src-tauri/target/release/bundle/macos/ide.app \
+            -ov \
+            -format UDZO \
+            "dist/release/ide-${VERSION}-aarch64.dmg"
+
+      - name: Upload release asset
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          gh release upload "${GITHUB_REF_NAME}" \
+            "dist/release/ide-${VERSION}-aarch64.dmg" \
+            --clobber
+
+      - name: Update Homebrew tap
+        env:
+          HOMEBREW_TAP_DEPLOY_KEY: ${{ secrets.HOMEBREW_TAP_DEPLOY_KEY }}
+        run: |
+          test -n "${HOMEBREW_TAP_DEPLOY_KEY}" || { echo "HOMEBREW_TAP_DEPLOY_KEY is not set in the prod environment." >&2; exit 1; }
+
+          VERSION="${GITHUB_REF_NAME#v}"
+          DMG_PATH="dist/release/ide-${VERSION}-aarch64.dmg"
+          DMG_SHA256="$(shasum -a 256 "${DMG_PATH}" | awk '{print $1}')"
+
+          mkdir -p ~/.ssh
+          echo "${HOMEBREW_TAP_DEPLOY_KEY}" > ~/.ssh/homebrew_tap_key
+          chmod 600 ~/.ssh/homebrew_tap_key
+          ssh-keyscan github.com >> ~/.ssh/known_hosts 2>/dev/null
+          export GIT_SSH_COMMAND="ssh -i ~/.ssh/homebrew_tap_key -o StrictHostKeyChecking=no"
+
+          git clone git@github.com:GordonBeeming/homebrew-tap.git /tmp/homebrew-tap
+
+          mkdir -p /tmp/homebrew-tap/Casks
+          cat > /tmp/homebrew-tap/Casks/ide.rb << CASK_EOF
+          cask "ide" do
+            version "${VERSION}"
+            sha256 "${DMG_SHA256}"
+
+            url "https://github.com/gordonbeeming/ide/releases/download/v#{version}/ide-#{version}-aarch64.dmg"
+            name "ide"
+            desc "Lean local IDE"
+            homepage "https://github.com/gordonbeeming/ide"
+
+            depends_on macos: ">= :sonoma"
+
+            app "ide.app"
+
+            zap trash: [
+              "~/Library/Application Support/com.gordonbeeming.ide",
+              "~/Library/Caches/com.gordonbeeming.ide",
+              "~/Library/Preferences/com.gordonbeeming.ide.plist",
+            ]
+          end
+          CASK_EOF
+          sed -i '' 's/^          //' /tmp/homebrew-tap/Casks/ide.rb
+
+          cd /tmp/homebrew-tap
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Casks/ide.rb
+          git commit -m "Update ide to ${VERSION}" || echo "No changes to commit"
+          git push
+
+          rm -f ~/.ssh/homebrew_tap_key

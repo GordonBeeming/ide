@@ -10,8 +10,6 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
-#[cfg(target_os = "macos")]
-use tauri::menu::AboutMetadata;
 use tauri::menu::{MenuBuilder, MenuItemBuilder, SubmenuBuilder};
 use tauri::{Emitter, Manager, State};
 use tauri_plugin_dialog::DialogExt;
@@ -104,6 +102,16 @@ struct SettingsLocations {
     settings_file: Option<String>,
     recents_file: Option<String>,
     workspace_index_file: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AppInfo {
+    name: String,
+    version: String,
+    description: String,
+    authors: Vec<String>,
+    repository: String,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -513,6 +521,21 @@ async fn get_initial_file(
         .read()
         .await
         .clone())
+}
+
+#[tauri::command]
+fn get_app_info() -> AppInfo {
+    AppInfo {
+        name: "ide".to_string(),
+        version: env!("CARGO_PKG_VERSION").to_string(),
+        description: env!("CARGO_PKG_DESCRIPTION").to_string(),
+        authors: env!("CARGO_PKG_AUTHORS")
+            .split(':')
+            .filter(|author| !author.trim().is_empty())
+            .map(|author| author.trim().to_string())
+            .collect(),
+        repository: "https://github.com/gordonbeeming/ide".to_string(),
+    }
 }
 
 #[tauri::command]
@@ -1581,6 +1604,11 @@ pub fn run() {
                 return;
             }
 
+            if id == "show_about" {
+                emit_to_active_window(app, "menu://show-about", ());
+                return;
+            }
+
             if id == "show_settings" {
                 emit_to_active_window(app, "menu://show-settings", ());
             }
@@ -1589,6 +1617,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_workspace_root,
             get_initial_file,
+            get_app_info,
             take_opened_launch_targets,
             list_files,
             list_directory,
@@ -1820,6 +1849,10 @@ fn rebuild_app_menu(app: &tauri::AppHandle, state: &AppState) -> Result<(), Comm
     let show_key_bindings = MenuItemBuilder::with_id("show_key_bindings", "Key Bindings...")
         .build(app)
         .map_err(|error| CommandError::Recent(error.to_string()))?;
+    #[cfg(target_os = "macos")]
+    let about = MenuItemBuilder::with_id("show_about", "About ide")
+        .build(app)
+        .map_err(|error| CommandError::Recent(error.to_string()))?;
     let settings = MenuItemBuilder::with_id("show_settings", "Settings...")
         .accelerator("CmdOrCtrl+,")
         .build(app)
@@ -1827,20 +1860,8 @@ fn rebuild_app_menu(app: &tauri::AppHandle, state: &AppState) -> Result<(), Comm
     #[cfg(target_os = "macos")]
     let app_menu = {
         let pkg_info = app.package_info();
-        let about_metadata = AboutMetadata {
-            name: Some(pkg_info.name.clone()),
-            version: Some(pkg_info.version.to_string()),
-            copyright: app.config().bundle.copyright.clone(),
-            authors: app
-                .config()
-                .bundle
-                .publisher
-                .clone()
-                .map(|publisher| vec![publisher]),
-            ..Default::default()
-        };
         SubmenuBuilder::new(app, pkg_info.name.clone())
-            .about(Some(about_metadata))
+            .item(&about)
             .separator()
             .item(&settings)
             .separator()
