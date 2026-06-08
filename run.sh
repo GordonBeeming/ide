@@ -1,7 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SOURCE="${BASH_SOURCE[0]}"
+while [ -L "$SOURCE" ]; do
+  SOURCE_DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
+  SOURCE="$(readlink "$SOURCE")"
+  [[ "$SOURCE" != /* ]] && SOURCE="$SOURCE_DIR/$SOURCE"
+done
+ROOT_DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
 cd "$ROOT_DIR"
 
 export PATH="$HOME/.local/bin:$HOME/Library/pnpm:$HOME/.cargo/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:${PATH:-}"
@@ -42,7 +48,7 @@ handoff_to_running_app() {
     -X POST \
     --data "{\"path\":\"$escaped_target\"}" \
     "$api_base/api/open-path" >/dev/null; then
-    echo "Handed target to running Ide: $target"
+    echo "Handed target to running ide: $target"
     return 0
   fi
 
@@ -55,7 +61,7 @@ running_app_reachable() {
 
 activate_running_app() {
   if command -v osascript >/dev/null 2>&1; then
-    osascript -e 'tell application "Ide" to activate' >/dev/null 2>&1 || true
+    osascript -e 'tell application "ide" to activate' >/dev/null 2>&1 || true
   fi
 }
 
@@ -65,7 +71,7 @@ fi
 
 if [ -z "$OPEN_PATH" ] && running_app_reachable; then
   activate_running_app
-  echo "Ide is already running; not starting a duplicate dev instance."
+  echo "ide is already running; not starting a duplicate dev instance."
   exit 0
 fi
 
@@ -96,7 +102,7 @@ ensure_dev_port_available() {
     command="$(ps -p "$pid" -o command= 2>/dev/null || true)"
     cwd="$(lsof -a -p "$pid" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p' || true)"
     if [ "$cwd" = "$ROOT_DIR" ] && [[ "$command" == *"/node_modules/.bin/vite"* ]]; then
-      echo "Stopping stale Ide dev server on port $port (pid $pid)."
+      echo "Stopping stale ide dev server on port $port (pid $pid)."
       kill "$pid"
     else
       echo "Port $port is already in use by another process:" >&2
@@ -114,7 +120,7 @@ ensure_dev_port_available() {
     sleep 0.25
   done
 
-  echo "Port $port is still in use after stopping the stale Ide dev server." >&2
+  echo "Port $port is still in use after stopping the stale ide dev server." >&2
   exit 1
 }
 

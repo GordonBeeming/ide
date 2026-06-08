@@ -4,7 +4,7 @@ use std::sync::{Arc, RwLock};
 use rusqlite::{params, Connection};
 use serde::Serialize;
 
-use crate::workspace::FileEntry;
+use crate::workspace::{workspace_directory_entries, FileEntry, WorkspaceError};
 
 #[derive(Clone, Default)]
 pub struct WorkspaceIndex {
@@ -21,6 +21,14 @@ pub enum WorkspaceIndexError {
     Io(#[from] std::io::Error),
     #[error("workspace index database error: {0}")]
     Database(#[from] rusqlite::Error),
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum WorkspaceIndexAdvanceError {
+    #[error(transparent)]
+    Index(#[from] WorkspaceIndexError),
+    #[error(transparent)]
+    Workspace(#[from] WorkspaceError),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -62,6 +70,7 @@ impl WorkspaceIndex {
             .clone())
     }
 
+    #[cfg(test)]
     pub fn replace_root_entries(
         &self,
         root: &Path,
@@ -76,6 +85,35 @@ impl WorkspaceIndex {
             [&root_key],
         )?;
         insert_entries(&transaction, &root_key, entries)?;
+        transaction.commit()?;
+        Ok(())
+    }
+
+    pub fn reconcile_scanned_entries(
+        &self,
+        root: &Path,
+        entries: &[FileEntry],
+        complete: bool,
+    ) -> Result<(), WorkspaceIndexError> {
+        let root_key = root_key(root);
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction()?;
+        if complete {
+            transaction.execute("DELETE FROM workspace_entries WHERE root = ?1", [&root_key])?;
+            transaction.execute(
+                "DELETE FROM workspace_indexed_directories WHERE root = ?1",
+                [&root_key],
+            )?;
+        }
+
+        insert_entries(&transaction, &root_key, entries)?;
+        mark_directory_indexed(&transaction, &root_key, "")?;
+        if complete {
+            for entry in entries.iter().filter(|entry| entry.is_dir) {
+                mark_directory_indexed(&transaction, &root_key, &entry.path)?;
+            }
+        }
+
         transaction.commit()?;
         Ok(())
     }
@@ -320,6 +358,51 @@ impl WorkspaceIndex {
             .ok_or(WorkspaceIndexError::NotInitialized)?;
         open_database(&path)
     }
+}
+
+pub fn advance_workspace_index(
+    index: &WorkspaceIndex,
+    root: &Path,
+    entry_budget: usize,
+    show_dotfiles: bool,
+    show_generated_internal: bool,
+) -> Result<WorkspaceIndexStats, WorkspaceIndexAdvanceError> {
+    let mut remaining_entries = entry_budget.max(1);
+
+    while remaining_entries > 0 {
+        let Some(directory) = index
+            .next_unindexed_directories(root, 1)?
+            .into_iter()
+            .next()
+        else {
+            break;
+        };
+
+        let entries = match workspace_directory_entries(
+            root,
+            &directory,
+            show_dotfiles,
+            show_generated_internal,
+        ) {
+            Ok(entries) => entries,
+            Err(error) if !directory.is_empty() && stale_indexed_directory_error(&error) => {
+                index.remove_path(root, &directory)?;
+                remaining_entries = remaining_entries.saturating_sub(1);
+                continue;
+            }
+            Err(error) => return Err(error.into()),
+        };
+
+        remaining_entries = remaining_entries.saturating_sub(entries.len().max(1));
+        index.replace_directory_entries(root, &directory, &entries)?;
+    }
+
+    Ok(index.stats_for_root(root)?)
+}
+
+fn stale_indexed_directory_error(error: &WorkspaceError) -> bool {
+    matches!(error, WorkspaceError::NotADirectory)
+        || matches!(error, WorkspaceError::Io(io_error) if io_error.kind() == std::io::ErrorKind::NotFound)
 }
 
 fn count_rows(
@@ -607,6 +690,100 @@ mod tests {
             index.next_unindexed_directories(dir.path(), 1).unwrap(),
             vec![""]
         );
+    }
+
+    #[test]
+    fn truncated_scan_reconcile_preserves_existing_deeper_index() {
+        let dir = tempdir().unwrap();
+        let index = WorkspaceIndex::new();
+        index
+            .set_database_path(dir.path().join("workspace-index.sqlite"))
+            .unwrap();
+
+        index
+            .replace_directory_entries(dir.path(), "", &[entry("src", None, true)])
+            .unwrap();
+        index
+            .replace_directory_entries(
+                dir.path(),
+                "src",
+                &[entry("src/lib.rs", Some("src"), false)],
+            )
+            .unwrap();
+
+        index
+            .reconcile_scanned_entries(
+                dir.path(),
+                &[
+                    entry("src", None, true),
+                    entry("README.md", None, false),
+                    entry("target", None, true),
+                ],
+                false,
+            )
+            .unwrap();
+
+        let paths = index
+            .entries_for_root(dir.path())
+            .unwrap()
+            .into_iter()
+            .map(|entry| entry.path)
+            .collect::<Vec<_>>();
+
+        assert_eq!(paths, vec!["README.md", "src", "src/lib.rs", "target"]);
+        assert_eq!(
+            index.next_unindexed_directories(dir.path(), 5).unwrap(),
+            vec!["target"]
+        );
+    }
+
+    #[test]
+    fn complete_scan_reconcile_removes_stale_rows_and_marks_directories_loaded() {
+        let dir = tempdir().unwrap();
+        let index = WorkspaceIndex::new();
+        index
+            .set_database_path(dir.path().join("workspace-index.sqlite"))
+            .unwrap();
+
+        index
+            .replace_directory_entries(
+                dir.path(),
+                "",
+                &[entry("src", None, true), entry("old.txt", None, false)],
+            )
+            .unwrap();
+        index
+            .replace_directory_entries(
+                dir.path(),
+                "src",
+                &[entry("src/old.rs", Some("src"), false)],
+            )
+            .unwrap();
+
+        index
+            .reconcile_scanned_entries(
+                dir.path(),
+                &[
+                    entry("src", None, true),
+                    entry("src/lib.rs", Some("src"), false),
+                    entry("README.md", None, false),
+                ],
+                true,
+            )
+            .unwrap();
+
+        let paths = index
+            .entries_for_root(dir.path())
+            .unwrap()
+            .into_iter()
+            .map(|entry| entry.path)
+            .collect::<Vec<_>>();
+
+        assert_eq!(paths, vec!["README.md", "src", "src/lib.rs"]);
+        assert!(index
+            .next_unindexed_directories(dir.path(), 5)
+            .unwrap()
+            .is_empty());
     }
 
     #[test]

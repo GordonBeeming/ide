@@ -16,3 +16,9 @@ export async function destroyNativeWindow() {
   await getCurrentWindow().destroy();
   return true;
 }
+
+export async function setNativeWindowTitle(title: string) {
+  if (!isNativeTauriRuntime()) return false;
+  await getCurrentWindow().setTitle(title);
+  return true;
+}

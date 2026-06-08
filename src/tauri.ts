@@ -114,6 +114,8 @@ export interface PersistedViewSettings {
   currentFileSearchResultLimit?: number;
   currentFileResultPreviewLimit?: number;
   quickOpenResultLimit?: number;
+  backgroundIndexBatchEntries?: number;
+  workspaceTitleMaxChars?: number;
   commandPaletteResultLimit?: number;
 }
 
@@ -135,6 +137,13 @@ export interface SettingsLocations {
   workspaceIndexFile?: string;
 }
 
+export interface WorkspaceDisplayContext {
+  appTitle: string;
+  workspaceLabel: string;
+  fullLabel: string;
+  gitRoot?: string;
+}
+
 export interface WorkspaceIndexStats {
   indexedEntries: number;
   indexedFiles: number;
@@ -147,13 +156,15 @@ const defaultUiSnapshot: PersistedUiSnapshot = {
   view: {
     showDotfiles: false,
     showGeneratedInternal: false,
-    treeScanLimit: 4000,
+    treeScanLimit: 10000,
     maxOpenFileKb: 5120,
     workspaceSearchResultLimit: 200,
     workspaceSearchMaxFileKb: 1024,
     currentFileSearchResultLimit: 200,
     currentFileResultPreviewLimit: 12,
     quickOpenResultLimit: 12,
+    backgroundIndexBatchEntries: 2000,
+    workspaceTitleMaxChars: 50,
     commandPaletteResultLimit: 18,
   },
   workspace: {
@@ -205,6 +216,19 @@ export function getSettingsLocations() {
   return invoke<SettingsLocations>("get_settings_locations");
 }
 
+export function getWorkspaceDisplayContext(titleMaxChars?: number) {
+  const params = new URLSearchParams();
+  if (titleMaxChars !== undefined) params.set("titleMaxChars", String(titleMaxChars));
+  const path = params.toString()
+    ? `/api/workspace-display?${params.toString()}`
+    : "/api/workspace-display";
+  return callApi<WorkspaceDisplayContext>("get_workspace_display_context", path, {
+    invokeArgs: {
+      ...(titleMaxChars === undefined ? {} : { titleMaxChars }),
+    },
+  });
+}
+
 export function getWorkspaceIndexStats() {
   return callApi<unknown>("get_workspace_index_stats", "/api/workspace-index").then(
     (value) => {
@@ -215,6 +239,34 @@ export function getWorkspaceIndexStats() {
       return stats;
     },
   );
+}
+
+export function advanceWorkspaceIndex(
+  entryLimit?: number,
+  showDotfiles = false,
+  showGeneratedInternal = false,
+) {
+  const params = new URLSearchParams();
+  if (entryLimit !== undefined) params.set("entryLimit", String(entryLimit));
+  if (showDotfiles) params.set("showDotfiles", "true");
+  if (showGeneratedInternal) params.set("showGeneratedInternal", "true");
+  const path = params.toString()
+    ? `/api/workspace-index/advance?${params.toString()}`
+    : "/api/workspace-index/advance";
+  return callApi<unknown>("advance_workspace_index", path, {
+    method: "POST",
+    invokeArgs: {
+      ...(entryLimit === undefined ? {} : { entryLimit }),
+      showDotfiles,
+      showGeneratedInternal,
+    },
+  }).then((value) => {
+    const stats = normalizeWorkspaceIndexStats(value);
+    if (!stats) {
+      throw new Error("Workspace index advance response was not valid JSON");
+    }
+    return stats;
+  });
 }
 
 export function normalizeWorkspaceIndexStats(

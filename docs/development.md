@@ -19,9 +19,25 @@ Pass a file or folder path to open that target as the launch workspace:
 
 Folder targets become the workspace root. File targets open their parent folder as the workspace and then open the file as a persistent tab.
 
-When a file or folder target is supplied and an Ide instance is already reachable on the loopback API, `run.sh` authenticates with the per-run bearer token and hands the target to `/api/open-path` instead of starting another dev instance.
+When a file or folder target is supplied and an ide instance is already reachable on the loopback API, `run.sh` authenticates with the per-run bearer token and hands the target to `/api/open-path` instead of starting another dev instance.
 
-When no target is supplied and an Ide instance is already reachable, `run.sh` tries to activate the existing macOS app and exits without starting a duplicate dev process. This avoids the Vite port and Cargo build-lock failures that happen when two dev instances are started from the same checkout.
+When no target is supplied and an ide instance is already reachable, `run.sh` tries to activate the existing macOS app and exits without starting a duplicate dev process. This avoids the Vite port and Cargo build-lock failures that happen when two dev instances are started from the same checkout.
+
+Install shell commands:
+
+```bash
+./build.sh
+```
+
+The build script runs `npm run tauri -- build --bundles app`, then installs command launchers. It builds the macOS `.app` bundle only and skips DMG creation because the local CLI command does not need an installer image. If `/Applications` is writable, it replaces `/Applications/ide.app`; otherwise run the interactive developer installer:
+
+```bash
+./dev-install.sh
+```
+
+`dev-install.sh` runs the build, prompts for the `/Applications/ide.app` replacement when admin permission is needed, refreshes Spotlight/Launch Services metadata where possible, and reveals the installed app in Finder. macOS caches app icons, so quit/reopen ide and give Spotlight a moment if the previous icon is still visible.
+
+The installer writes `ide` as a small macOS `open` launcher for the packaged app bundle and links `ide-dev` to `run.sh`. Use `ide .` when the packaged app should open a new instance for a target without holding the terminal; use bare `ide` to focus a running app or open the last context; and use `ide-dev .` when the repository dev runner should manage Node dependencies, Vite, stale dev ports, and running-app handoff behavior. Set `IDE_CLI_APP_BUNDLE_PATH=/path/to/ide.app` when installing if the command should target a different packaged bundle.
 
 Install the macOS Finder Quick Action:
 
@@ -29,7 +45,7 @@ Install the macOS Finder Quick Action:
 ./scripts/install-macos-finder-quick-action.sh
 ```
 
-The service appears under Finder's Quick Actions menu as `Open in Ide`. It hands the selected file or folder to an already-running app through the loopback open-path endpoint when possible, otherwise it starts the local dev app in the background. Launcher logs are written to `~/Library/Logs/Ide/finder-open.log`.
+The service appears under Finder's Quick Actions menu as `Open in ide`. It hands the selected file or folder to an already-running app through the loopback open-path endpoint when possible, otherwise it starts the local dev app in the background. Launcher logs are written to `~/Library/Logs/ide/finder-open.log`.
 
 `npm run finder:check` validates the generated Quick Action and runner in a temporary directory. It verifies that the service registers for files and folders, emits a valid plist/workflow, and hands targets to `/api/open-path` with the local bearer token before `run-tests.sh` moves on to browser smoke tests.
 

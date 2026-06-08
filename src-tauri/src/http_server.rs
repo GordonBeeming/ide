@@ -22,7 +22,7 @@ use crate::workspace::{
     workspace_directory_entries, workspace_entry, workspace_file_entry, write_workspace_file,
     FileEntry, WorkspaceScan, WorkspaceSearch,
 };
-use crate::workspace_index::WorkspaceIndex;
+use crate::workspace_index::{advance_workspace_index, WorkspaceIndex, WorkspaceIndexAdvanceError};
 use crate::AgentContext;
 
 #[derive(Clone)]
@@ -33,6 +33,7 @@ pub struct HttpServerState {
     workspace_search_result_limit: Arc<std::sync::RwLock<usize>>,
     workspace_search_max_file_bytes: Arc<std::sync::RwLock<u64>>,
     quick_open_result_limit: Arc<std::sync::RwLock<usize>>,
+    background_index_batch_entries: Arc<std::sync::RwLock<usize>>,
     workspace_index: WorkspaceIndex,
     agent_context: Arc<RwLock<AgentContext>>,
     lsp_manager: LspManager,
@@ -47,6 +48,7 @@ pub struct HttpServerConfig {
     pub workspace_search_result_limit: Arc<std::sync::RwLock<usize>>,
     pub workspace_search_max_file_bytes: Arc<std::sync::RwLock<u64>>,
     pub quick_open_result_limit: Arc<std::sync::RwLock<usize>>,
+    pub background_index_batch_entries: Arc<std::sync::RwLock<usize>>,
     pub workspace_index: WorkspaceIndex,
     pub agent_context: Arc<RwLock<AgentContext>>,
     pub lsp_manager: LspManager,
@@ -90,9 +92,23 @@ struct FilesQuery {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct WorkspaceDisplayQuery {
+    title_max_chars: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct IndexedFilesQuery {
     query: Option<String>,
     limit: Option<usize>,
+    show_dotfiles: Option<bool>,
+    show_generated_internal: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AdvanceWorkspaceIndexQuery {
+    entry_limit: Option<usize>,
     show_dotfiles: Option<bool>,
     show_generated_internal: Option<bool>,
 }
@@ -157,6 +173,7 @@ pub async fn start_http_server(config: HttpServerConfig) -> Result<HttpServerInf
         workspace_search_result_limit,
         workspace_search_max_file_bytes,
         quick_open_result_limit,
+        background_index_batch_entries,
         workspace_index,
         agent_context,
         lsp_manager,
@@ -172,6 +189,7 @@ pub async fn start_http_server(config: HttpServerConfig) -> Result<HttpServerInf
         workspace_search_result_limit,
         workspace_search_max_file_bytes,
         quick_open_result_limit,
+        background_index_batch_entries,
         workspace_index,
         agent_context,
         lsp_manager,
@@ -182,9 +200,14 @@ pub async fn start_http_server(config: HttpServerConfig) -> Result<HttpServerInf
     let open_path_token = mcp_token.clone();
     let app = Router::new()
         .route("/api/workspace-root", get(workspace_root))
+        .route("/api/workspace-display", get(workspace_display))
         .route("/api/files", get(files))
         .route("/api/file-search", get(indexed_files))
         .route("/api/workspace-index", get(workspace_index_stats))
+        .route(
+            "/api/workspace-index/advance",
+            post(advance_workspace_index_route).options(cors_preflight),
+        )
         .route("/api/directory", get(directory))
         .route("/api/search", get(search))
         .route(
@@ -325,6 +348,17 @@ async fn workspace_root(State(state): State<HttpServerState>) -> Json<String> {
     )
 }
 
+async fn workspace_display(
+    State(state): State<HttpServerState>,
+    Query(query): Query<WorkspaceDisplayQuery>,
+) -> Json<crate::WorkspaceDisplayContext> {
+    let workspace_root = state.workspace_root.read().await.clone();
+    Json(crate::workspace_display_context(
+        &workspace_root,
+        query.title_max_chars.unwrap_or(50).clamp(20, 120),
+    ))
+}
+
 async fn files(
     State(state): State<HttpServerState>,
     Query(query): Query<FilesQuery>,
@@ -337,7 +371,7 @@ async fn files(
                 .tree_scan_limit
                 .read()
                 .map(|limit| *limit)
-                .unwrap_or(4_000)
+                .unwrap_or(10_000)
         })
         .clamp(500, 100_000);
     let scan = scan_workspace_with_metadata(
@@ -346,9 +380,11 @@ async fn files(
         query.show_dotfiles.unwrap_or(false),
         query.show_generated_internal.unwrap_or(false),
     )?;
-    state
-        .workspace_index
-        .replace_root_entries(&workspace_root, &scan.entries)?;
+    state.workspace_index.reconcile_scanned_entries(
+        &workspace_root,
+        &scan.entries,
+        !scan.truncated,
+    )?;
     Ok(Json(scan))
 }
 
@@ -371,7 +407,7 @@ async fn indexed_files(
         .tree_scan_limit
         .read()
         .map(|limit| *limit)
-        .unwrap_or(4_000)
+        .unwrap_or(10_000)
         .clamp(500, 100_000);
     Ok(Json(search_indexed_files_with_expansion(
         &state.workspace_index,
@@ -389,6 +425,30 @@ async fn workspace_index_stats(
 ) -> Result<Json<crate::workspace_index::WorkspaceIndexStats>, ApiError> {
     let workspace_root = state.workspace_root.read().await.clone();
     Ok(Json(state.workspace_index.stats_for_root(&workspace_root)?))
+}
+
+async fn advance_workspace_index_route(
+    State(state): State<HttpServerState>,
+    Query(query): Query<AdvanceWorkspaceIndexQuery>,
+) -> Result<Json<crate::workspace_index::WorkspaceIndexStats>, ApiError> {
+    let workspace_root = state.workspace_root.read().await.clone();
+    let entry_limit = query
+        .entry_limit
+        .unwrap_or_else(|| {
+            state
+                .background_index_batch_entries
+                .read()
+                .map(|limit| *limit)
+                .unwrap_or(2_000)
+        })
+        .clamp(100, 20_000);
+    Ok(Json(advance_workspace_index(
+        &state.workspace_index,
+        &workspace_root,
+        entry_limit,
+        query.show_dotfiles.unwrap_or(false),
+        query.show_generated_internal.unwrap_or(false),
+    )?))
 }
 
 fn search_indexed_files_with_expansion(
@@ -721,7 +781,7 @@ async fn handle_mcp_request(state: &HttpServerState, request: JsonRpcMessage, id
             json!({
                 "protocolVersion": "2025-06-18",
                 "capabilities": { "tools": {} },
-                "serverInfo": { "name": "Ide", "version": env!("CARGO_PKG_VERSION") }
+                "serverInfo": { "name": "ide", "version": env!("CARGO_PKG_VERSION") }
             }),
         ),
         Some("ping") => mcp_success_response(id, json!({})),
@@ -966,7 +1026,7 @@ async fn serve_static_path(frontend_dist: &Path, requested: &str) -> Response {
             ([(header::CONTENT_TYPE, content_type)], bytes).into_response()
         }
         Err(error) if error.kind() == io::ErrorKind::NotFound => Html(
-            "<!doctype html><title>Ide</title><p>Build the web assets with <code>npm run build</code>, then reload.</p>",
+            "<!doctype html><title>ide</title><p>Build the web assets with <code>npm run build</code>, then reload.</p>",
         )
         .into_response(),
         Err(error) => (
@@ -1128,6 +1188,15 @@ impl From<crate::workspace_index::WorkspaceIndexError> for ApiError {
     }
 }
 
+impl From<WorkspaceIndexAdvanceError> for ApiError {
+    fn from(value: WorkspaceIndexAdvanceError) -> Self {
+        match value {
+            WorkspaceIndexAdvanceError::Index(error) => ApiError::from(error),
+            WorkspaceIndexAdvanceError::Workspace(error) => ApiError::from(error),
+        }
+    }
+}
+
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         (self.status, self.message).into_response()
@@ -1279,11 +1348,12 @@ mod tests {
         std::fs::write(&file_path, "before").unwrap();
         let state = HttpServerState {
             workspace_root: Arc::new(RwLock::new(dir.path().to_path_buf())),
-            tree_scan_limit: Arc::new(std::sync::RwLock::new(4_000)),
+            tree_scan_limit: Arc::new(std::sync::RwLock::new(10_000)),
             max_open_file_bytes: Arc::new(std::sync::RwLock::new(5_120 * 1024)),
             workspace_search_result_limit: Arc::new(std::sync::RwLock::new(200)),
             workspace_search_max_file_bytes: Arc::new(std::sync::RwLock::new(1_024 * 1_024)),
             quick_open_result_limit: Arc::new(std::sync::RwLock::new(12)),
+            background_index_batch_entries: Arc::new(std::sync::RwLock::new(2_000)),
             workspace_index: test_workspace_index(dir.path()),
             agent_context: Arc::new(RwLock::new(AgentContext::default())),
             lsp_manager: LspManager::new(),
@@ -1308,17 +1378,60 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn advance_workspace_index_indexes_pending_directories_in_batches() {
+        let dir = tempdir().unwrap();
+        std::fs::create_dir(dir.path().join("src")).unwrap();
+        std::fs::write(dir.path().join("src").join("main.rs"), "fn main() {}").unwrap();
+        let index = test_workspace_index(dir.path());
+        index
+            .replace_root_entries(dir.path(), &[test_file_entry("src", None, true)])
+            .unwrap();
+        index
+            .replace_directory_entries(dir.path(), "", &[test_file_entry("src", None, true)])
+            .unwrap();
+        let state = HttpServerState {
+            workspace_root: Arc::new(RwLock::new(dir.path().to_path_buf())),
+            tree_scan_limit: Arc::new(std::sync::RwLock::new(10_000)),
+            max_open_file_bytes: Arc::new(std::sync::RwLock::new(5_120 * 1024)),
+            workspace_search_result_limit: Arc::new(std::sync::RwLock::new(200)),
+            workspace_search_max_file_bytes: Arc::new(std::sync::RwLock::new(1_024 * 1_024)),
+            quick_open_result_limit: Arc::new(std::sync::RwLock::new(12)),
+            background_index_batch_entries: Arc::new(std::sync::RwLock::new(2_000)),
+            workspace_index: index,
+            agent_context: Arc::new(RwLock::new(AgentContext::default())),
+            lsp_manager: LspManager::new(),
+            frontend_dist: dir.path().to_path_buf(),
+            mcp_token: "token".to_string(),
+        };
+
+        let Json(stats) = advance_workspace_index_route(
+            State(state),
+            Query(AdvanceWorkspaceIndexQuery {
+                entry_limit: Some(100),
+                show_dotfiles: Some(false),
+                show_generated_internal: Some(false),
+            }),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(stats.pending_folders, 0);
+        assert_eq!(stats.indexed_files, 1);
+    }
+
+    #[tokio::test]
     async fn write_file_accepts_matching_bearer_token() {
         let dir = tempdir().unwrap();
         let file_path = dir.path().join("note.txt");
         std::fs::write(&file_path, "before").unwrap();
         let state = HttpServerState {
             workspace_root: Arc::new(RwLock::new(dir.path().to_path_buf())),
-            tree_scan_limit: Arc::new(std::sync::RwLock::new(4_000)),
+            tree_scan_limit: Arc::new(std::sync::RwLock::new(10_000)),
             max_open_file_bytes: Arc::new(std::sync::RwLock::new(5_120 * 1024)),
             workspace_search_result_limit: Arc::new(std::sync::RwLock::new(200)),
             workspace_search_max_file_bytes: Arc::new(std::sync::RwLock::new(1_024 * 1_024)),
             quick_open_result_limit: Arc::new(std::sync::RwLock::new(12)),
+            background_index_batch_entries: Arc::new(std::sync::RwLock::new(2_000)),
             workspace_index: test_workspace_index(dir.path()),
             agent_context: Arc::new(RwLock::new(AgentContext::default())),
             lsp_manager: LspManager::new(),
@@ -1353,11 +1466,12 @@ mod tests {
         std::fs::write(&file_path, "before").unwrap();
         let state = HttpServerState {
             workspace_root: Arc::new(RwLock::new(dir.path().to_path_buf())),
-            tree_scan_limit: Arc::new(std::sync::RwLock::new(4_000)),
+            tree_scan_limit: Arc::new(std::sync::RwLock::new(10_000)),
             max_open_file_bytes: Arc::new(std::sync::RwLock::new(5_120 * 1024)),
             workspace_search_result_limit: Arc::new(std::sync::RwLock::new(200)),
             workspace_search_max_file_bytes: Arc::new(std::sync::RwLock::new(1_024 * 1_024)),
             quick_open_result_limit: Arc::new(std::sync::RwLock::new(12)),
+            background_index_batch_entries: Arc::new(std::sync::RwLock::new(2_000)),
             workspace_index: test_workspace_index(dir.path()),
             agent_context: Arc::new(RwLock::new(AgentContext::default())),
             lsp_manager: LspManager::new(),
@@ -1392,11 +1506,12 @@ mod tests {
         let file_path = dir.path().join("note.txt");
         let state = HttpServerState {
             workspace_root: Arc::new(RwLock::new(dir.path().to_path_buf())),
-            tree_scan_limit: Arc::new(std::sync::RwLock::new(4_000)),
+            tree_scan_limit: Arc::new(std::sync::RwLock::new(10_000)),
             max_open_file_bytes: Arc::new(std::sync::RwLock::new(5_120 * 1024)),
             workspace_search_result_limit: Arc::new(std::sync::RwLock::new(200)),
             workspace_search_max_file_bytes: Arc::new(std::sync::RwLock::new(1_024 * 1_024)),
             quick_open_result_limit: Arc::new(std::sync::RwLock::new(12)),
+            background_index_batch_entries: Arc::new(std::sync::RwLock::new(2_000)),
             workspace_index: test_workspace_index(dir.path()),
             agent_context: Arc::new(RwLock::new(AgentContext::default())),
             lsp_manager: LspManager::new(),
@@ -1426,11 +1541,12 @@ mod tests {
         let file_path = dir.path().join("note.txt");
         let state = HttpServerState {
             workspace_root: Arc::new(RwLock::new(dir.path().to_path_buf())),
-            tree_scan_limit: Arc::new(std::sync::RwLock::new(4_000)),
+            tree_scan_limit: Arc::new(std::sync::RwLock::new(10_000)),
             max_open_file_bytes: Arc::new(std::sync::RwLock::new(5_120 * 1024)),
             workspace_search_result_limit: Arc::new(std::sync::RwLock::new(200)),
             workspace_search_max_file_bytes: Arc::new(std::sync::RwLock::new(1_024 * 1_024)),
             quick_open_result_limit: Arc::new(std::sync::RwLock::new(12)),
+            background_index_batch_entries: Arc::new(std::sync::RwLock::new(2_000)),
             workspace_index: test_workspace_index(dir.path()),
             agent_context: Arc::new(RwLock::new(AgentContext::default())),
             lsp_manager: LspManager::new(),
@@ -1464,11 +1580,12 @@ mod tests {
         let folder_path = dir.path().join("src");
         let state = HttpServerState {
             workspace_root: Arc::new(RwLock::new(dir.path().to_path_buf())),
-            tree_scan_limit: Arc::new(std::sync::RwLock::new(4_000)),
+            tree_scan_limit: Arc::new(std::sync::RwLock::new(10_000)),
             max_open_file_bytes: Arc::new(std::sync::RwLock::new(5_120 * 1024)),
             workspace_search_result_limit: Arc::new(std::sync::RwLock::new(200)),
             workspace_search_max_file_bytes: Arc::new(std::sync::RwLock::new(1_024 * 1_024)),
             quick_open_result_limit: Arc::new(std::sync::RwLock::new(12)),
+            background_index_batch_entries: Arc::new(std::sync::RwLock::new(2_000)),
             workspace_index: test_workspace_index(dir.path()),
             agent_context: Arc::new(RwLock::new(AgentContext::default())),
             lsp_manager: LspManager::new(),
@@ -1496,11 +1613,12 @@ mod tests {
         let folder_path = dir.path().join("src");
         let state = HttpServerState {
             workspace_root: Arc::new(RwLock::new(dir.path().to_path_buf())),
-            tree_scan_limit: Arc::new(std::sync::RwLock::new(4_000)),
+            tree_scan_limit: Arc::new(std::sync::RwLock::new(10_000)),
             max_open_file_bytes: Arc::new(std::sync::RwLock::new(5_120 * 1024)),
             workspace_search_result_limit: Arc::new(std::sync::RwLock::new(200)),
             workspace_search_max_file_bytes: Arc::new(std::sync::RwLock::new(1_024 * 1_024)),
             quick_open_result_limit: Arc::new(std::sync::RwLock::new(12)),
+            background_index_batch_entries: Arc::new(std::sync::RwLock::new(2_000)),
             workspace_index: test_workspace_index(dir.path()),
             agent_context: Arc::new(RwLock::new(AgentContext::default())),
             lsp_manager: LspManager::new(),
@@ -1534,11 +1652,12 @@ mod tests {
         std::fs::write(&from_path, "before").unwrap();
         let state = HttpServerState {
             workspace_root: Arc::new(RwLock::new(dir.path().to_path_buf())),
-            tree_scan_limit: Arc::new(std::sync::RwLock::new(4_000)),
+            tree_scan_limit: Arc::new(std::sync::RwLock::new(10_000)),
             max_open_file_bytes: Arc::new(std::sync::RwLock::new(5_120 * 1024)),
             workspace_search_result_limit: Arc::new(std::sync::RwLock::new(200)),
             workspace_search_max_file_bytes: Arc::new(std::sync::RwLock::new(1_024 * 1_024)),
             quick_open_result_limit: Arc::new(std::sync::RwLock::new(12)),
+            background_index_batch_entries: Arc::new(std::sync::RwLock::new(2_000)),
             workspace_index: test_workspace_index(dir.path()),
             agent_context: Arc::new(RwLock::new(AgentContext::default())),
             lsp_manager: LspManager::new(),
@@ -1570,11 +1689,12 @@ mod tests {
         std::fs::write(&from_path, "before").unwrap();
         let state = HttpServerState {
             workspace_root: Arc::new(RwLock::new(dir.path().to_path_buf())),
-            tree_scan_limit: Arc::new(std::sync::RwLock::new(4_000)),
+            tree_scan_limit: Arc::new(std::sync::RwLock::new(10_000)),
             max_open_file_bytes: Arc::new(std::sync::RwLock::new(5_120 * 1024)),
             workspace_search_result_limit: Arc::new(std::sync::RwLock::new(200)),
             workspace_search_max_file_bytes: Arc::new(std::sync::RwLock::new(1_024 * 1_024)),
             quick_open_result_limit: Arc::new(std::sync::RwLock::new(12)),
+            background_index_batch_entries: Arc::new(std::sync::RwLock::new(2_000)),
             workspace_index: test_workspace_index(dir.path()),
             agent_context: Arc::new(RwLock::new(AgentContext::default())),
             lsp_manager: LspManager::new(),
@@ -1609,11 +1729,12 @@ mod tests {
         std::fs::write(&file_path, "before").unwrap();
         let state = HttpServerState {
             workspace_root: Arc::new(RwLock::new(dir.path().to_path_buf())),
-            tree_scan_limit: Arc::new(std::sync::RwLock::new(4_000)),
+            tree_scan_limit: Arc::new(std::sync::RwLock::new(10_000)),
             max_open_file_bytes: Arc::new(std::sync::RwLock::new(5_120 * 1024)),
             workspace_search_result_limit: Arc::new(std::sync::RwLock::new(200)),
             workspace_search_max_file_bytes: Arc::new(std::sync::RwLock::new(1_024 * 1_024)),
             quick_open_result_limit: Arc::new(std::sync::RwLock::new(12)),
+            background_index_batch_entries: Arc::new(std::sync::RwLock::new(2_000)),
             workspace_index: test_workspace_index(dir.path()),
             agent_context: Arc::new(RwLock::new(AgentContext::default())),
             lsp_manager: LspManager::new(),
@@ -1642,11 +1763,12 @@ mod tests {
         std::fs::write(&file_path, "before").unwrap();
         let state = HttpServerState {
             workspace_root: Arc::new(RwLock::new(dir.path().to_path_buf())),
-            tree_scan_limit: Arc::new(std::sync::RwLock::new(4_000)),
+            tree_scan_limit: Arc::new(std::sync::RwLock::new(10_000)),
             max_open_file_bytes: Arc::new(std::sync::RwLock::new(5_120 * 1024)),
             workspace_search_result_limit: Arc::new(std::sync::RwLock::new(200)),
             workspace_search_max_file_bytes: Arc::new(std::sync::RwLock::new(1_024 * 1_024)),
             quick_open_result_limit: Arc::new(std::sync::RwLock::new(12)),
+            background_index_batch_entries: Arc::new(std::sync::RwLock::new(2_000)),
             workspace_index: test_workspace_index(dir.path()),
             agent_context: Arc::new(RwLock::new(AgentContext::default())),
             lsp_manager: LspManager::new(),
@@ -1677,11 +1799,12 @@ mod tests {
         let dir = tempdir().unwrap();
         let state = HttpServerState {
             workspace_root: Arc::new(RwLock::new(dir.path().to_path_buf())),
-            tree_scan_limit: Arc::new(std::sync::RwLock::new(4_000)),
+            tree_scan_limit: Arc::new(std::sync::RwLock::new(10_000)),
             max_open_file_bytes: Arc::new(std::sync::RwLock::new(5_120 * 1024)),
             workspace_search_result_limit: Arc::new(std::sync::RwLock::new(200)),
             workspace_search_max_file_bytes: Arc::new(std::sync::RwLock::new(1_024 * 1_024)),
             quick_open_result_limit: Arc::new(std::sync::RwLock::new(12)),
+            background_index_batch_entries: Arc::new(std::sync::RwLock::new(2_000)),
             workspace_index: test_workspace_index(dir.path()),
             agent_context: Arc::new(RwLock::new(AgentContext {
                 active_file: Some("before.rs".to_string()),
@@ -1757,11 +1880,12 @@ mod tests {
         let dir = tempdir().unwrap();
         let state = HttpServerState {
             workspace_root: Arc::new(RwLock::new(dir.path().to_path_buf())),
-            tree_scan_limit: Arc::new(std::sync::RwLock::new(4_000)),
+            tree_scan_limit: Arc::new(std::sync::RwLock::new(10_000)),
             max_open_file_bytes: Arc::new(std::sync::RwLock::new(5_120 * 1024)),
             workspace_search_result_limit: Arc::new(std::sync::RwLock::new(200)),
             workspace_search_max_file_bytes: Arc::new(std::sync::RwLock::new(1_024 * 1_024)),
             quick_open_result_limit: Arc::new(std::sync::RwLock::new(12)),
+            background_index_batch_entries: Arc::new(std::sync::RwLock::new(2_000)),
             workspace_index: test_workspace_index(dir.path()),
             agent_context: Arc::new(RwLock::new(AgentContext::default())),
             lsp_manager: LspManager::new(),
@@ -1793,11 +1917,12 @@ mod tests {
         let dir = tempdir().unwrap();
         let state = HttpServerState {
             workspace_root: Arc::new(RwLock::new(dir.path().to_path_buf())),
-            tree_scan_limit: Arc::new(std::sync::RwLock::new(4_000)),
+            tree_scan_limit: Arc::new(std::sync::RwLock::new(10_000)),
             max_open_file_bytes: Arc::new(std::sync::RwLock::new(5_120 * 1024)),
             workspace_search_result_limit: Arc::new(std::sync::RwLock::new(200)),
             workspace_search_max_file_bytes: Arc::new(std::sync::RwLock::new(1_024 * 1_024)),
             quick_open_result_limit: Arc::new(std::sync::RwLock::new(12)),
+            background_index_batch_entries: Arc::new(std::sync::RwLock::new(2_000)),
             workspace_index: test_workspace_index(dir.path()),
             agent_context: Arc::new(RwLock::new(AgentContext {
                 active_file: Some("src/main.rs".to_string()),
