@@ -1251,6 +1251,37 @@ describe("App shell interactions", () => {
     expect(screen.queryByText("Language Servers")).not.toBeInTheDocument();
   });
 
+  it("shows copy actions for integration endpoints and config values", async () => {
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    tauriMocks.getClaudeBridgeStatus.mockResolvedValueOnce({
+      endpoint: "ws://127.0.0.1:53126",
+      lockFile: "/Users/gordon/.claude/ide/ide.lock",
+    });
+    tauriMocks.getCodexMcpStatus.mockResolvedValueOnce({
+      endpoint: "http://127.0.0.1:1420/mcp",
+      bearerToken: "session-token",
+    });
+    render(<App />);
+
+    expect(await treeButton("README.md")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(eventMocks.listeners.has("menu://show-integrations")).toBe(true),
+    );
+
+    act(() => {
+      eventMocks.listeners.get("menu://show-integrations")?.({ payload: undefined });
+    });
+
+    expect(screen.getByRole("dialog", { name: "Integrations" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Copy browser endpoint" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Copy Claude bridge endpoint" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Copy Codex MCP endpoint" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Copy Codex MCP token" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Copy Codex MCP config" })).toBeInTheDocument();
+  });
+
   it("keeps search fields collapsed until the search controls are used", async () => {
     render(<App />);
 

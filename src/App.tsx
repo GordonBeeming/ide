@@ -3376,15 +3376,42 @@ export default function App() {
             <div className="integration-dialog__grid">
               <section className="integration-section" aria-label="Browser endpoint">
                 <div className="eyebrow">Browser Endpoint</div>
-                <div className="endpoint" title={httpEndpoint ?? "Endpoint unavailable"}>
-                  {httpEndpoint ?? "Not available"}
+                <div className="integration-row">
+                  <div className="endpoint" title={httpEndpoint ?? "Endpoint unavailable"}>
+                    {httpEndpoint ?? "Not available"}
+                  </div>
+                  <button
+                    aria-label="Copy browser endpoint"
+                    className="tiny-icon-button"
+                    disabled={!httpEndpoint}
+                    onClick={() => httpEndpoint && copyText("browser endpoint", httpEndpoint)}
+                    title="Copy browser endpoint"
+                    type="button"
+                  >
+                    <Copy size={13} />
+                  </button>
                 </div>
               </section>
 
               <section className="integration-section" aria-label="Claude bridge">
                 <div className="eyebrow">Claude Bridge</div>
-                <div className="endpoint" title={claudeBridge?.lockFile ?? "Bridge unavailable"}>
-                  {claudeBridge?.endpoint ?? "Not available"}
+                <div className="integration-row">
+                  <div className="endpoint" title={claudeBridge?.lockFile ?? "Bridge unavailable"}>
+                    {claudeBridge?.endpoint ?? "Not available"}
+                  </div>
+                  <button
+                    aria-label="Copy Claude bridge endpoint"
+                    className="tiny-icon-button"
+                    disabled={!claudeBridge?.endpoint}
+                    onClick={() =>
+                      claudeBridge?.endpoint &&
+                      copyText("Claude bridge endpoint", claudeBridge.endpoint)
+                    }
+                    title="Copy Claude bridge endpoint"
+                    type="button"
+                  >
+                    <Copy size={13} />
+                  </button>
                 </div>
               </section>
 
@@ -3397,8 +3424,10 @@ export default function App() {
                         {codexMcp.endpoint}
                       </div>
                       <button
+                        aria-label="Copy Codex MCP endpoint"
                         className="tiny-icon-button"
                         title="Copy Codex MCP endpoint"
+                        type="button"
                         onClick={() => copyText("Codex MCP endpoint", codexMcp.endpoint)}
                       >
                         <Copy size={13} />
@@ -3409,8 +3438,10 @@ export default function App() {
                         token: {codexMcp.bearerToken}
                       </div>
                       <button
+                        aria-label="Copy Codex MCP token"
                         className="tiny-icon-button"
                         title="Copy Codex MCP token"
+                        type="button"
                         onClick={() => copyText("Codex MCP token", codexMcp.bearerToken)}
                       >
                         <Copy size={13} />
@@ -3419,8 +3450,10 @@ export default function App() {
                     <div className="snippet-row">
                       <pre>{codexMcpConfig}</pre>
                       <button
+                        aria-label="Copy Codex MCP config"
                         className="tiny-icon-button"
                         title="Copy Codex MCP config"
+                        type="button"
                         onClick={() => copyText("Codex MCP config", codexMcpConfig)}
                       >
                         <Copy size={13} />

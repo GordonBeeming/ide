@@ -10,6 +10,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
+#[cfg(target_os = "macos")]
+use tauri::menu::AboutMetadata;
 use tauri::menu::{MenuBuilder, MenuItemBuilder, SubmenuBuilder};
 use tauri::{Emitter, Manager, State};
 use tauri_plugin_dialog::DialogExt;
@@ -1779,7 +1781,7 @@ fn rebuild_app_menu(app: &tauri::AppHandle, state: &AppState) -> Result<(), Comm
         .build()
         .map_err(|error| CommandError::Recent(error.to_string()))?;
 
-    let file_menu = SubmenuBuilder::new(app, "File")
+    let file_menu_builder = SubmenuBuilder::new(app, "File")
         .item(&new_file)
         .item(&new_folder)
         .separator()
@@ -1796,9 +1798,10 @@ fn rebuild_app_menu(app: &tauri::AppHandle, state: &AppState) -> Result<(), Comm
         .item(&delete_selected)
         .separator()
         .item(&close_tab)
-        .item(&close_all)
-        .separator()
-        .quit()
+        .item(&close_all);
+    #[cfg(not(target_os = "macos"))]
+    let file_menu_builder = file_menu_builder.separator().quit();
+    let file_menu = file_menu_builder
         .build()
         .map_err(|error| CommandError::Recent(error.to_string()))?;
     let show_integrations = MenuItemBuilder::with_id("show_integrations", "Integrations...")
@@ -1808,6 +1811,41 @@ fn rebuild_app_menu(app: &tauri::AppHandle, state: &AppState) -> Result<(), Comm
         .accelerator("CmdOrCtrl+,")
         .build(app)
         .map_err(|error| CommandError::Recent(error.to_string()))?;
+    #[cfg(target_os = "macos")]
+    let app_menu = {
+        let pkg_info = app.package_info();
+        let about_metadata = AboutMetadata {
+            name: Some(pkg_info.name.clone()),
+            version: Some(pkg_info.version.to_string()),
+            copyright: app.config().bundle.copyright.clone(),
+            authors: app
+                .config()
+                .bundle
+                .publisher
+                .clone()
+                .map(|publisher| vec![publisher]),
+            ..Default::default()
+        };
+        SubmenuBuilder::new(app, pkg_info.name.clone())
+            .about(Some(about_metadata))
+            .separator()
+            .item(&settings)
+            .separator()
+            .services()
+            .separator()
+            .hide()
+            .hide_others()
+            .separator()
+            .quit()
+            .build()
+            .map_err(|error| CommandError::Recent(error.to_string()))?
+    };
+    #[cfg(target_os = "macos")]
+    let view_menu = SubmenuBuilder::new(app, "View")
+        .item(&show_integrations)
+        .build()
+        .map_err(|error| CommandError::Recent(error.to_string()))?;
+    #[cfg(not(target_os = "macos"))]
     let view_menu = SubmenuBuilder::new(app, "View")
         .item(&show_integrations)
         .item(&settings)
@@ -1864,7 +1902,10 @@ fn rebuild_app_menu(app: &tauri::AppHandle, state: &AppState) -> Result<(), Comm
         .item(&find_in_files)
         .build()
         .map_err(|error| CommandError::Recent(error.to_string()))?;
-    let menu = MenuBuilder::new(app)
+    let menu_builder = MenuBuilder::new(app);
+    #[cfg(target_os = "macos")]
+    let menu_builder = menu_builder.item(&app_menu);
+    let menu = menu_builder
         .item(&file_menu)
         .item(&edit_menu)
         .item(&search_menu)

@@ -122,6 +122,30 @@ for (const event of listenedEvents) {
   }
 }
 
+if (
+  !/#\[cfg\(target_os = "macos"\)\]\s+let app_menu = \{[\s\S]*?\.item\(&settings\)[\s\S]*?\.quit\(\)/.test(
+    rustSource,
+  )
+) {
+  errors.push("macOS app menu must contain Settings and Quit");
+}
+
+if (
+  !/#\[cfg\(target_os = "macos"\)\]\s+let view_menu = SubmenuBuilder::new\(app, "View"\)\s+\.item\(&show_integrations\)\s+\.build\(\)/.test(
+    rustSource,
+  )
+) {
+  errors.push("macOS View menu must not contain Settings");
+}
+
+if (
+  !/#\[cfg\(not\(target_os = "macos"\)\)\]\s+let view_menu = SubmenuBuilder::new\(app, "View"\)[\s\S]*?\.item\(&settings\)/.test(
+    rustSource,
+  )
+) {
+  errors.push("non-macOS View menu must keep Settings available");
+}
+
 if (errors.length > 0) {
   console.error("Native menu contract validation failed:");
   for (const error of errors) {

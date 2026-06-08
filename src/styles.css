@@ -11,6 +11,7 @@
   --brand-highlight: #46cbff;
   --accent: var(--brand-primary);
   --accent-weak: color-mix(in oklch, var(--accent) 12%, var(--panel));
+  --accent-contrast: oklch(97% 0.006 230);
   --warning: oklch(69% 0.14 78);
   --danger: oklch(58% 0.19 28);
   --editor-bg: oklch(96% 0.006 230);
@@ -38,6 +39,7 @@
   --brand-highlight: #46cbff;
   --accent: var(--brand-primary);
   --accent-weak: color-mix(in oklch, var(--accent) 12%, var(--panel));
+  --accent-contrast: oklch(97% 0.006 230);
   --warning: oklch(69% 0.14 78);
   --danger: oklch(58% 0.19 28);
   --editor-bg: oklch(96% 0.006 230);
@@ -60,6 +62,7 @@
   --brand-highlight: #46cbff;
   --accent: #3d92e8;
   --accent-weak: color-mix(in oklch, var(--accent) 20%, var(--panel));
+  --accent-contrast: oklch(97% 0.006 230);
   --warning: oklch(76% 0.13 78);
   --danger: oklch(67% 0.18 28);
   --editor-bg: oklch(15% 0.012 230);
@@ -82,6 +85,7 @@
     --brand-highlight: #46cbff;
     --accent: #3d92e8;
     --accent-weak: color-mix(in oklch, var(--accent) 20%, var(--panel));
+    --accent-contrast: oklch(97% 0.006 230);
     --warning: oklch(76% 0.13 78);
     --danger: oklch(67% 0.18 28);
     --editor-bg: oklch(15% 0.012 230);
@@ -207,6 +211,11 @@ button {
   border-color: var(--accent);
   color: var(--text);
   outline: 0;
+}
+
+.tiny-icon-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
 }
 
 .search-tools {
@@ -1266,5 +1275,5 @@ button {
 .command-button--primary {
   border-color: var(--accent);
   background: var(--accent);
-  color: var(--bg);
+  color: var(--accent-contrast);
 }
