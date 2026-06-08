@@ -531,6 +531,10 @@ export default function App() {
     () => (codexMcp ? codexMcpConfigSnippet(codexMcp) : ""),
     [codexMcp],
   );
+  const repositoryLabel = useMemo(
+    () => appInfo.repository.replace(/^https?:\/\//, "").replace(/\/$/, ""),
+    [appInfo.repository],
+  );
   const keyBindingResults = useMemo(
     () => filterKeyBindings(keyBindings, keyBindingsQuery),
     [keyBindingsQuery],
@@ -3620,7 +3624,7 @@ export default function App() {
             />
             <div className="about-dialog__body">
               <div>
-                <h2 id="about-title">ide</h2>
+                <h2 id="about-title">{appInfo.name}</h2>
                 <div className="about-dialog__version">Version {appInfo.version}</div>
               </div>
               <p>{appInfo.description}</p>
@@ -3630,7 +3634,7 @@ export default function App() {
                 rel="noreferrer"
                 target="_blank"
               >
-                github.com/gordonbeeming/ide
+                {repositoryLabel}
                 <ExternalLink size={13} />
               </a>
               <div className="about-dialog__meta">

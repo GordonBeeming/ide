@@ -1327,6 +1327,13 @@ describe("App shell interactions", () => {
 
   it("shows app details from the native About menu", async () => {
     (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    tauriMocks.getAppInfo.mockResolvedValueOnce({
+      name: "ide Test",
+      version: "9.8.7",
+      description: "Metadata-backed app details.",
+      authors: ["Gordon Beeming"],
+      repository: "https://example.com/ide-test/",
+    });
     render(<App />);
 
     expect(await treeButton("README.md")).toBeInTheDocument();
@@ -1338,16 +1345,16 @@ describe("App shell interactions", () => {
       eventMocks.listeners.get("menu://show-about")?.({ payload: undefined });
     });
 
-    const dialog = screen.getByRole("dialog", { name: "ide" });
-    expect(dialog).toHaveTextContent("Version 0.1.0");
-    expect(dialog).toHaveTextContent("A lean local IDE.");
+    const dialog = screen.getByRole("dialog", { name: "ide Test" });
+    expect(dialog).toHaveTextContent("Version 9.8.7");
+    expect(dialog).toHaveTextContent("Metadata-backed app details.");
     expect(
-      within(dialog).getByRole("link", { name: /github.com\/gordonbeeming\/ide/i }),
-    ).toHaveAttribute("href", "https://github.com/gordonbeeming/ide");
+      within(dialog).getByRole("link", { name: /example.com\/ide-test/i }),
+    ).toHaveAttribute("href", "https://example.com/ide-test/");
 
     fireEvent.keyDown(window, { key: "Escape" });
 
-    expect(screen.queryByRole("dialog", { name: "ide" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "ide Test" })).not.toBeInTheDocument();
   });
 
   it("keeps search fields collapsed until the search controls are used", async () => {

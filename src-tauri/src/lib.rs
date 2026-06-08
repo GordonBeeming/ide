@@ -1347,8 +1347,14 @@ pub fn run() {
             let claude_bridge = http_state.claude_bridge.clone();
             let claude_bridge_error = http_state.claude_bridge_error.clone();
             let frontend_dist = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../dist");
-            let mcp_token =
-                load_or_create_codex_mcp_token(&app_local_data_dir.join(CODEX_MCP_TOKEN_FILE))?;
+            let (mcp_token, mcp_token_error) =
+                codex_mcp_token_for_startup(&app_local_data_dir.join(CODEX_MCP_TOKEN_FILE));
+            if let Some(error) = mcp_token_error {
+                let http_error = http_error.clone();
+                tauri::async_runtime::spawn(async move {
+                    *http_error.write().await = Some(error);
+                });
+            }
             let app_handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 match http_server::start_http_server(http_server::HttpServerConfig {
@@ -2133,6 +2139,19 @@ fn load_or_create_codex_mcp_token(path: &Path) -> Result<String, std::io::Error>
     let token = uuid::Uuid::new_v4().to_string();
     write_secret_file(path, &token)?;
     Ok(token)
+}
+
+fn codex_mcp_token_for_startup(path: &Path) -> (String, Option<String>) {
+    match load_or_create_codex_mcp_token(path) {
+        Ok(token) => (token, None),
+        Err(error) => (
+            uuid::Uuid::new_v4().to_string(),
+            Some(format!(
+                "Unable to persist Codex MCP token at {}. Using an in-memory token for this session: {error}",
+                path.display()
+            )),
+        ),
+    }
 }
 
 #[cfg(unix)]
@@ -2973,6 +2992,19 @@ mod tests {
 
         assert!(!token.is_empty());
         assert_eq!(std::fs::read_to_string(&token_path).unwrap(), token);
+    }
+
+    #[test]
+    fn codex_mcp_token_startup_falls_back_when_persistence_fails() {
+        let dir = tempdir().unwrap();
+        let blocked_parent = dir.path().join("not-a-directory");
+        std::fs::write(&blocked_parent, "file").unwrap();
+        let token_path = blocked_parent.join(CODEX_MCP_TOKEN_FILE);
+
+        let (token, error) = codex_mcp_token_for_startup(&token_path);
+
+        assert!(!token.is_empty());
+        assert!(error.unwrap().contains("Unable to persist Codex MCP token"));
     }
 
     #[test]
