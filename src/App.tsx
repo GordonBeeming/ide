@@ -354,6 +354,7 @@ export default function App() {
   const [settingsCategory, setSettingsCategory] = useState<SettingsCategory>("view");
   const [showDotfiles, setShowDotfiles] = useState(false);
   const [showGeneratedInternal, setShowGeneratedInternal] = useState(false);
+  const [showDiagnosticsPanel, setShowDiagnosticsPanel] = useState(false);
   const [treeScanLimit, setTreeScanLimit] = useState(defaultTreeScanLimit);
   const [maxOpenFileKb, setMaxOpenFileKb] = useState(defaultMaxOpenFileKb);
   const [workspaceSearchResultLimit, setWorkspaceSearchResultLimit] = useState(
@@ -608,6 +609,7 @@ export default function App() {
     setWorkspaceUiRestored(false);
     setShowDotfiles(snapshot.view.showDotfiles);
     setShowGeneratedInternal(snapshot.view.showGeneratedInternal);
+    setShowDiagnosticsPanel(Boolean(snapshot.view.showDiagnosticsPanel));
     setTreeScanLimit(sanitizeTreeScanLimit(snapshot.view.treeScanLimit));
     setMaxOpenFileKb(
       sanitizeNumberLimit(
@@ -1185,6 +1187,7 @@ export default function App() {
         {
           showDotfiles,
           showGeneratedInternal,
+          showDiagnosticsPanel,
           treeScanLimit,
           maxOpenFileKb,
           workspaceSearchResultLimit,
@@ -1214,6 +1217,7 @@ export default function App() {
     selectedPath,
     showDotfiles,
     showGeneratedInternal,
+    showDiagnosticsPanel,
     singleFileMode,
     treeScanLimit,
     maxOpenFileKb,
@@ -3000,41 +3004,43 @@ export default function App() {
           </div>
         ) : null}
 
-        <div className="diagnostics-panel" aria-label="Diagnostics">
-          <div className="diagnostics-panel__header">
-            <span>Diagnostics</span>
-            <span>{diagnostics.length}</span>
-          </div>
-          {diagnostics.length === 0 ? (
-            <div className="diagnostics-panel__empty">No diagnostics</div>
-          ) : (
-            diagnostics.map((diagnostic) => (
-              <button
-                className="diagnostic-row"
-                key={diagnosticKey(diagnostic)}
-                aria-label={`${diagnosticSeverityLabel(diagnostic.severity)} at ${diagnosticLocationLabel(diagnostic)}: ${diagnostic.message}`}
-                title={`${diagnosticLocationLabel(diagnostic)} ${diagnostic.message}`}
-                onClick={() =>
-                  openPathByName(diagnostic.filePath, false, diagnostic.startLine)
-                }
-                onDoubleClick={() =>
-                  openPathByName(diagnostic.filePath, true, diagnostic.startLine)
-                }
-              >
-                <TriangleAlert size={14} />
-                <span className="diagnostic-row__main">
-                  <span className="diagnostic-row__path">
-                    {diagnosticLocationLabel(diagnostic)}
+        {showDiagnosticsPanel ? (
+          <div className="diagnostics-panel" aria-label="Diagnostics">
+            <div className="diagnostics-panel__header">
+              <span>Diagnostics</span>
+              <span>{diagnostics.length}</span>
+            </div>
+            {diagnostics.length === 0 ? (
+              <div className="diagnostics-panel__empty">No diagnostics</div>
+            ) : (
+              diagnostics.map((diagnostic) => (
+                <button
+                  className="diagnostic-row"
+                  key={diagnosticKey(diagnostic)}
+                  aria-label={`${diagnosticSeverityLabel(diagnostic.severity)} at ${diagnosticLocationLabel(diagnostic)}: ${diagnostic.message}`}
+                  title={`${diagnosticLocationLabel(diagnostic)} ${diagnostic.message}`}
+                  onClick={() =>
+                    openPathByName(diagnostic.filePath, false, diagnostic.startLine)
+                  }
+                  onDoubleClick={() =>
+                    openPathByName(diagnostic.filePath, true, diagnostic.startLine)
+                  }
+                >
+                  <TriangleAlert size={14} />
+                  <span className="diagnostic-row__main">
+                    <span className="diagnostic-row__path">
+                      {diagnosticLocationLabel(diagnostic)}
+                    </span>
+                    <span className="diagnostic-row__message">{diagnostic.message}</span>
                   </span>
-                  <span className="diagnostic-row__message">{diagnostic.message}</span>
-                </span>
-                <span className="diagnostic-row__severity">
-                  {diagnosticSeverityLabel(diagnostic.severity)}
-                </span>
-              </button>
-            ))
-          )}
-        </div>
+                  <span className="diagnostic-row__severity">
+                    {diagnosticSeverityLabel(diagnostic.severity)}
+                  </span>
+                </button>
+              ))
+            )}
+          </div>
+        ) : null}
 
       </aside>
 
@@ -3544,6 +3550,21 @@ export default function App() {
                           }}
                         />
                         <span>Show generated and internal folders</span>
+                      </label>
+                      <label className="settings-row">
+                        <input
+                          type="checkbox"
+                          checked={showDiagnosticsPanel}
+                          onChange={(event) => {
+                            setShowDiagnosticsPanel(event.target.checked);
+                            setStatus(
+                              event.target.checked
+                                ? "Showing diagnostics panel"
+                                : "Hiding diagnostics panel",
+                            );
+                          }}
+                        />
+                        <span>Show diagnostics panel</span>
                       </label>
                     </section>
                   ) : null}

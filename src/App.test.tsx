@@ -271,6 +271,7 @@ describe("App shell interactions", () => {
       view: {
         showDotfiles: false,
         showGeneratedInternal: false,
+        showDiagnosticsPanel: false,
       },
       workspace: {
         expandedFolders: [],
@@ -720,6 +721,7 @@ describe("App shell interactions", () => {
       view: {
         showDotfiles: true,
         showGeneratedInternal: true,
+        showDiagnosticsPanel: true,
         treeScanLimit: 12000,
       },
       workspace: {
@@ -815,6 +817,7 @@ describe("App shell interactions", () => {
         expect.objectContaining({
           showDotfiles: false,
           showGeneratedInternal: false,
+          showDiagnosticsPanel: false,
           treeScanLimit: 10000,
           maxOpenFileKb: 5120,
           workspaceSearchResultLimit: 200,
@@ -847,12 +850,14 @@ describe("App shell interactions", () => {
       "true",
     );
     expect(screen.getByLabelText("Show dotfiles and dot folders")).toBeInTheDocument();
+    expect(screen.getByLabelText("Show diagnostics panel")).toBeInTheDocument();
     expect(screen.queryByLabelText("Initial tree scan entries")).not.toBeInTheDocument();
 
     selectSettingsTab("Performance");
 
     expect(screen.getByLabelText("Initial tree scan entries")).toBeInTheDocument();
     expect(screen.queryByLabelText("Show dotfiles and dot folders")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Show diagnostics panel")).not.toBeInTheDocument();
   });
 
   it("shows OS storage paths from Settings", async () => {
@@ -2406,7 +2411,48 @@ describe("App shell interactions", () => {
     );
   });
 
+  it("keeps diagnostics panel hidden by default while publishing diagnostics to agent context", async () => {
+    render(<App />);
+
+    expect(await treeButton("README.md")).toBeInTheDocument();
+    await waitFor(() => expect(lspMocks.diagnosticsHandler).toBeTypeOf("function"));
+
+    act(() => {
+      lspMocks.diagnosticsHandler?.("src/App.tsx", [
+        diagnostic("src/App.tsx", "Expected semicolon", 1, 7, 13),
+      ]);
+    });
+
+    expect(screen.queryByLabelText("Diagnostics")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", {
+        name: "Error at src/App.tsx:7:13: Expected semicolon",
+      }),
+    ).not.toBeInTheDocument();
+    await waitFor(() =>
+      expect(latestAgentContext()).toMatchObject({
+        diagnostics: [
+          expect.objectContaining({
+            filePath: "src/App.tsx",
+            message: "Expected semicolon",
+          }),
+        ],
+      }),
+    );
+  });
+
   it("opens diagnostics at the precise reported location", async () => {
+    tauriMocks.getUiState.mockResolvedValueOnce({
+      view: {
+        showDotfiles: false,
+        showGeneratedInternal: false,
+        showDiagnosticsPanel: true,
+      },
+      workspace: {
+        expandedFolders: [],
+        openFiles: [],
+      },
+    });
     render(<App />);
 
     expect(await treeButton("README.md")).toBeInTheDocument();
@@ -2433,6 +2479,17 @@ describe("App shell interactions", () => {
   });
 
   it("pins diagnostic tabs when opened with a double click", async () => {
+    tauriMocks.getUiState.mockResolvedValueOnce({
+      view: {
+        showDotfiles: false,
+        showGeneratedInternal: false,
+        showDiagnosticsPanel: true,
+      },
+      workspace: {
+        expandedFolders: [],
+        openFiles: [],
+      },
+    });
     render(<App />);
 
     expect(await treeButton("README.md")).toBeInTheDocument();

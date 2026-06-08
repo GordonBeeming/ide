@@ -153,6 +153,8 @@ struct AppUiState {
 struct PersistedViewSettings {
     show_dotfiles: bool,
     show_generated_internal: bool,
+    #[serde(default)]
+    show_diagnostics_panel: bool,
     #[serde(default = "default_tree_scan_limit")]
     tree_scan_limit: usize,
     #[serde(default = "default_max_open_file_kb")]
@@ -180,6 +182,7 @@ impl Default for PersistedViewSettings {
         Self {
             show_dotfiles: false,
             show_generated_internal: false,
+            show_diagnostics_panel: false,
             tree_scan_limit: default_tree_scan_limit(),
             max_open_file_kb: default_max_open_file_kb(),
             workspace_search_result_limit: default_workspace_search_result_limit(),
@@ -2813,6 +2816,7 @@ mod tests {
             view: PersistedViewSettings {
                 show_dotfiles: true,
                 show_generated_internal: true,
+                show_diagnostics_panel: true,
                 tree_scan_limit: 12_000,
                 max_open_file_kb: 8_192,
                 workspace_search_result_limit: 750,
@@ -2838,6 +2842,7 @@ mod tests {
         let loaded = load_ui_state(&ui_state_path).unwrap();
         assert!(loaded.view.show_dotfiles);
         assert!(loaded.view.show_generated_internal);
+        assert!(loaded.view.show_diagnostics_panel);
         assert_eq!(loaded.view.max_open_file_kb, 8_192);
         assert_eq!(loaded.view.workspace_search_result_limit, 750);
         assert_eq!(loaded.view.workspace_search_max_file_kb, 2_048);

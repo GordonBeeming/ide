@@ -107,6 +107,7 @@ export type OpenLaunchRequest =
 export interface PersistedViewSettings {
   showDotfiles: boolean;
   showGeneratedInternal: boolean;
+  showDiagnosticsPanel?: boolean;
   treeScanLimit?: number;
   maxOpenFileKb?: number;
   workspaceSearchResultLimit?: number;
@@ -156,6 +157,7 @@ const defaultUiSnapshot: PersistedUiSnapshot = {
   view: {
     showDotfiles: false,
     showGeneratedInternal: false,
+    showDiagnosticsPanel: false,
     treeScanLimit: 10000,
     maxOpenFileKb: 5120,
     workspaceSearchResultLimit: 200,

@@ -317,6 +317,7 @@ describe("hosted Tauri API transport", () => {
       view: {
         showDotfiles: false,
         showGeneratedInternal: false,
+        showDiagnosticsPanel: false,
         treeScanLimit: 10000,
         maxOpenFileKb: 5120,
         workspaceSearchResultLimit: 200,
@@ -338,6 +339,7 @@ describe("hosted Tauri API transport", () => {
       {
         showDotfiles: true,
         showGeneratedInternal: true,
+        showDiagnosticsPanel: true,
         treeScanLimit: 10000,
         maxOpenFileKb: 5120,
         workspaceSearchResultLimit: 200,
