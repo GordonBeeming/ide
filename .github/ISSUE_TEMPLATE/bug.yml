@@ -1,0 +1,118 @@
+name: Bug report
+description: Report something that is not working as expected.
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this form for defects, regressions, and unexpected behavior.
+
+        If you are proposing new end-user value rather than reporting broken behavior, use the New feature form instead.
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What is broken?
+      placeholder: ...
+    validations:
+      required: true
+  - type: textarea
+    id: current-behavior
+    attributes:
+      label: Current behavior
+      description: What happens now?
+      placeholder: ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected-behavior
+    attributes:
+      label: Expected behavior
+      description: What should happen instead?
+      placeholder: ...
+    validations:
+      required: true
+  - type: textarea
+    id: steps-to-reproduce
+    attributes:
+      label: Steps to reproduce
+      description: Give the smallest reliable reproduction steps.
+      placeholder: |
+        1.
+        2.
+        3.
+    validations:
+      required: true
+  - type: dropdown
+    id: reproducibility
+    attributes:
+      label: Reproducibility
+      options:
+        - Always
+        - Often
+        - Sometimes
+        - Once
+        - Unknown
+    validations:
+      required: true
+  - type: dropdown
+    id: impact
+    attributes:
+      label: Impact
+      description: How much does this affect users?
+      options:
+        - Blocks core workflow
+        - Major workflow degradation
+        - Minor workflow degradation
+        - Cosmetic or polish issue
+        - Unknown
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: App version, OS, architecture, browser/webview details, workspace shape, or other context.
+      placeholder: |
+        - App version:
+        - OS:
+        - Architecture:
+        - Workspace/project:
+    validations:
+      required: false
+  - type: textarea
+    id: affected-area
+    attributes:
+      label: Affected area
+      description: Product area, workflow, command, screen, integration, or subsystem involved.
+      placeholder: ...
+    validations:
+      required: false
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence
+      description: Screenshots, logs, stack traces, diagnostics, or links that support the report.
+      placeholder: Paste relevant evidence here.
+    validations:
+      required: false
+  - type: textarea
+    id: workaround
+    attributes:
+      label: Workaround
+      description: Is there a known workaround?
+      placeholder: ...
+    validations:
+      required: false
+  - type: textarea
+    id: validation
+    attributes:
+      label: Fix validation
+      description: How should we confirm this is fixed?
+      placeholder: |
+        - [ ] The reproduction steps no longer fail.
+        - [ ] Regression coverage exists for the broken behavior.
+    validations:
+      required: false

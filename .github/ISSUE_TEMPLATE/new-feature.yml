@@ -1,0 +1,189 @@
+name: New feature
+description: Capture a feature idea with the same planning fields used by the new-feature workflow.
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this form for deliverable product or application features that create end-user value.
+
+        Keep implementation tasks at the "what work is needed" level. Avoid file names, code symbols, and exact implementation steps in task checklists because the code can change before the PBI is worked.
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What should the user be able to do when this ships?
+      placeholder: Users can...
+    validations:
+      required: true
+  - type: textarea
+    id: user-value
+    attributes:
+      label: User value
+      description: Why does this matter to the end user, operator, or product?
+      placeholder: This matters because...
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope
+      description: What is in scope, out of scope, and assumed?
+      value: |
+        ## In scope
+
+        -
+
+        ## Out of scope
+
+        -
+
+        ## Assumptions
+
+        -
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance-criteria
+    attributes:
+      label: Acceptance criteria
+      description: Observable outcomes that prove this feature is done.
+      placeholder: |
+        - [ ] ...
+        - [ ] ...
+    validations:
+      required: true
+  - type: textarea
+    id: implementation-tasks
+    attributes:
+      label: Implementation tasks
+      description: Describe what work is needed, not how code should be changed. Do not include exact files, paths, or code symbols here.
+      placeholder: |
+        - [ ] Product behavior is defined and exposed to users.
+        - [ ] Relevant data/state is captured and persisted.
+        - [ ] User experience covers empty, loading, success, and error states.
+        - [ ] Validation coverage exists for the expected behavior.
+    validations:
+      required: true
+  - type: dropdown
+    id: effort
+    attributes:
+      label: Effort
+      description: Planning estimate for total implementation effort.
+      options:
+        - XS
+        - S
+        - M
+        - L
+        - XL
+    validations:
+      required: true
+  - type: dropdown
+    id: complexity
+    attributes:
+      label: Complexity
+      description: 1 is straightforward, 5 is uncertain, cross-cutting, or high-risk.
+      options:
+        - 1/5
+        - 2/5
+        - 3/5
+        - 4/5
+        - 5/5
+    validations:
+      required: true
+  - type: dropdown
+    id: foreignness
+    attributes:
+      label: Foreignness
+      description: 1 matches existing patterns, 5 introduces unfamiliar architecture, tooling, or product behavior.
+      options:
+        - 1/5
+        - 2/5
+        - 3/5
+        - 4/5
+        - 5/5
+    validations:
+      required: true
+  - type: dropdown
+    id: confidence
+    attributes:
+      label: Confidence
+      description: Confidence in the estimates and proposed shape.
+      options:
+        - Low
+        - Medium
+        - High
+    validations:
+      required: true
+  - type: input
+    id: existing-files
+    attributes:
+      label: Existing files likely touched
+      description: Estimate only. Use a range if uncertain.
+      placeholder: "Example: 3-6"
+    validations:
+      required: false
+  - type: input
+    id: new-files
+    attributes:
+      label: New files likely added
+      description: Estimate only. Use a range if uncertain.
+      placeholder: "Example: 1-3"
+    validations:
+      required: false
+  - type: dropdown
+    id: rough-loc
+    attributes:
+      label: Rough LOC
+      description: Broad code-change size estimate.
+      options:
+        - 0-100
+        - 100-250
+        - 250-600
+        - 600-1,500
+        - 1,500-4,000
+        - 4,000+
+    validations:
+      required: true
+  - type: textarea
+    id: dependencies
+    attributes:
+      label: Dependencies
+      description: New or existing runtime, build, service, API, infrastructure, data, auth, or vendor dependencies.
+      placeholder: |
+        - Required:
+        - Optional:
+        - Avoidable:
+    validations:
+      required: false
+  - type: textarea
+    id: risks-decisions
+    attributes:
+      label: Risks and decisions
+      description: Data migration, permissions, privacy, accessibility, performance, compatibility, UX ambiguity, rollout, or maintenance risks.
+      placeholder: |
+        - Risk:
+        - Decision:
+    validations:
+      required: false
+  - type: textarea
+    id: validation-plan
+    attributes:
+      label: Validation plan
+      description: Tests, type checks, builds, smoke tests, visual checks, and manual acceptance checks.
+      placeholder: |
+        - [ ] ...
+        - [ ] ...
+    validations:
+      required: true
+  - type: textarea
+    id: likely-touch-points
+    attributes:
+      label: Likely touch points
+      description: Planning-time hints only. These are not implementation instructions and may drift before the PBI is worked.
+      placeholder: |
+        - Existing area, API, schema, workflow, or pattern that informed the estimate.
+    validations:
+      required: false

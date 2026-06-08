@@ -1,0 +1,6 @@
+interface:
+  display_name: "New Feature"
+  short_description: "Analyze feature ideas before backlog creation"
+  default_prompt: "Use $new-feature to analyze this feature idea, create a reviewable artifact, then prepare GitHub issues after approval."
+policy:
+  allow_implicit_invocation: true
