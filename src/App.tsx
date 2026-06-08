@@ -3419,33 +3419,8 @@ export default function App() {
                 <div className="eyebrow">Codex MCP</div>
                 {codexMcp ? (
                   <>
-                    <div className="integration-row">
-                      <div className="endpoint" title="Use this endpoint with the bearer token from the native app session">
-                        {codexMcp.endpoint}
-                      </div>
-                      <button
-                        aria-label="Copy Codex MCP endpoint"
-                        className="tiny-icon-button"
-                        title="Copy Codex MCP endpoint"
-                        type="button"
-                        onClick={() => copyText("Codex MCP endpoint", codexMcp.endpoint)}
-                      >
-                        <Copy size={13} />
-                      </button>
-                    </div>
-                    <div className="integration-row">
-                      <div className="endpoint" title={codexMcp.bearerToken}>
-                        token: {codexMcp.bearerToken}
-                      </div>
-                      <button
-                        aria-label="Copy Codex MCP token"
-                        className="tiny-icon-button"
-                        title="Copy Codex MCP token"
-                        type="button"
-                        onClick={() => copyText("Codex MCP token", codexMcp.bearerToken)}
-                      >
-                        <Copy size={13} />
-                      </button>
+                    <div className="integration-command" title="Open the Codex config file">
+                      <code>ide ~/.codex/config.toml</code>
                     </div>
                     <div className="snippet-row">
                       <pre>{codexMcpConfig}</pre>

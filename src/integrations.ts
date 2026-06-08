@@ -2,7 +2,6 @@ import type { CodexMcpStatus } from "./tauri";
 
 export function codexMcpConfigSnippet(status: CodexMcpStatus) {
   return [
-    "# ~/.codex/config.toml",
     "[mcp_servers.ide]",
     `url = "${escapeDoubleQuoted(status.endpoint)}"`,
     `http_headers = { Authorization = "Bearer ${escapeDoubleQuoted(status.bearerToken)}" }`,

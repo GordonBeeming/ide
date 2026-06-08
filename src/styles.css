@@ -485,6 +485,19 @@ button {
   flex: 1;
 }
 
+.integration-command {
+  overflow: hidden;
+  color: var(--text);
+  font-family: ui-monospace, "SF Mono", monospace;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.integration-command code {
+  font: inherit;
+}
+
 .snippet-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 24px;

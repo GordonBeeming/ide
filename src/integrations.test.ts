@@ -10,7 +10,6 @@ describe("codexMcpConfigSnippet", () => {
       }),
     ).toBe(
       [
-        "# ~/.codex/config.toml",
         "[mcp_servers.ide]",
         'url = "http://127.0.0.1:17877/mcp"',
         'http_headers = { Authorization = "Bearer session-token" }',

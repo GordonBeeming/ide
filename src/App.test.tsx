@@ -1277,8 +1277,11 @@ describe("App shell interactions", () => {
     expect(
       screen.getByRole("button", { name: "Copy Claude bridge endpoint" }),
     ).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Copy Codex MCP endpoint" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Copy Codex MCP token" })).toBeInTheDocument();
+    expect(screen.getByText("ide ~/.codex/config.toml")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Copy Codex MCP endpoint" }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Copy Codex MCP token" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Copy Codex MCP config" })).toBeInTheDocument();
   });
 
