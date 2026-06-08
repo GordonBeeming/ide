@@ -37,7 +37,7 @@ The build script runs `npm run tauri -- build --bundles app`, then installs comm
 
 `dev-install.sh` runs the build, prompts for the `/Applications/ide.app` replacement when admin permission is needed, refreshes Spotlight/Launch Services metadata where possible, and reveals the installed app in Finder. macOS caches app icons, so quit/reopen ide and give Spotlight a moment if the previous icon is still visible.
 
-The installer writes `ide` as a small macOS `open` launcher for the packaged app bundle and links `ide-dev` to `run.sh`. Use `ide .` when the packaged app should open a new instance for a target without holding the terminal; use bare `ide` to focus a running app or open the last context; and use `ide-dev .` when the repository dev runner should manage Node dependencies, Vite, stale dev ports, and running-app handoff behavior. Set `IDE_CLI_APP_BUNDLE_PATH=/path/to/ide.app` when installing if the command should target a different packaged bundle.
+The installer writes `ide` as a small macOS `open` launcher for the packaged app bundle and links `ide-dev` to `run.sh`. Use `ide .` when the packaged app should open or focus a workspace window without holding the terminal; use bare `ide` to focus a running app or open the last context; and use `ide-dev .` when the repository dev runner should manage Node dependencies, Vite, stale dev ports, and running-app handoff behavior. Set `IDE_CLI_APP_BUNDLE_PATH=/path/to/ide.app` when installing if the command should target a different packaged bundle.
 
 Install the macOS Finder Quick Action:
 
@@ -49,7 +49,7 @@ The service appears under Finder's Quick Actions menu as `Open in ide`. It hands
 
 `npm run finder:check` validates the generated Quick Action and runner in a temporary directory. It verifies that the service registers for files and folders, emits a valid plist/workflow, and hands targets to `/api/open-path` with the local bearer token before `run-tests.sh` moves on to browser smoke tests.
 
-Packaged builds declare Tauri `bundle.fileAssociations` for common text, code, web, config, and .NET project files. Tauri emits `RunEvent::Opened` when the OS opens a file with the app; the Rust backend converts those file URLs into the same open-file/open-workspace payloads used by the native menu, stores cold-start requests until the frontend drains them, and emits live requests when the app is already running.
+Packaged builds declare Tauri `bundle.fileAssociations` for common text, code, web, config, and .NET project files. Tauri emits `RunEvent::Opened` when the OS opens a file with the app; the Rust backend converts those file URLs into launch targets and opens or focuses a workspace window inside the existing app process. The packaged CLI uses the same single-process path instead of `open -n`, so multiple workspace windows group under one Dock icon.
 
 ## Manual Commands
 
@@ -120,7 +120,7 @@ The app is intentionally split into a small always-loaded shell and lazy-loaded 
 - `src-tauri/src/workspace_index.rs`: SQLite-backed workspace metadata index stored under the OS app-local data directory. Initial scans replace the current workspace rows, lazy folder loads and quick-open expansion refresh direct children, folder-frontier state tracks what has been expanded, and editor file mutations upsert or remove affected paths plus stale frontier rows.
 - `src-tauri/src/http_server.rs`: loopback HTTP API, browser endpoint static asset server with SPA fallback and missing asset 404s, authenticated write routes, and authenticated read-only Codex MCP endpoint.
 - `src-tauri/src/claude_bridge.rs`: authenticated Claude Code IDE WebSocket bridge.
-- `src-tauri/src/lib.rs`: Tauri command registration and in-memory editor context state.
+- `src-tauri/src/lib.rs`: Tauri command registration, per-window workspace sessions, and in-memory editor context state.
 
 Security rules live in [security.md](security.md). Treat them as part of the development process, not a release checklist.
 Research notes and protocol references live in [research.md](research.md).
@@ -177,16 +177,16 @@ cd src-tauri && cargo audit
 
 ## Workspace Switching
 
-The native folder picker is owned by the Rust backend through `tauri-plugin-dialog`. Switching workspace roots:
+The native folder picker is owned by the Rust backend through `tauri-plugin-dialog`. Switching workspace roots in the active window:
 
 - canonicalizes the selected directory
 - rejects non-directory paths
 - clears open editor tabs in the frontend
 - clears backend agent context
-- clears backend LSP sessions and frontend LSP client caches so a language server is not reused with the wrong root
-- rewrites the Claude bridge lock file workspace metadata
+- clears backend LSP sessions and frontend LSP client caches for the main bridge-backed window so a language server is not reused with the wrong root
+- rewrites the Claude bridge lock file workspace metadata for the main bridge-backed window
 
-Native OS file-open events reuse the same switching path. Opening a file from the OS uses the file's parent as the workspace root and opens the file as a persistent single-file session; opening a folder still goes through the Open Folder menu, `run.sh`, or the Finder Quick Action because platform file associations do not register folders.
+Native OS file-open events use the single-process window path. Opening a file from the OS uses the file's parent as the workspace root and opens the file as a persistent single-file session in its own workspace window; opening a folder still goes through the Open Folder menu, `run.sh`, packaged `ide`, or the Finder Quick Action because platform file associations do not register folders.
 
 The frontend refuses to switch folders while any open tab is dirty.
 

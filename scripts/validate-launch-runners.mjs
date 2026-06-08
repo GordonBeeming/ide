@@ -101,8 +101,9 @@ try {
   assertIncludes(ideCommand, 'ARGS=()');
   assertIncludes(ideCommand, 'ARGS+=("$(cd "$arg" && pwd -P)")');
   assertIncludes(ideCommand, 'if [ "${#ARGS[@]}" -gt 0 ]; then');
-  assertIncludes(ideCommand, 'open -n "$APP_BUNDLE" --args "${ARGS[@]}" >/dev/null 2>&1 &');
+  assertIncludes(ideCommand, 'open "$APP_BUNDLE" --args "${ARGS[@]}" >/dev/null 2>&1 &');
   assertIncludes(ideCommand, 'open "$APP_BUNDLE" >/dev/null 2>&1 &');
+  assertNotIncludes(ideCommand, "open -n");
   assertSymlinkTarget(path.join(cliBinDir, "ide-dev"), runScriptPath, "ide-dev command");
 
   execFileSync("bash", [cliInstallScript], {
@@ -183,6 +184,12 @@ function assertSymlinkTarget(filePath, expectedTarget, label) {
 function assertIncludes(text, expected) {
   if (!text.includes(expected)) {
     throw new Error(`Launch runner output is missing: ${expected}`);
+  }
+}
+
+function assertNotIncludes(text, unexpected) {
+  if (text.includes(unexpected)) {
+    throw new Error(`Launch runner output should not include: ${unexpected}`);
   }
 }
 

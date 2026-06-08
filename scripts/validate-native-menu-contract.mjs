@@ -67,7 +67,10 @@ const declaredMenuIds = new Set([
 ]);
 const routedMenuIds = new Set(matches(rustSource, /id == "([^"]+)"/g));
 const routedMenuPrefixes = new Set(matches(rustSource, /id\.strip_prefix\("([^"]+)"\)/g));
-const emittedEvents = new Set(matches(rustSource, /app\.emit\(\s*"((?:menu|app):\/\/[^"]+)"/g));
+const emittedEvents = new Set([
+  ...matches(rustSource, /app\.emit\(\s*"((?:menu|app):\/\/[^"]+)"/g),
+  ...matches(rustSource, /emit_to_active_window\(\s*app,\s*"((?:menu|app):\/\/[^"]+)"/g),
+]);
 const listenedEvents = new Set(matches(appSource, /listen(?:<[^>]+>)?\(\s*"((?:menu|app):\/\/[^"]+)"/g));
 
 for (const id of expectedRoutedMenuIds) {

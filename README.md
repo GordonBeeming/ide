@@ -17,7 +17,7 @@ Implemented:
 - Native categorized Settings dialog for view toggles, performance limits, search limits, and OS storage locations.
 - File/folder launch targets through the local runner and macOS Finder Quick Action.
 - Packaged-app file associations for common text, code, web, config, and .NET project files.
-- Runtime handling for native OS file-open events, including cold-start opens before the frontend has registered listeners.
+- Runtime handling for native OS file-open events, including single-process window creation/focus for launched files and folders.
 - Explicit workspace loading, empty, and load-failure retry states.
 - Collapsible sidebar for focused editing.
 - Collapsed file-name filtering and bounded text search across the current workspace, with visible capped-result notices plus searched/skipped file counts.
@@ -91,7 +91,7 @@ The build script creates the packaged macOS `.app` and installs the command laun
 
 `dev-install.sh` runs the build, prompts for the `/Applications/ide.app` replacement when admin permission is needed, refreshes Spotlight/Launch Services metadata where possible, and reveals the installed app in Finder. macOS can still cache app icons briefly, so quit/reopen ide and give Spotlight a moment if the old icon is still visible.
 
-After installation, `ide <target>` opens a new packaged app instance for that target without holding the terminal, bare `ide` focuses an existing running app or opens the last context, and `ide-dev` runs this checkout's dev runner:
+After installation, `ide <target>` opens or focuses a packaged app window for that target without holding the terminal. Bare `ide` focuses an existing running app or opens the last context, and `ide-dev` runs this checkout's dev runner:
 
 ```bash
 ide .
@@ -110,7 +110,7 @@ After installation, use Finder's right-click menu: Quick Actions > Open in ide. 
 
 The Finder Quick Action generator is covered by `npm run finder:check`, which installs into a temporary directory and validates the generated service, file/folder UTI coverage, and loopback handoff script without touching your real Finder services.
 
-Packaged builds also declare file associations for common editor-supported file types, so macOS and other platforms can offer ide from native `Open With` flows for those files. Folder opening is still handled through the native Open Folder menu, `./run.sh /path/to/folder`, and the macOS Finder Quick Action because OS file associations are file-oriented.
+Packaged builds also declare file associations for common editor-supported file types, so macOS and other platforms can offer ide from native `Open With` flows for those files. The packaged app uses one OS process with multiple workspace windows, so Dock and app-switcher grouping stays under one ide app icon. Folder opening is still handled through the native Open Folder menu, `./run.sh /path/to/folder`, and the macOS Finder Quick Action because OS file associations are file-oriented.
 
 ## Requirements
 

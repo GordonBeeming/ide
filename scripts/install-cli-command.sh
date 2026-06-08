@@ -98,7 +98,7 @@ for arg in "\$@"; do
 done
 
 if [ "\${#ARGS[@]}" -gt 0 ]; then
-  open -n "\$APP_BUNDLE" --args "\${ARGS[@]}" >/dev/null 2>&1 &
+  open "\$APP_BUNDLE" --args "\${ARGS[@]}" >/dev/null 2>&1 &
 else
   open "\$APP_BUNDLE" >/dev/null 2>&1 &
 fi
