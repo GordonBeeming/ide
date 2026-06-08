@@ -415,8 +415,23 @@ fn window_session_for_label(state: &AppState, label: &str) -> WorkspaceSessionSt
         .unwrap_or_else(|| default_workspace_session(state))
 }
 
+fn registered_window_session_for_label(
+    state: &AppState,
+    label: &str,
+) -> Option<WorkspaceSessionState> {
+    state
+        .window_sessions
+        .read()
+        .ok()
+        .and_then(|sessions| sessions.get(label).cloned())
+}
+
 fn register_window_session(state: &AppState, label: &str, target: LaunchTarget) {
     if let Ok(mut sessions) = state.window_sessions.write() {
+        if label == "main" {
+            sessions.insert(label.to_string(), default_workspace_session(state));
+            return;
+        }
         sessions.insert(
             label.to_string(),
             WorkspaceSessionState {
@@ -450,6 +465,21 @@ async fn workspace_root_string_for_window(state: &AppState, window: &tauri::Wind
         .await
         .to_string_lossy()
         .to_string()
+}
+
+async fn workspace_root_is_used_by_any_session(state: &AppState, workspace_root: &Path) -> bool {
+    let sessions = state
+        .window_sessions
+        .read()
+        .ok()
+        .map(|sessions| sessions.values().cloned().collect::<Vec<_>>())
+        .unwrap_or_default();
+    for session in sessions {
+        if *session.workspace_root.read().await == workspace_root {
+            return true;
+        }
+    }
+    false
 }
 
 async fn agent_context_for_window(
@@ -1034,9 +1064,11 @@ async fn get_agent_context(
 
 #[tauri::command]
 async fn get_lsp_servers(
+    window: tauri::Window,
     state: State<'_, AppState>,
 ) -> Result<Vec<lsp::LspServerStatus>, CommandError> {
-    Ok(state.lsp_manager.statuses().await)
+    let workspace_root = workspace_root_for_window(&state, &window).await;
+    Ok(state.lsp_manager.statuses(&workspace_root).await)
 }
 
 #[tauri::command]
@@ -1084,13 +1116,15 @@ async fn start_lsp(
 
 #[tauri::command]
 async fn send_lsp_message(
+    window: tauri::Window,
     state: State<'_, AppState>,
     language: String,
     message: String,
 ) -> Result<(), CommandError> {
+    let workspace_root = workspace_root_for_window(&state, &window).await;
     state
         .lsp_manager
-        .send(&language, &message)
+        .send(&language, &workspace_root, &message)
         .await
         .map_err(CommandError::from)
 }
@@ -1609,17 +1643,36 @@ async fn set_workspace_root_path(
     }
 
     let updates_shared_workspace = window_label.is_none() || window_label == Some("main");
-    if let Some(label) = window_label {
-        let session = window_session_for_label(state, label);
-        *session.workspace_root.write().await = canonical.clone();
-        *session.initial_file.write().await = None;
-        *session.agent_context.write().await = AgentContext::default();
+    let registered_session =
+        window_label.and_then(|label| registered_window_session_for_label(state, label));
+    let previous_workspace_root = if let Some(session) = registered_session.as_ref() {
+        Some(session.workspace_root.read().await.clone())
+    } else if updates_shared_workspace {
+        Some(state.workspace_root.read().await.clone())
+    } else {
+        None
+    };
+    if !updates_shared_workspace {
+        if let Some(session) = registered_session.as_ref() {
+            *session.workspace_root.write().await = canonical.clone();
+            *session.initial_file.write().await = None;
+            *session.agent_context.write().await = AgentContext::default();
+        };
     }
     if updates_shared_workspace {
         *state.workspace_root.write().await = canonical.clone();
         *state.initial_file.write().await = None;
         *state.agent_context.write().await = AgentContext::default();
-        state.lsp_manager.stop_all().await;
+    }
+    if let Some(previous_workspace_root) = previous_workspace_root {
+        if previous_workspace_root != canonical
+            && !workspace_root_is_used_by_any_session(state, &previous_workspace_root).await
+        {
+            state
+                .lsp_manager
+                .stop_for_root(&previous_workspace_root)
+                .await;
+        }
     }
     record_recent_workspace_item(state, &canonical)?;
     if updates_shared_workspace {
@@ -2291,12 +2344,22 @@ fn open_launch_target_window(
 
     let state = app.state::<AppState>();
     register_window_session(&state, &label, target);
-    let window =
-        tauri::WebviewWindowBuilder::new(app, label, tauri::WebviewUrl::App("index.html".into()))
-            .title("ide")
-            .inner_size(1440.0, 960.0)
-            .min_inner_size(960.0, 640.0)
-            .build()?;
+    let window = match tauri::WebviewWindowBuilder::new(
+        app,
+        label.clone(),
+        tauri::WebviewUrl::App("index.html".into()),
+    )
+    .title("ide")
+    .inner_size(1440.0, 960.0)
+    .min_inner_size(960.0, 640.0)
+    .build()
+    {
+        Ok(window) => window,
+        Err(error) => {
+            remove_window_session(&state, &label);
+            return Err(error);
+        }
+    };
     focus_window(&window);
     Ok(())
 }

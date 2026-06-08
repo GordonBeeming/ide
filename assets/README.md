@@ -1,6 +1,6 @@
 # ide — app icon assets
 
-The **Stagger** mark. Charcoal `#1e1f24` + one blue `#2f6cf0` on a light "paper" squircle.
+The **Stagger** mark. Charcoal `#1e1f24` + one blue `#0063B2` on a light "paper" squircle.
 
 ---
 
@@ -65,7 +65,7 @@ src-tauri-icons/     ← drop straight into src-tauri/icons/
 | Role            | Value       |
 |-----------------|-------------|
 | Ink (mark)      | `#1e1f24`   |
-| Accent (blue)   | `#2f6cf0`   |
+| Accent (blue)   | `#0063B2` (brand primary) |
 | Tile gradient   | `#ffffff` → `#eceae6` |
 | Corner shape    | Apple superellipse (squircle), n≈5 |
 
