@@ -224,6 +224,7 @@ const MAX_WORKSPACE_TITLE_MAX_CHARS: usize = 120;
 const MIN_COMMAND_PALETTE_RESULT_LIMIT: usize = 5;
 const DEFAULT_COMMAND_PALETTE_RESULT_LIMIT: usize = 18;
 const MAX_COMMAND_PALETTE_RESULT_LIMIT: usize = 100;
+const CODEX_MCP_TOKEN_FILE: &str = "codex-mcp-token";
 
 fn default_tree_scan_limit() -> usize {
     DEFAULT_TREE_SCAN_LIMIT
@@ -1286,11 +1287,11 @@ pub fn run() {
                 .ui_state
                 .write()
                 .map_err(|_| std::io::Error::other("ui state lock poisoned"))? = loaded_ui_state;
-            let workspace_index_path = app
+            let app_local_data_dir = app
                 .path()
                 .app_local_data_dir()
-                .map_err(|error| std::io::Error::other(error.to_string()))?
-                .join("workspace-index.sqlite");
+                .map_err(|error| std::io::Error::other(error.to_string()))?;
+            let workspace_index_path = app_local_data_dir.join("workspace-index.sqlite");
             http_state
                 .workspace_index
                 .set_database_path(workspace_index_path)
@@ -1320,7 +1321,8 @@ pub fn run() {
             let claude_bridge = http_state.claude_bridge.clone();
             let claude_bridge_error = http_state.claude_bridge_error.clone();
             let frontend_dist = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../dist");
-            let mcp_token = uuid::Uuid::new_v4().to_string();
+            let mcp_token =
+                load_or_create_codex_mcp_token(&app_local_data_dir.join(CODEX_MCP_TOKEN_FILE))?;
             let app_handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 match http_server::start_http_server(http_server::HttpServerConfig {
@@ -2080,6 +2082,36 @@ fn load_ui_state(path: &Path) -> Result<AppUiState, std::io::Error> {
     let mut state: AppUiState = serde_json::from_str(&contents).map_err(std::io::Error::other)?;
     state.view = sanitize_view_settings(state.view);
     Ok(state)
+}
+
+fn load_or_create_codex_mcp_token(path: &Path) -> Result<String, std::io::Error> {
+    if path.exists() {
+        let token = std::fs::read_to_string(path)?.trim().to_string();
+        if !token.is_empty() {
+            set_secret_file_permissions(path)?;
+            return Ok(token);
+        }
+    }
+
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let token = uuid::Uuid::new_v4().to_string();
+    std::fs::write(path, &token)?;
+    set_secret_file_permissions(path)?;
+    Ok(token)
+}
+
+#[cfg(unix)]
+fn set_secret_file_permissions(path: &Path) -> Result<(), std::io::Error> {
+    use std::os::unix::fs::PermissionsExt;
+
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
+}
+
+#[cfg(not(unix))]
+fn set_secret_file_permissions(_path: &Path) -> Result<(), std::io::Error> {
+    Ok(())
 }
 
 pub(crate) fn workspace_display_context(
@@ -2852,6 +2884,41 @@ mod tests {
             locations.workspace_index_file,
             Some(path_to_string(&workspace_index_path))
         );
+    }
+
+    #[test]
+    fn codex_mcp_token_is_created_once_and_reused() {
+        let dir = tempdir().unwrap();
+        let token_path = dir.path().join("nested").join(CODEX_MCP_TOKEN_FILE);
+
+        let first = load_or_create_codex_mcp_token(&token_path).unwrap();
+        let second = load_or_create_codex_mcp_token(&token_path).unwrap();
+
+        assert!(!first.is_empty());
+        assert_eq!(first, second);
+        assert_eq!(std::fs::read_to_string(&token_path).unwrap(), first);
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+
+            assert_eq!(
+                std::fs::metadata(&token_path).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+        }
+    }
+
+    #[test]
+    fn codex_mcp_token_replaces_empty_files() {
+        let dir = tempdir().unwrap();
+        let token_path = dir.path().join(CODEX_MCP_TOKEN_FILE);
+        std::fs::write(&token_path, "\n").unwrap();
+
+        let token = load_or_create_codex_mcp_token(&token_path).unwrap();
+
+        assert!(!token.is_empty());
+        assert_eq!(std::fs::read_to_string(&token_path).unwrap(), token);
     }
 
     #[test]
