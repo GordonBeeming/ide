@@ -243,7 +243,7 @@ jobs:
             version "${VERSION}"
             sha256 "${DMG_SHA256}"
 
-            url "https://github.com/gordonbeeming/ide/releases/download/v#{version}/ide-#{version}-aarch64.dmg"
+            url "https://github.com/gordonbeeming/ide/releases/download/v#{version.major_minor}/ide-#{version.major_minor}-aarch64.dmg"
             name "ide"
             desc "Lean local IDE"
             homepage "https://github.com/gordonbeeming/ide"
