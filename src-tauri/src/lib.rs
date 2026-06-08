@@ -4,6 +4,8 @@ mod lsp;
 mod workspace;
 mod workspace_index;
 
+use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -23,6 +25,7 @@ use workspace::{
 struct AppState {
     workspace_root: Arc<RwLock<PathBuf>>,
     initial_file: Arc<RwLock<Option<String>>>,
+    window_sessions: Arc<std::sync::RwLock<HashMap<String, WorkspaceSessionState>>>,
     pending_open_requests: Arc<std::sync::RwLock<Vec<OpenLaunchRequest>>>,
     recent_items: Arc<std::sync::RwLock<RecentItems>>,
     recent_store_path: Arc<std::sync::RwLock<Option<PathBuf>>>,
@@ -42,6 +45,13 @@ struct AppState {
     codex_mcp: Arc<RwLock<Option<CodexMcpInfo>>>,
     claude_bridge: Arc<RwLock<Option<claude_bridge::ClaudeBridgeInfo>>>,
     claude_bridge_error: Arc<RwLock<Option<String>>>,
+}
+
+#[derive(Clone)]
+struct WorkspaceSessionState {
+    workspace_root: Arc<RwLock<PathBuf>>,
+    initial_file: Arc<RwLock<Option<String>>>,
+    agent_context: Arc<RwLock<AgentContext>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -283,10 +293,9 @@ fn sanitize_view_settings(mut settings: PersistedViewSettings) -> PersistedViewS
         MIN_BACKGROUND_INDEX_BATCH_ENTRIES,
         MAX_BACKGROUND_INDEX_BATCH_ENTRIES,
     );
-    settings.workspace_title_max_chars = settings.workspace_title_max_chars.clamp(
-        MIN_WORKSPACE_TITLE_MAX_CHARS,
-        MAX_WORKSPACE_TITLE_MAX_CHARS,
-    );
+    settings.workspace_title_max_chars = settings
+        .workspace_title_max_chars
+        .clamp(MIN_WORKSPACE_TITLE_MAX_CHARS, MAX_WORKSPACE_TITLE_MAX_CHARS);
     settings.command_palette_result_limit = settings.command_palette_result_limit.clamp(
         MIN_COMMAND_PALETTE_RESULT_LIMIT,
         MAX_COMMAND_PALETTE_RESULT_LIMIT,
@@ -389,19 +398,85 @@ impl serde::Serialize for CommandError {
     }
 }
 
-#[tauri::command]
-async fn get_workspace_root(state: State<'_, AppState>) -> Result<String, CommandError> {
-    Ok(state
+fn default_workspace_session(state: &AppState) -> WorkspaceSessionState {
+    WorkspaceSessionState {
+        workspace_root: state.workspace_root.clone(),
+        initial_file: state.initial_file.clone(),
+        agent_context: state.agent_context.clone(),
+    }
+}
+
+fn window_session_for_label(state: &AppState, label: &str) -> WorkspaceSessionState {
+    state
+        .window_sessions
+        .read()
+        .ok()
+        .and_then(|sessions| sessions.get(label).cloned())
+        .unwrap_or_else(|| default_workspace_session(state))
+}
+
+fn register_window_session(state: &AppState, label: &str, target: LaunchTarget) {
+    if let Ok(mut sessions) = state.window_sessions.write() {
+        sessions.insert(
+            label.to_string(),
+            WorkspaceSessionState {
+                workspace_root: Arc::new(RwLock::new(target.workspace_root)),
+                initial_file: Arc::new(RwLock::new(target.initial_file)),
+                agent_context: Arc::new(RwLock::new(AgentContext::default())),
+            },
+        );
+    }
+}
+
+fn remove_window_session(state: &AppState, label: &str) {
+    if label == "main" {
+        return;
+    }
+    if let Ok(mut sessions) = state.window_sessions.write() {
+        sessions.remove(label);
+    }
+}
+
+async fn workspace_root_for_window(state: &AppState, window: &tauri::Window) -> PathBuf {
+    window_session_for_label(state, window.label())
         .workspace_root
         .read()
         .await
+        .clone()
+}
+
+async fn workspace_root_string_for_window(state: &AppState, window: &tauri::Window) -> String {
+    workspace_root_for_window(state, window)
+        .await
         .to_string_lossy()
-        .to_string())
+        .to_string()
+}
+
+async fn agent_context_for_window(
+    state: &AppState,
+    window: &tauri::Window,
+) -> Arc<RwLock<AgentContext>> {
+    window_session_for_label(state, window.label()).agent_context
 }
 
 #[tauri::command]
-async fn get_initial_file(state: State<'_, AppState>) -> Result<Option<String>, CommandError> {
-    Ok(state.initial_file.read().await.clone())
+async fn get_workspace_root(
+    window: tauri::Window,
+    state: State<'_, AppState>,
+) -> Result<String, CommandError> {
+    Ok(workspace_root_string_for_window(&state, &window).await)
+}
+
+#[tauri::command]
+async fn get_initial_file(
+    window: tauri::Window,
+    state: State<'_, AppState>,
+) -> Result<Option<String>, CommandError> {
+    Ok(window_session_for_label(&state, window.label())
+        .initial_file
+        .read()
+        .await
+        .clone())
 }
 
 #[tauri::command]
@@ -417,12 +492,13 @@ async fn take_opened_launch_targets(
 
 #[tauri::command]
 async fn list_files(
+    window: tauri::Window,
     state: State<'_, AppState>,
     show_dotfiles: bool,
     show_generated_internal: bool,
     tree_scan_limit: Option<usize>,
 ) -> Result<workspace::WorkspaceScan, CommandError> {
-    let workspace_root = state.workspace_root.read().await.clone();
+    let workspace_root = workspace_root_for_window(&state, &window).await;
     let tree_scan_limit = tree_scan_limit.unwrap_or_else(|| {
         state
             .tree_scan_limit
@@ -448,12 +524,13 @@ async fn list_files(
 
 #[tauri::command]
 async fn list_directory(
+    window: tauri::Window,
     state: State<'_, AppState>,
     path: String,
     show_dotfiles: bool,
     show_generated_internal: bool,
 ) -> Result<Vec<workspace::FileEntry>, CommandError> {
-    let workspace_root = state.workspace_root.read().await.clone();
+    let workspace_root = workspace_root_for_window(&state, &window).await;
     let entries = workspace_directory_entries(
         &workspace_root,
         &path,
@@ -469,13 +546,14 @@ async fn list_directory(
 
 #[tauri::command]
 async fn search_indexed_files(
+    window: tauri::Window,
     state: State<'_, AppState>,
     query: String,
     limit: Option<usize>,
     show_dotfiles: bool,
     show_generated_internal: bool,
 ) -> Result<Vec<workspace::FileEntry>, CommandError> {
-    let workspace_root = state.workspace_root.read().await.clone();
+    let workspace_root = workspace_root_for_window(&state, &window).await;
     let limit = limit
         .unwrap_or_else(default_quick_open_result_limit)
         .clamp(MIN_QUICK_OPEN_RESULT_LIMIT, MAX_QUICK_OPEN_RESULT_LIMIT);
@@ -559,11 +637,12 @@ fn refresh_indexed_entry(
 
 #[tauri::command]
 async fn read_file(
+    window: tauri::Window,
     state: State<'_, AppState>,
     path: String,
     max_open_bytes: Option<u64>,
 ) -> Result<String, CommandError> {
-    let workspace_root = state.workspace_root.read().await.clone();
+    let workspace_root = workspace_root_for_window(&state, &window).await;
     let max_open_bytes = max_open_bytes
         .unwrap_or_else(|| {
             state
@@ -581,21 +660,23 @@ async fn read_file(
 
 #[tauri::command]
 async fn stat_file(
+    window: tauri::Window,
     state: State<'_, AppState>,
     path: String,
 ) -> Result<workspace::FileEntry, CommandError> {
-    let workspace_root = state.workspace_root.read().await.clone();
+    let workspace_root = workspace_root_for_window(&state, &window).await;
     workspace_file_entry(&workspace_root, &path).map_err(CommandError::from)
 }
 
 #[tauri::command]
 async fn write_file(
+    window: tauri::Window,
     state: State<'_, AppState>,
     path: String,
     contents: String,
     expected_modified_ms: Option<u128>,
 ) -> Result<(), CommandError> {
-    let workspace_root = state.workspace_root.read().await.clone();
+    let workspace_root = workspace_root_for_window(&state, &window).await;
     write_workspace_file(&workspace_root, &path, &contents, expected_modified_ms)
         .map_err(CommandError::from)?;
     refresh_indexed_entry(&state.workspace_index, &workspace_root, &path)?;
@@ -603,16 +684,24 @@ async fn write_file(
 }
 
 #[tauri::command]
-async fn create_file(state: State<'_, AppState>, path: String) -> Result<(), CommandError> {
-    let workspace_root = state.workspace_root.read().await.clone();
+async fn create_file(
+    window: tauri::Window,
+    state: State<'_, AppState>,
+    path: String,
+) -> Result<(), CommandError> {
+    let workspace_root = workspace_root_for_window(&state, &window).await;
     create_workspace_file(&workspace_root, &path).map_err(CommandError::from)?;
     refresh_indexed_entry(&state.workspace_index, &workspace_root, &path)?;
     Ok(())
 }
 
 #[tauri::command]
-async fn create_folder(state: State<'_, AppState>, path: String) -> Result<(), CommandError> {
-    let workspace_root = state.workspace_root.read().await.clone();
+async fn create_folder(
+    window: tauri::Window,
+    state: State<'_, AppState>,
+    path: String,
+) -> Result<(), CommandError> {
+    let workspace_root = workspace_root_for_window(&state, &window).await;
     create_workspace_folder(&workspace_root, &path).map_err(CommandError::from)?;
     refresh_indexed_entry(&state.workspace_index, &workspace_root, &path)?;
     Ok(())
@@ -620,11 +709,12 @@ async fn create_folder(state: State<'_, AppState>, path: String) -> Result<(), C
 
 #[tauri::command]
 async fn rename_file(
+    window: tauri::Window,
     state: State<'_, AppState>,
     from_path: String,
     to_path: String,
 ) -> Result<(), CommandError> {
-    let workspace_root = state.workspace_root.read().await.clone();
+    let workspace_root = workspace_root_for_window(&state, &window).await;
     rename_workspace_file(&workspace_root, &from_path, &to_path).map_err(CommandError::from)?;
     state
         .workspace_index
@@ -634,8 +724,12 @@ async fn rename_file(
 }
 
 #[tauri::command]
-async fn delete_file(state: State<'_, AppState>, path: String) -> Result<(), CommandError> {
-    let workspace_root = state.workspace_root.read().await.clone();
+async fn delete_file(
+    window: tauri::Window,
+    state: State<'_, AppState>,
+    path: String,
+) -> Result<(), CommandError> {
+    let workspace_root = workspace_root_for_window(&state, &window).await;
     delete_workspace_file(&workspace_root, &path).map_err(CommandError::from)?;
     state.workspace_index.remove_path(&workspace_root, &path)?;
     Ok(())
@@ -643,13 +737,14 @@ async fn delete_file(state: State<'_, AppState>, path: String) -> Result<(), Com
 
 #[tauri::command]
 async fn search_files(
+    window: tauri::Window,
     state: State<'_, AppState>,
     query: String,
     max_results: Option<usize>,
     max_file_bytes: Option<u64>,
     show_dotfiles: Option<bool>,
 ) -> Result<workspace::WorkspaceSearch, CommandError> {
-    let workspace_root = state.workspace_root.read().await.clone();
+    let workspace_root = workspace_root_for_window(&state, &window).await;
     let max_results = max_results
         .unwrap_or_else(|| {
             state
@@ -686,6 +781,7 @@ async fn search_files(
 
 #[tauri::command]
 async fn pick_workspace_folder(
+    window: tauri::Window,
     app: tauri::AppHandle,
     state: State<'_, AppState>,
 ) -> Result<Option<String>, CommandError> {
@@ -701,7 +797,7 @@ async fn pick_workspace_folder(
     let path = path
         .into_path()
         .map_err(|error| CommandError::Dialog(error.to_string()))?;
-    let root = set_workspace_root_path(&state, path).await?;
+    let root = set_workspace_root_path(&state, Some(window.label()), path).await?;
     persist_recent_items(&state)?;
     rebuild_app_menu(&app, &state)?;
     Ok(Some(root))
@@ -730,11 +826,12 @@ async fn pick_open_file(app: tauri::AppHandle) -> Result<Option<OpenFileRequest>
 
 #[tauri::command]
 async fn set_workspace_root(
+    window: tauri::Window,
     app: tauri::AppHandle,
     state: State<'_, AppState>,
     path: String,
 ) -> Result<String, CommandError> {
-    let root = set_workspace_root_path(&state, PathBuf::from(path)).await?;
+    let root = set_workspace_root_path(&state, Some(window.label()), PathBuf::from(path)).await?;
     persist_recent_items(&state)?;
     rebuild_app_menu(&app, &state)?;
     Ok(root)
@@ -742,25 +839,24 @@ async fn set_workspace_root(
 
 #[tauri::command]
 async fn record_recent_file(
+    window: tauri::Window,
     app: tauri::AppHandle,
     state: State<'_, AppState>,
     path: String,
     single_file: bool,
 ) -> Result<(), CommandError> {
-    let workspace_root = state.workspace_root.read().await.clone();
+    let workspace_root = workspace_root_for_window(&state, &window).await;
     record_recent_file_item(&state, &workspace_root, &path, single_file)?;
     persist_recent_items(&state)?;
     rebuild_app_menu(&app, &state)
 }
 
 #[tauri::command]
-async fn get_ui_state(state: State<'_, AppState>) -> Result<PersistedUiSnapshot, CommandError> {
-    let workspace_root = state
-        .workspace_root
-        .read()
-        .await
-        .to_string_lossy()
-        .to_string();
+async fn get_ui_state(
+    window: tauri::Window,
+    state: State<'_, AppState>,
+) -> Result<PersistedUiSnapshot, CommandError> {
+    let workspace_root = workspace_root_string_for_window(&state, &window).await;
     workspace_ui_snapshot_for_root(&state, &workspace_root)
 }
 
@@ -771,10 +867,11 @@ fn get_settings_locations(state: State<'_, AppState>) -> Result<SettingsLocation
 
 #[tauri::command]
 async fn get_workspace_display_context(
+    window: tauri::Window,
     state: State<'_, AppState>,
     title_max_chars: Option<usize>,
 ) -> Result<WorkspaceDisplayContext, CommandError> {
-    let workspace_root = state.workspace_root.read().await.clone();
+    let workspace_root = workspace_root_for_window(&state, &window).await;
     Ok(workspace_display_context(
         &workspace_root,
         title_max_chars.unwrap_or_else(default_workspace_title_max_chars),
@@ -783,9 +880,10 @@ async fn get_workspace_display_context(
 
 #[tauri::command]
 async fn get_workspace_index_stats(
+    window: tauri::Window,
     state: State<'_, AppState>,
 ) -> Result<workspace_index::WorkspaceIndexStats, CommandError> {
-    let workspace_root = state.workspace_root.read().await.clone();
+    let workspace_root = workspace_root_for_window(&state, &window).await;
     workspace_index_stats_for_root(&state.workspace_index, &workspace_root)
 }
 
@@ -827,16 +925,12 @@ fn settings_locations_for_state(state: &AppState) -> Result<SettingsLocations, C
 
 #[tauri::command]
 async fn update_ui_state(
+    window: tauri::Window,
     state: State<'_, AppState>,
     view: PersistedViewSettings,
     workspace: WorkspaceUiStatePayload,
 ) -> Result<(), CommandError> {
-    let workspace_root = state
-        .workspace_root
-        .read()
-        .await
-        .to_string_lossy()
-        .to_string();
+    let workspace_root = workspace_root_string_for_window(&state, &window).await;
     let mut workspace = sanitize_workspace_ui_state(workspace);
     let mut ui_state = state
         .ui_state
@@ -887,12 +981,13 @@ async fn update_ui_state(
 
 #[tauri::command]
 async fn advance_workspace_index(
+    window: tauri::Window,
     state: State<'_, AppState>,
     entry_limit: Option<usize>,
     show_dotfiles: bool,
     show_generated_internal: bool,
 ) -> Result<workspace_index::WorkspaceIndexStats, CommandError> {
-    let workspace_root = state.workspace_root.read().await.clone();
+    let workspace_root = workspace_root_for_window(&state, &window).await;
     let entry_limit = entry_limit
         .unwrap_or_else(|| {
             state
@@ -918,16 +1013,23 @@ async fn advance_workspace_index(
 
 #[tauri::command]
 async fn update_agent_context(
+    window: tauri::Window,
     state: State<'_, AppState>,
     context: AgentContext,
 ) -> Result<(), CommandError> {
-    *state.agent_context.write().await = context;
+    let agent_context = agent_context_for_window(&state, &window).await;
+    *agent_context.write().await = context;
     Ok(())
 }
 
 #[tauri::command]
-async fn get_agent_context(state: State<'_, AppState>) -> Result<AgentContext, CommandError> {
-    Ok(state.agent_context.read().await.clone())
+async fn get_agent_context(
+    window: tauri::Window,
+    state: State<'_, AppState>,
+) -> Result<AgentContext, CommandError> {
+    let agent_context = agent_context_for_window(&state, &window).await;
+    let context = agent_context.read().await.clone();
+    Ok(context)
 }
 
 #[tauri::command]
@@ -967,11 +1069,12 @@ async fn get_claude_bridge_status(
 
 #[tauri::command]
 async fn start_lsp(
+    window: tauri::Window,
     app: tauri::AppHandle,
     state: State<'_, AppState>,
     language: String,
 ) -> Result<lsp::LspStartResult, CommandError> {
-    let workspace_root = state.workspace_root.read().await.clone();
+    let workspace_root = workspace_root_for_window(&state, &window).await;
     state
         .lsp_manager
         .start(app, &language, &workspace_root)
@@ -1009,6 +1112,7 @@ pub fn run() {
     let app_state = AppState {
         workspace_root: Arc::new(RwLock::new(initial_launch_target.workspace_root)),
         initial_file: Arc::new(RwLock::new(initial_launch_target.initial_file)),
+        window_sessions: Arc::new(std::sync::RwLock::new(HashMap::new())),
         pending_open_requests: Arc::new(std::sync::RwLock::new(Vec::new())),
         recent_items: Arc::new(std::sync::RwLock::new(RecentItems::default())),
         recent_store_path: Arc::new(std::sync::RwLock::new(None)),
@@ -1042,6 +1146,20 @@ pub fn run() {
     let http_state = app_state.clone();
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            match explicit_launch_target_from_args(&args) {
+                Ok(Some(target)) => {
+                    if let Err(error) = open_launch_target_window(app, target) {
+                        let _ = app.emit("app://error", error.to_string());
+                    }
+                }
+                Ok(None) => focus_first_window(app),
+                Err(error) => {
+                    let _ = app.emit("app://error", error.to_string());
+                    focus_first_window(app);
+                }
+            }
+        }))
         .manage(app_state)
         .setup(move |app| {
             let recent_store_path = app
@@ -1085,6 +1203,14 @@ pub fn run() {
                 })?;
             *http_state.workspace_root.blocking_write() = launch_target.workspace_root;
             *http_state.initial_file.blocking_write() = launch_target.initial_file;
+            register_window_session(
+                &http_state,
+                "main",
+                LaunchTarget {
+                    workspace_root: http_state.workspace_root.blocking_read().clone(),
+                    initial_file: http_state.initial_file.blocking_read().clone(),
+                },
+            );
             *http_state
                 .tree_scan_limit
                 .write()
@@ -1211,6 +1337,12 @@ pub fn run() {
             });
             Ok(())
         })
+        .on_window_event(|window, event| {
+            if matches!(event, tauri::WindowEvent::Destroyed) {
+                let state = window.state::<AppState>();
+                remove_window_session(&state, window.label());
+            }
+        })
         .on_menu_event(|app, event| {
             let id = event.id().as_ref().to_string();
             if id == "open_folder" {
@@ -1222,7 +1354,8 @@ pub fn run() {
                 {
                     match path.into_path() {
                         Ok(path) => {
-                            let _ = app.emit(
+                            emit_to_active_window(
+                                app,
                                 "menu://open-workspace",
                                 OpenWorkspaceRequest {
                                     path: path.to_string_lossy().to_string(),
@@ -1254,9 +1387,10 @@ pub fn run() {
                             if let Some(request) =
                                 open_file_request_for_launch_target(target.clone())
                             {
-                                let _ = app.emit("menu://open-file", request);
+                                emit_to_active_window(app, "menu://open-file", request);
                             } else {
-                                let _ = app.emit(
+                                emit_to_active_window(
+                                    app,
                                     "menu://open-workspace",
                                     OpenWorkspaceRequest {
                                         path: target.workspace_root.to_string_lossy().to_string(),
@@ -1273,82 +1407,82 @@ pub fn run() {
             }
 
             if id == "new_file" {
-                let _ = app.emit("menu://new-file", ());
+                emit_to_active_window(app, "menu://new-file", ());
                 return;
             }
 
             if id == "new_folder" {
-                let _ = app.emit("menu://new-folder", ());
+                emit_to_active_window(app, "menu://new-folder", ());
                 return;
             }
 
             if id == "save_file" {
-                let _ = app.emit("menu://save-file", ());
+                emit_to_active_window(app, "menu://save-file", ());
                 return;
             }
 
             if id == "save_all" {
-                let _ = app.emit("menu://save-all", ());
+                emit_to_active_window(app, "menu://save-all", ());
                 return;
             }
 
             if id == "reload_file" {
-                let _ = app.emit("menu://reload-file", ());
+                emit_to_active_window(app, "menu://reload-file", ());
                 return;
             }
 
             if id == "rename_selected" {
-                let _ = app.emit("menu://rename-selected", ());
+                emit_to_active_window(app, "menu://rename-selected", ());
                 return;
             }
 
             if id == "delete_selected" {
-                let _ = app.emit("menu://delete-selected", ());
+                emit_to_active_window(app, "menu://delete-selected", ());
                 return;
             }
 
             if id == "close_tab" {
-                let _ = app.emit("menu://close-tab", ());
+                emit_to_active_window(app, "menu://close-tab", ());
                 return;
             }
 
             if id == "close_all" {
-                let _ = app.emit("menu://close-all", ());
+                emit_to_active_window(app, "menu://close-all", ());
                 return;
             }
 
             if id == "go_to_definition" {
-                let _ = app.emit("menu://go-to-definition", ());
+                emit_to_active_window(app, "menu://go-to-definition", ());
                 return;
             }
 
             if id == "find_references" {
-                let _ = app.emit("menu://find-references", ());
+                emit_to_active_window(app, "menu://find-references", ());
                 return;
             }
 
             if id == "command_palette" {
-                let _ = app.emit("menu://command-palette", ());
+                emit_to_active_window(app, "menu://command-palette", ());
                 return;
             }
 
             if id == "quick_open" {
-                let _ = app.emit("menu://quick-open", ());
+                emit_to_active_window(app, "menu://quick-open", ());
                 return;
             }
 
             if id == "go_to_line" {
-                let _ = app.emit("menu://go-to-line", ());
+                emit_to_active_window(app, "menu://go-to-line", ());
                 return;
             }
 
             if id == "find_in_file" {
-                let _ = app.emit("menu://find-in-file", ());
+                emit_to_active_window(app, "menu://find-in-file", ());
                 return;
             }
 
             if id == "find_in_files" {
-                let _ = app.emit("menu://find-in-files", ());
+                emit_to_active_window(app, "menu://find-in-files", ());
                 return;
             }
 
@@ -1363,7 +1497,8 @@ pub fn run() {
                     .ok()
                     .and_then(|items| items.workspaces.get(index).cloned());
                 if let Some(item) = item {
-                    let _ = app.emit(
+                    emit_to_active_window(
+                        app,
                         "menu://open-workspace",
                         OpenWorkspaceRequest { path: item.path },
                     );
@@ -1382,7 +1517,8 @@ pub fn run() {
                     .ok()
                     .and_then(|items| items.files.get(index).cloned());
                 if let Some(item) = item {
-                    let _ = app.emit(
+                    emit_to_active_window(
+                        app,
                         "menu://open-file",
                         OpenFileRequest {
                             workspace_root: item.workspace_root,
@@ -1395,12 +1531,12 @@ pub fn run() {
             }
 
             if id == "show_integrations" {
-                let _ = app.emit("menu://show-integrations", ());
+                emit_to_active_window(app, "menu://show-integrations", ());
                 return;
             }
 
             if id == "show_settings" {
-                let _ = app.emit("menu://show-settings", ());
+                emit_to_active_window(app, "menu://show-settings", ());
             }
         })
         .plugin(tauri_plugin_dialog::init())
@@ -1456,7 +1592,7 @@ pub fn run() {
                 }
 
                 for request in requests {
-                    emit_open_launch_request(app, request);
+                    open_launch_request_window(app, request);
                 }
             }
         });
@@ -1464,6 +1600,7 @@ pub fn run() {
 
 async fn set_workspace_root_path(
     state: &State<'_, AppState>,
+    window_label: Option<&str>,
     path: PathBuf,
 ) -> Result<String, CommandError> {
     let canonical = path.canonicalize().map_err(WorkspaceError::from)?;
@@ -1471,13 +1608,25 @@ async fn set_workspace_root_path(
         return Err(CommandError::WorkspaceNotDirectory);
     }
 
-    *state.workspace_root.write().await = canonical.clone();
-    *state.agent_context.write().await = AgentContext::default();
-    state.lsp_manager.stop_all().await;
+    let updates_shared_workspace = window_label.is_none() || window_label == Some("main");
+    if let Some(label) = window_label {
+        let session = window_session_for_label(state, label);
+        *session.workspace_root.write().await = canonical.clone();
+        *session.initial_file.write().await = None;
+        *session.agent_context.write().await = AgentContext::default();
+    }
+    if updates_shared_workspace {
+        *state.workspace_root.write().await = canonical.clone();
+        *state.initial_file.write().await = None;
+        *state.agent_context.write().await = AgentContext::default();
+        state.lsp_manager.stop_all().await;
+    }
     record_recent_workspace_item(state, &canonical)?;
-    if let Some(bridge) = state.claude_bridge.read().await.clone() {
-        claude_bridge::update_lock_workspace(&bridge.lock_file, &canonical)
-            .map_err(|error| CommandError::ClaudeBridge(error.to_string()))?;
+    if updates_shared_workspace {
+        if let Some(bridge) = state.claude_bridge.read().await.clone() {
+            claude_bridge::update_lock_workspace(&bridge.lock_file, &canonical)
+                .map_err(|error| CommandError::ClaudeBridge(error.to_string()))?;
+        }
     }
 
     Ok(canonical.to_string_lossy().to_string())
@@ -1843,10 +1992,8 @@ pub(crate) fn workspace_display_context(
     workspace_root: &Path,
     title_max_chars: usize,
 ) -> WorkspaceDisplayContext {
-    let title_max_chars = title_max_chars.clamp(
-        MIN_WORKSPACE_TITLE_MAX_CHARS,
-        MAX_WORKSPACE_TITLE_MAX_CHARS,
-    );
+    let title_max_chars =
+        title_max_chars.clamp(MIN_WORKSPACE_TITLE_MAX_CHARS, MAX_WORKSPACE_TITLE_MAX_CHARS);
     let canonical_root = workspace_root
         .canonicalize()
         .unwrap_or_else(|_| workspace_root.to_path_buf());
@@ -2094,26 +2241,107 @@ fn open_launch_requests_for_urls(urls: Vec<tauri::Url>) -> Vec<OpenLaunchRequest
         .collect()
 }
 
-fn emit_open_launch_request(app: &tauri::AppHandle, request: OpenLaunchRequest) {
-    match request {
-        OpenLaunchRequest::Workspace { path } => {
-            let _ = app.emit("menu://open-workspace", OpenWorkspaceRequest { path });
-        }
+fn focus_window(window: &tauri::WebviewWindow) {
+    let _ = window.show();
+    let _ = window.unminimize();
+    let _ = window.set_focus();
+}
+
+fn active_window(app: &tauri::AppHandle) -> Option<tauri::WebviewWindow> {
+    app.webview_windows()
+        .into_values()
+        .find(|window| window.is_focused().unwrap_or(false))
+        .or_else(|| app.get_webview_window("main"))
+        .or_else(|| app.webview_windows().into_values().next())
+}
+
+fn emit_to_active_window<S>(app: &tauri::AppHandle, event: &str, payload: S)
+where
+    S: serde::Serialize + Clone,
+{
+    if let Some(window) = active_window(app) {
+        let _ = window.emit(event, payload);
+    } else {
+        let _ = app.emit(event, payload);
+    }
+}
+
+fn focus_first_window(app: &tauri::AppHandle) {
+    if let Some(window) = active_window(app) {
+        focus_window(&window);
+    }
+}
+
+fn launch_target_window_label(target: &LaunchTarget) -> String {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    target.workspace_root.to_string_lossy().hash(&mut hasher);
+    target.initial_file.hash(&mut hasher);
+    format!("workspace-{:x}", hasher.finish())
+}
+
+fn open_launch_target_window(
+    app: &tauri::AppHandle,
+    target: LaunchTarget,
+) -> Result<(), tauri::Error> {
+    let label = launch_target_window_label(&target);
+    if let Some(window) = app.get_webview_window(&label) {
+        focus_window(&window);
+        return Ok(());
+    }
+
+    let state = app.state::<AppState>();
+    register_window_session(&state, &label, target);
+    let window =
+        tauri::WebviewWindowBuilder::new(app, label, tauri::WebviewUrl::App("index.html".into()))
+            .title("ide")
+            .inner_size(1440.0, 960.0)
+            .min_inner_size(960.0, 640.0)
+            .build()?;
+    focus_window(&window);
+    Ok(())
+}
+
+fn open_launch_request_window(app: &tauri::AppHandle, request: OpenLaunchRequest) {
+    let target = match request {
+        OpenLaunchRequest::Workspace { path } => LaunchTarget {
+            workspace_root: PathBuf::from(path),
+            initial_file: None,
+        },
         OpenLaunchRequest::File {
             workspace_root,
             path,
-            single_file,
-        } => {
-            let _ = app.emit(
-                "menu://open-file",
-                OpenFileRequest {
-                    workspace_root,
-                    path,
-                    single_file,
-                },
-            );
-        }
+            single_file: _,
+        } => LaunchTarget {
+            workspace_root: PathBuf::from(workspace_root),
+            initial_file: Some(path),
+        },
+    };
+    if let Err(error) = open_launch_target_window(app, target) {
+        let _ = app.emit("app://error", error.to_string());
     }
+}
+
+fn explicit_launch_target_from_args(
+    args: &[String],
+) -> Result<Option<LaunchTarget>, std::io::Error> {
+    let current_exe = std::env::current_exe()
+        .ok()
+        .and_then(|path| path.canonicalize().ok());
+    launch_target_from_args(args, current_exe.as_deref())
+}
+
+fn launch_target_from_args(
+    args: &[String],
+    current_exe: Option<&Path>,
+) -> Result<Option<LaunchTarget>, std::io::Error> {
+    args.iter()
+        .map(PathBuf::from)
+        .filter(|path| {
+            !current_exe.is_some_and(|exe| path.canonicalize().ok().as_deref() == Some(exe))
+        })
+        .find(|path| path.exists())
+        .map(launch_target_for_path)
+        .transpose()
 }
 
 fn project_root_for_process_dir(process_dir: &std::path::Path) -> PathBuf {
@@ -2240,6 +2468,48 @@ mod tests {
 
         assert_eq!(requests.len(), 1);
         assert!(matches!(requests[0], OpenLaunchRequest::File { .. }));
+    }
+
+    #[test]
+    fn launch_target_from_args_accepts_target_without_executable_arg() {
+        let dir = tempdir().unwrap();
+        let canonical_dir = dir.path().canonicalize().unwrap();
+        let args = vec![dir.path().to_string_lossy().to_string()];
+
+        let target = launch_target_from_args(&args, None).unwrap();
+
+        assert_eq!(
+            target,
+            Some(LaunchTarget {
+                workspace_root: canonical_dir,
+                initial_file: None,
+            })
+        );
+    }
+
+    #[test]
+    fn launch_target_from_args_ignores_executable_arg_when_present() {
+        let dir = tempdir().unwrap();
+        let fake_exe = dir.path().join("ide-bin");
+        let workspace = dir.path().join("workspace");
+        std::fs::write(&fake_exe, "").unwrap();
+        std::fs::create_dir(&workspace).unwrap();
+        let canonical_workspace = workspace.canonicalize().unwrap();
+        let canonical_exe = fake_exe.canonicalize().unwrap();
+        let args = vec![
+            fake_exe.to_string_lossy().to_string(),
+            workspace.to_string_lossy().to_string(),
+        ];
+
+        let target = launch_target_from_args(&args, Some(&canonical_exe)).unwrap();
+
+        assert_eq!(
+            target,
+            Some(LaunchTarget {
+                workspace_root: canonical_workspace,
+                initial_file: None,
+            })
+        );
     }
 
     #[test]
@@ -2415,6 +2685,7 @@ mod tests {
                 current_file_result_preview_limit: 16,
                 quick_open_result_limit: 24,
                 background_index_batch_entries: 3_000,
+                workspace_title_max_chars: 50,
                 command_palette_result_limit: 32,
             },
             workspaces: vec![PersistedWorkspaceUiState {
@@ -2551,6 +2822,7 @@ mod tests {
         AppState {
             workspace_root: Arc::new(RwLock::new(PathBuf::new())),
             initial_file: Arc::new(RwLock::new(None)),
+            window_sessions: Arc::new(std::sync::RwLock::new(HashMap::new())),
             pending_open_requests: Arc::new(std::sync::RwLock::new(Vec::new())),
             recent_items: Arc::new(std::sync::RwLock::new(RecentItems::default())),
             recent_store_path: Arc::new(std::sync::RwLock::new(Some(recents_path))),

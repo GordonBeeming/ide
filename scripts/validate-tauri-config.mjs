@@ -19,6 +19,7 @@ const defaultCapability = JSON.parse(fs.readFileSync(defaultCapabilityPath, "utf
 const associations = config.bundle?.fileAssociations;
 const bundleIcons = config.bundle?.icon;
 const mainWindowPermissions = defaultCapability.permissions ?? [];
+const defaultCapabilityWindows = defaultCapability.windows ?? [];
 
 const requiredAssociatedExtensions = [
   "rs",
@@ -81,6 +82,16 @@ if (config.productName !== "ide") {
 const mainWindow = config.app?.windows?.[0];
 if (mainWindow?.title !== "ide") {
   errors.push('main window title must remain lowercase "ide"');
+}
+
+if (!Array.isArray(defaultCapabilityWindows)) {
+  errors.push("default capability windows must be an array");
+} else {
+  for (const windowPattern of ["main", "workspace-*"]) {
+    if (!defaultCapabilityWindows.includes(windowPattern)) {
+      errors.push(`default capability windows must include ${windowPattern}`);
+    }
+  }
 }
 
 if (!Array.isArray(mainWindowPermissions)) {

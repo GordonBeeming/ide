@@ -325,6 +325,7 @@ describe("hosted Tauri API transport", () => {
         currentFileResultPreviewLimit: 12,
         quickOpenResultLimit: 12,
         backgroundIndexBatchEntries: 2000,
+        workspaceTitleMaxChars: 50,
         commandPaletteResultLimit: 18,
       },
       workspace: {
