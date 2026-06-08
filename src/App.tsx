@@ -14,6 +14,7 @@ import {
   ChevronRight,
   Circle,
   Copy,
+  ExternalLink,
   FileInput,
   FilePlus,
   FileCog,
@@ -65,6 +66,7 @@ import {
 import { destroyNativeWindow, onNativeWindowCloseRequested, setNativeWindowTitle } from "./appWindow";
 import {
   AgentContext,
+  AppInfo,
   ClaudeBridgeStatus,
   CodexMcpStatus,
   EditorDiagnostic,
@@ -80,6 +82,7 @@ import {
   getCodexMcpStatus,
   getHttpEndpoint,
   getInitialFile,
+  getAppInfo,
   getLspServers,
   getSettingsLocations,
   getUiState,
@@ -140,6 +143,14 @@ import { cursorStatus, type EditorCursor } from "./editorCursor";
 
 const EditorPane = lazy(() => import("./EditorPane"));
 
+const fallbackAppInfo: AppInfo = {
+  name: "ide",
+  version: "dev",
+  description: "A lean local IDE.",
+  authors: ["Gordon Beeming"],
+  repository: "https://github.com/gordonbeeming/ide",
+};
+
 interface AppCommand extends CommandPaletteEntry {
   detail: string;
   enabled: boolean;
@@ -173,6 +184,49 @@ const settingsCategories: Array<{
   { id: "performance", title: "Performance", detail: "Scan, file, and palette caps" },
   { id: "search", title: "Search", detail: "Search result and file caps" },
   { id: "storage", title: "Storage", detail: "Settings and index files" },
+];
+
+type KeyBindingCategory = "File" | "Search" | "Navigate" | "View" | "Tabs" | "Tree" | "Dialogs";
+
+interface KeyBindingInfo {
+  category: KeyBindingCategory;
+  command: string;
+  shortcut: string;
+  when?: string;
+}
+
+const keyBindings: KeyBindingInfo[] = [
+  { category: "File", command: "New File", shortcut: "Cmd/Ctrl+N" },
+  { category: "File", command: "New Folder", shortcut: "Cmd/Ctrl+Shift+N" },
+  { category: "File", command: "Open File", shortcut: "Cmd/Ctrl+O" },
+  { category: "File", command: "Open Folder", shortcut: "Cmd/Ctrl+Shift+O" },
+  { category: "File", command: "Save", shortcut: "Cmd/Ctrl+S" },
+  { category: "File", command: "Save All", shortcut: "Cmd/Ctrl+Shift+S" },
+  { category: "File", command: "Reload from Disk", shortcut: "Cmd/Ctrl+R" },
+  { category: "File", command: "Rename Selected", shortcut: "F2" },
+  { category: "File", command: "Close Tab", shortcut: "Cmd/Ctrl+W" },
+  { category: "File", command: "Close All", shortcut: "Cmd/Ctrl+Shift+W" },
+  { category: "Search", command: "Command Palette", shortcut: "Cmd/Ctrl+Shift+P" },
+  { category: "Search", command: "Go to File", shortcut: "Cmd/Ctrl+P" },
+  { category: "Search", command: "Go to Line", shortcut: "Ctrl+G" },
+  { category: "Search", command: "Find in File", shortcut: "Cmd/Ctrl+F" },
+  { category: "Search", command: "Find in Files", shortcut: "Cmd/Ctrl+Shift+F" },
+  { category: "Navigate", command: "Go to Definition", shortcut: "F12" },
+  { category: "Navigate", command: "Find References", shortcut: "Shift+F12" },
+  { category: "View", command: "Collapse or expand sidebar", shortcut: "Cmd/Ctrl+B" },
+  { category: "View", command: "Settings", shortcut: "Cmd/Ctrl+," },
+  { category: "Tabs", command: "Activate tab 1-9", shortcut: "Cmd/Ctrl+1...9" },
+  { category: "Tabs", command: "Next tab", shortcut: "Ctrl+Tab" },
+  { category: "Tabs", command: "Previous tab", shortcut: "Ctrl+Shift+Tab" },
+  { category: "Tree", command: "Open selected file or toggle folder", shortcut: "Enter" },
+  { category: "Tree", command: "Toggle selected folder", shortcut: "Space" },
+  { category: "Tree", command: "Expand selected folder", shortcut: "ArrowRight" },
+  { category: "Tree", command: "Collapse selected folder", shortcut: "ArrowLeft" },
+  { category: "Dialogs", command: "Close active dialog or palette", shortcut: "Escape" },
+  { category: "Dialogs", command: "Move selection", shortcut: "ArrowUp / ArrowDown", when: "Quick open and command palette" },
+  { category: "Dialogs", command: "Run selected item", shortcut: "Enter", when: "Quick open and command palette" },
+  { category: "Dialogs", command: "Next find result", shortcut: "Enter", when: "Find in file" },
+  { category: "Dialogs", command: "Previous find result", shortcut: "Shift+Enter", when: "Find in file" },
 ];
 
 const minTreeScanLimit = 500;
@@ -350,10 +404,15 @@ export default function App() {
   const [pendingCloseAll, setPendingCloseAll] = useState(false);
   const [pendingAppClose, setPendingAppClose] = useState(false);
   const [integrationsOpen, setIntegrationsOpen] = useState(false);
+  const [keyBindingsOpen, setKeyBindingsOpen] = useState(false);
+  const [keyBindingsQuery, setKeyBindingsQuery] = useState("");
+  const [aboutOpen, setAboutOpen] = useState(false);
+  const [appInfo, setAppInfo] = useState<AppInfo>(fallbackAppInfo);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsCategory, setSettingsCategory] = useState<SettingsCategory>("view");
   const [showDotfiles, setShowDotfiles] = useState(false);
   const [showGeneratedInternal, setShowGeneratedInternal] = useState(false);
+  const [showDiagnosticsPanel, setShowDiagnosticsPanel] = useState(false);
   const [treeScanLimit, setTreeScanLimit] = useState(defaultTreeScanLimit);
   const [maxOpenFileKb, setMaxOpenFileKb] = useState(defaultMaxOpenFileKb);
   const [workspaceSearchResultLimit, setWorkspaceSearchResultLimit] = useState(
@@ -472,6 +531,14 @@ export default function App() {
     () => (codexMcp ? codexMcpConfigSnippet(codexMcp) : ""),
     [codexMcp],
   );
+  const repositoryLabel = useMemo(
+    () => appInfo.repository.replace(/^https?:\/\//, "").replace(/\/$/, ""),
+    [appInfo.repository],
+  );
+  const keyBindingResults = useMemo(
+    () => filterKeyBindings(keyBindings, keyBindingsQuery),
+    [keyBindingsQuery],
+  );
   const filterExpanded = activeSidebarSearch === "filter" || filter.trim().length > 0;
   const contentSearchExpanded =
     activeSidebarSearch === "content" || contentQuery.trim().length > 0;
@@ -515,6 +582,8 @@ export default function App() {
     pendingCloseAll ||
     pendingAppClose ||
     integrationsOpen ||
+    keyBindingsOpen ||
+    aboutOpen ||
     settingsOpen ||
     pendingClosePath !== undefined;
   const modalUiOpenRef = useRef(false);
@@ -591,6 +660,20 @@ export default function App() {
   }, [appTitle]);
 
   useEffect(() => {
+    let disposed = false;
+    getAppInfo()
+      .then((info) => {
+        if (!disposed) setAppInfo(info);
+      })
+      .catch(() => {
+        if (!disposed) setAppInfo(fallbackAppInfo);
+      });
+    return () => {
+      disposed = true;
+    };
+  }, []);
+
+  useEffect(() => {
     setCurrentFindIndex(-1);
   }, [activePath, currentFileQuery]);
 
@@ -608,6 +691,7 @@ export default function App() {
     setWorkspaceUiRestored(false);
     setShowDotfiles(snapshot.view.showDotfiles);
     setShowGeneratedInternal(snapshot.view.showGeneratedInternal);
+    setShowDiagnosticsPanel(Boolean(snapshot.view.showDiagnosticsPanel));
     setTreeScanLimit(sanitizeTreeScanLimit(snapshot.view.treeScanLimit));
     setMaxOpenFileKb(
       sanitizeNumberLimit(
@@ -1185,6 +1269,7 @@ export default function App() {
         {
           showDotfiles,
           showGeneratedInternal,
+          showDiagnosticsPanel,
           treeScanLimit,
           maxOpenFileKb,
           workspaceSearchResultLimit,
@@ -1214,6 +1299,7 @@ export default function App() {
     selectedPath,
     showDotfiles,
     showGeneratedInternal,
+    showDiagnosticsPanel,
     singleFileMode,
     treeScanLimit,
     maxOpenFileKb,
@@ -2021,6 +2107,12 @@ export default function App() {
       listen("menu://show-integrations", () => {
         runNativeMenuAction(() => setIntegrationsOpen(true));
       }),
+      listen("menu://show-key-bindings", () => {
+        runNativeMenuAction(() => setKeyBindingsOpen(true));
+      }),
+      listen("menu://show-about", () => {
+        runNativeMenuAction(() => setAboutOpen(true));
+      }),
       listen("menu://show-settings", () => {
         runNativeMenuAction(() => setSettingsOpen(true));
       }),
@@ -2286,6 +2378,22 @@ export default function App() {
         keywords: ["mcp", "claude", "codex", "lsp"],
         enabled: true,
         run: () => setIntegrationsOpen(true),
+      },
+      {
+        id: "show_key_bindings",
+        title: "Key Bindings",
+        detail: "Show supported keyboard shortcuts",
+        keywords: ["shortcuts", "hotkeys", "keyboard"],
+        enabled: true,
+        run: () => setKeyBindingsOpen(true),
+      },
+      {
+        id: "show_about",
+        title: "About ide",
+        detail: "Show app version and project details",
+        keywords: ["version", "release", "about"],
+        enabled: true,
+        run: () => setAboutOpen(true),
       },
       {
         id: "show_settings",
@@ -2630,6 +2738,16 @@ export default function App() {
         setIntegrationsOpen(false);
         return;
       }
+      if (event.key === "Escape" && keyBindingsOpen) {
+        event.preventDefault();
+        setKeyBindingsOpen(false);
+        return;
+      }
+      if (event.key === "Escape" && aboutOpen) {
+        event.preventDefault();
+        setAboutOpen(false);
+        return;
+      }
       if (event.key === "Escape" && settingsOpen) {
         event.preventDefault();
         setSettingsOpen(false);
@@ -2766,6 +2884,8 @@ export default function App() {
     newFileDialogOpen,
     newFolderDialogOpen,
     integrationsOpen,
+    keyBindingsOpen,
+    aboutOpen,
     settingsOpen,
     goToLineDialogOpen,
     modalUiOpen,
@@ -3000,41 +3120,43 @@ export default function App() {
           </div>
         ) : null}
 
-        <div className="diagnostics-panel" aria-label="Diagnostics">
-          <div className="diagnostics-panel__header">
-            <span>Diagnostics</span>
-            <span>{diagnostics.length}</span>
-          </div>
-          {diagnostics.length === 0 ? (
-            <div className="diagnostics-panel__empty">No diagnostics</div>
-          ) : (
-            diagnostics.map((diagnostic) => (
-              <button
-                className="diagnostic-row"
-                key={diagnosticKey(diagnostic)}
-                aria-label={`${diagnosticSeverityLabel(diagnostic.severity)} at ${diagnosticLocationLabel(diagnostic)}: ${diagnostic.message}`}
-                title={`${diagnosticLocationLabel(diagnostic)} ${diagnostic.message}`}
-                onClick={() =>
-                  openPathByName(diagnostic.filePath, false, diagnostic.startLine)
-                }
-                onDoubleClick={() =>
-                  openPathByName(diagnostic.filePath, true, diagnostic.startLine)
-                }
-              >
-                <TriangleAlert size={14} />
-                <span className="diagnostic-row__main">
-                  <span className="diagnostic-row__path">
-                    {diagnosticLocationLabel(diagnostic)}
+        {showDiagnosticsPanel ? (
+          <div className="diagnostics-panel" aria-label="Diagnostics">
+            <div className="diagnostics-panel__header">
+              <span>Diagnostics</span>
+              <span>{diagnostics.length}</span>
+            </div>
+            {diagnostics.length === 0 ? (
+              <div className="diagnostics-panel__empty">No diagnostics</div>
+            ) : (
+              diagnostics.map((diagnostic) => (
+                <button
+                  className="diagnostic-row"
+                  key={diagnosticKey(diagnostic)}
+                  aria-label={`${diagnosticSeverityLabel(diagnostic.severity)} at ${diagnosticLocationLabel(diagnostic)}: ${diagnostic.message}`}
+                  title={`${diagnosticLocationLabel(diagnostic)} ${diagnostic.message}`}
+                  onClick={() =>
+                    openPathByName(diagnostic.filePath, false, diagnostic.startLine)
+                  }
+                  onDoubleClick={() =>
+                    openPathByName(diagnostic.filePath, true, diagnostic.startLine)
+                  }
+                >
+                  <TriangleAlert size={14} />
+                  <span className="diagnostic-row__main">
+                    <span className="diagnostic-row__path">
+                      {diagnosticLocationLabel(diagnostic)}
+                    </span>
+                    <span className="diagnostic-row__message">{diagnostic.message}</span>
                   </span>
-                  <span className="diagnostic-row__message">{diagnostic.message}</span>
-                </span>
-                <span className="diagnostic-row__severity">
-                  {diagnosticSeverityLabel(diagnostic.severity)}
-                </span>
-              </button>
-            ))
-          )}
-        </div>
+                  <span className="diagnostic-row__severity">
+                    {diagnosticSeverityLabel(diagnostic.severity)}
+                  </span>
+                </button>
+              ))
+            )}
+          </div>
+        ) : null}
 
       </aside>
 
@@ -3376,15 +3498,42 @@ export default function App() {
             <div className="integration-dialog__grid">
               <section className="integration-section" aria-label="Browser endpoint">
                 <div className="eyebrow">Browser Endpoint</div>
-                <div className="endpoint" title={httpEndpoint ?? "Endpoint unavailable"}>
-                  {httpEndpoint ?? "Not available"}
+                <div className="integration-row">
+                  <div className="endpoint" title={httpEndpoint ?? "Endpoint unavailable"}>
+                    {httpEndpoint ?? "Not available"}
+                  </div>
+                  <button
+                    aria-label="Copy browser endpoint"
+                    className="tiny-icon-button"
+                    disabled={!httpEndpoint}
+                    onClick={() => httpEndpoint && copyText("browser endpoint", httpEndpoint)}
+                    title="Copy browser endpoint"
+                    type="button"
+                  >
+                    <Copy size={13} />
+                  </button>
                 </div>
               </section>
 
               <section className="integration-section" aria-label="Claude bridge">
                 <div className="eyebrow">Claude Bridge</div>
-                <div className="endpoint" title={claudeBridge?.lockFile ?? "Bridge unavailable"}>
-                  {claudeBridge?.endpoint ?? "Not available"}
+                <div className="integration-row">
+                  <div className="endpoint" title={claudeBridge?.lockFile ?? "Bridge unavailable"}>
+                    {claudeBridge?.endpoint ?? "Not available"}
+                  </div>
+                  <button
+                    aria-label="Copy Claude bridge endpoint"
+                    className="tiny-icon-button"
+                    disabled={!claudeBridge?.endpoint}
+                    onClick={() =>
+                      claudeBridge?.endpoint &&
+                      copyText("Claude bridge endpoint", claudeBridge.endpoint)
+                    }
+                    title="Copy Claude bridge endpoint"
+                    type="button"
+                  >
+                    <Copy size={13} />
+                  </button>
                 </div>
               </section>
 
@@ -3392,35 +3541,16 @@ export default function App() {
                 <div className="eyebrow">Codex MCP</div>
                 {codexMcp ? (
                   <>
-                    <div className="integration-row">
-                      <div className="endpoint" title="Use this endpoint with the bearer token from the native app session">
-                        {codexMcp.endpoint}
-                      </div>
-                      <button
-                        className="tiny-icon-button"
-                        title="Copy Codex MCP endpoint"
-                        onClick={() => copyText("Codex MCP endpoint", codexMcp.endpoint)}
-                      >
-                        <Copy size={13} />
-                      </button>
-                    </div>
-                    <div className="integration-row">
-                      <div className="endpoint" title={codexMcp.bearerToken}>
-                        token: {codexMcp.bearerToken}
-                      </div>
-                      <button
-                        className="tiny-icon-button"
-                        title="Copy Codex MCP token"
-                        onClick={() => copyText("Codex MCP token", codexMcp.bearerToken)}
-                      >
-                        <Copy size={13} />
-                      </button>
+                    <div className="integration-command" title="Open the Codex config file">
+                      <code>ide ~/.codex/config.toml</code>
                     </div>
                     <div className="snippet-row">
                       <pre>{codexMcpConfig}</pre>
                       <button
+                        aria-label="Copy Codex MCP config"
                         className="tiny-icon-button"
                         title="Copy Codex MCP config"
+                        type="button"
                         onClick={() => copyText("Codex MCP config", codexMcpConfig)}
                       >
                         <Copy size={13} />
@@ -3460,6 +3590,106 @@ export default function App() {
                 className="command-button command-button--primary"
                 type="button"
                 onClick={() => setIntegrationsOpen(false)}
+              >
+                Close
+              </button>
+            </div>
+          </section>
+        </div>
+      ) : null}
+
+      {aboutOpen ? (
+        <div className="dialog-backdrop" role="presentation">
+          <section
+            className="confirm-dialog about-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="about-title"
+          >
+            <button
+              aria-label="Close"
+              className="tiny-icon-button about-dialog__close"
+              onClick={() => setAboutOpen(false)}
+              title="Close"
+              type="button"
+            >
+              <X size={14} />
+            </button>
+            <img
+              alt=""
+              className="about-dialog__icon"
+              src="/icon-128.png"
+              width={96}
+              height={96}
+            />
+            <div className="about-dialog__body">
+              <div>
+                <h2 id="about-title">{appInfo.name}</h2>
+                <div className="about-dialog__version">Version {appInfo.version}</div>
+              </div>
+              <p>{appInfo.description}</p>
+              <a
+                className="about-dialog__link"
+                href={appInfo.repository}
+                rel="noreferrer"
+                target="_blank"
+              >
+                {repositoryLabel}
+                <ExternalLink size={13} />
+              </a>
+              <div className="about-dialog__meta">
+                {appInfo.authors.join(", ") || "Gordon Beeming"}
+              </div>
+            </div>
+          </section>
+        </div>
+      ) : null}
+
+      {keyBindingsOpen ? (
+        <div className="dialog-backdrop" role="presentation">
+          <section
+            className="confirm-dialog keybindings-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="keybindings-title"
+          >
+            <div>
+              <div className="eyebrow">View</div>
+              <h2 id="keybindings-title">Key Bindings</h2>
+            </div>
+            <label className="keybindings-search">
+              <Search size={15} aria-hidden="true" />
+              <input
+                autoFocus
+                aria-label="Search key bindings"
+                placeholder="Search key bindings"
+                value={keyBindingsQuery}
+                onChange={(event) => setKeyBindingsQuery(event.target.value)}
+              />
+            </label>
+            <div className="keybindings-list" aria-label="Supported key bindings">
+              {keyBindingResults.length === 0 ? (
+                <div className="keybindings-empty">No matching key bindings</div>
+              ) : (
+                keyBindingResults.map((binding) => (
+                  <div
+                    className="keybinding-row"
+                    key={`${binding.category}:${binding.command}:${binding.shortcut}`}
+                  >
+                    <span className="keybinding-row__command">
+                      <span>{binding.command}</span>
+                      <small>{binding.when ?? binding.category}</small>
+                    </span>
+                    <kbd>{binding.shortcut}</kbd>
+                  </div>
+                ))
+              )}
+            </div>
+            <div className="confirm-dialog__actions">
+              <button
+                className="command-button command-button--primary"
+                type="button"
+                onClick={() => setKeyBindingsOpen(false)}
               >
                 Close
               </button>
@@ -3536,6 +3766,21 @@ export default function App() {
                           }}
                         />
                         <span>Show generated and internal folders</span>
+                      </label>
+                      <label className="settings-row">
+                        <input
+                          type="checkbox"
+                          checked={showDiagnosticsPanel}
+                          onChange={(event) => {
+                            setShowDiagnosticsPanel(event.target.checked);
+                            setStatus(
+                              event.target.checked
+                                ? "Showing diagnostics panel"
+                                : "Hiding diagnostics panel",
+                            );
+                          }}
+                        />
+                        <span>Show diagnostics panel</span>
                       </label>
                     </section>
                   ) : null}
@@ -4410,6 +4655,17 @@ function isGlobalIdeShortcut(event: KeyboardEvent) {
   if (!(event.metaKey || event.ctrlKey)) return false;
   if (!event.shiftKey && /^[1-9]$/.test(event.key)) return true;
   return ["s", "r", "w", "b", "n", "o", "p", "f"].includes(key);
+}
+
+function filterKeyBindings(bindings: KeyBindingInfo[], query: string) {
+  const normalized = query.trim().toLowerCase();
+  if (!normalized) return bindings;
+  return bindings.filter((binding) =>
+    [binding.category, binding.command, binding.shortcut, binding.when ?? ""]
+      .join(" ")
+      .toLowerCase()
+      .includes(normalized),
+  );
 }
 
 function suggestNewFilePath(selectedPath: string | undefined, files: FileEntry[]) {

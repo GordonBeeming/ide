@@ -11,6 +11,7 @@
   --brand-highlight: #46cbff;
   --accent: var(--brand-primary);
   --accent-weak: color-mix(in oklch, var(--accent) 12%, var(--panel));
+  --accent-contrast: oklch(97% 0.006 230);
   --warning: oklch(69% 0.14 78);
   --danger: oklch(58% 0.19 28);
   --editor-bg: oklch(96% 0.006 230);
@@ -38,6 +39,7 @@
   --brand-highlight: #46cbff;
   --accent: var(--brand-primary);
   --accent-weak: color-mix(in oklch, var(--accent) 12%, var(--panel));
+  --accent-contrast: oklch(97% 0.006 230);
   --warning: oklch(69% 0.14 78);
   --danger: oklch(58% 0.19 28);
   --editor-bg: oklch(96% 0.006 230);
@@ -60,6 +62,7 @@
   --brand-highlight: #46cbff;
   --accent: #3d92e8;
   --accent-weak: color-mix(in oklch, var(--accent) 20%, var(--panel));
+  --accent-contrast: oklch(97% 0.006 230);
   --warning: oklch(76% 0.13 78);
   --danger: oklch(67% 0.18 28);
   --editor-bg: oklch(15% 0.012 230);
@@ -82,6 +85,7 @@
     --brand-highlight: #46cbff;
     --accent: #3d92e8;
     --accent-weak: color-mix(in oklch, var(--accent) 20%, var(--panel));
+    --accent-contrast: oklch(97% 0.006 230);
     --warning: oklch(76% 0.13 78);
     --danger: oklch(67% 0.18 28);
     --editor-bg: oklch(15% 0.012 230);
@@ -207,6 +211,11 @@ button {
   border-color: var(--accent);
   color: var(--text);
   outline: 0;
+}
+
+.tiny-icon-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
 }
 
 .search-tools {
@@ -474,6 +483,19 @@ button {
 .integration-row .endpoint {
   min-width: 0;
   flex: 1;
+}
+
+.integration-command {
+  overflow: hidden;
+  color: var(--text);
+  font-family: ui-monospace, "SF Mono", monospace;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.integration-command code {
+  font: inherit;
 }
 
 .snippet-row {
@@ -990,6 +1012,78 @@ button {
   padding-right: 2px;
 }
 
+.about-dialog {
+  position: relative;
+  justify-items: center;
+  width: min(380px, 100%);
+  gap: 14px;
+  padding: 28px 26px 24px;
+  text-align: center;
+}
+
+.about-dialog__close {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+}
+
+.about-dialog__icon {
+  width: 96px;
+  height: 96px;
+  border-radius: 20px;
+  box-shadow: 0 12px 34px oklch(5% 0.02 230 / 32%);
+}
+
+.about-dialog__body {
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+}
+
+.about-dialog h2 {
+  margin: 0;
+  color: var(--text);
+  font-size: 30px;
+  line-height: 1.05;
+}
+
+.about-dialog__version {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.about-dialog p {
+  max-width: 280px;
+  margin: 0;
+  color: var(--text-soft);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.about-dialog__link {
+  display: inline-grid;
+  grid-auto-flow: column;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  color: var(--accent);
+  font-size: 12px;
+  text-decoration: none;
+}
+
+.about-dialog__link:hover,
+.about-dialog__link:focus-visible {
+  text-decoration: underline;
+  outline: 0;
+}
+
+.about-dialog__meta {
+  color: var(--muted);
+  font-size: 11px;
+}
+
 .integration-section {
   display: grid;
   min-width: 0;
@@ -998,6 +1092,96 @@ button {
   border: 1px solid var(--border);
   border-radius: 6px;
   background: var(--bg);
+}
+
+.keybindings-dialog {
+  width: min(680px, 100%);
+  max-height: min(760px, calc(100dvh - 40px));
+  overflow: hidden;
+}
+
+.keybindings-search {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  padding: 0 9px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--muted);
+}
+
+.keybindings-search input {
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+}
+
+.keybindings-list {
+  display: grid;
+  gap: 6px;
+  min-height: 0;
+  max-height: min(440px, calc(100dvh - 260px));
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.keybinding-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) max-content;
+  align-items: center;
+  gap: 14px;
+  min-height: 44px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+}
+
+.keybinding-row__command {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.keybinding-row__command span,
+.keybinding-row__command small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.keybinding-row__command span {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.keybinding-row__command small {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.keybinding-row kbd {
+  padding: 4px 7px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--panel-strong);
+  color: var(--text);
+  font-family: ui-monospace, "SF Mono", monospace;
+  font-size: 11px;
+  font-weight: 750;
+}
+
+.keybindings-empty {
+  padding: 16px 10px;
+  color: var(--muted);
+  font-size: 13px;
 }
 
 .settings-dialog {
@@ -1266,5 +1450,5 @@ button {
 .command-button--primary {
   border-color: var(--accent);
   background: var(--accent);
-  color: var(--bg);
+  color: var(--accent-contrast);
 }

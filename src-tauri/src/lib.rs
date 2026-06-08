@@ -104,6 +104,16 @@ struct SettingsLocations {
     workspace_index_file: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AppInfo {
+    name: String,
+    version: String,
+    description: String,
+    authors: Vec<String>,
+    repository: String,
+}
+
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct WorkspaceDisplayContext {
@@ -151,6 +161,8 @@ struct AppUiState {
 struct PersistedViewSettings {
     show_dotfiles: bool,
     show_generated_internal: bool,
+    #[serde(default)]
+    show_diagnostics_panel: bool,
     #[serde(default = "default_tree_scan_limit")]
     tree_scan_limit: usize,
     #[serde(default = "default_max_open_file_kb")]
@@ -178,6 +190,7 @@ impl Default for PersistedViewSettings {
         Self {
             show_dotfiles: false,
             show_generated_internal: false,
+            show_diagnostics_panel: false,
             tree_scan_limit: default_tree_scan_limit(),
             max_open_file_kb: default_max_open_file_kb(),
             workspace_search_result_limit: default_workspace_search_result_limit(),
@@ -222,6 +235,7 @@ const MAX_WORKSPACE_TITLE_MAX_CHARS: usize = 120;
 const MIN_COMMAND_PALETTE_RESULT_LIMIT: usize = 5;
 const DEFAULT_COMMAND_PALETTE_RESULT_LIMIT: usize = 18;
 const MAX_COMMAND_PALETTE_RESULT_LIMIT: usize = 100;
+const CODEX_MCP_TOKEN_FILE: &str = "codex-mcp-token";
 
 fn default_tree_scan_limit() -> usize {
     DEFAULT_TREE_SCAN_LIMIT
@@ -507,6 +521,21 @@ async fn get_initial_file(
         .read()
         .await
         .clone())
+}
+
+#[tauri::command]
+fn get_app_info() -> AppInfo {
+    AppInfo {
+        name: "ide".to_string(),
+        version: env!("CARGO_PKG_VERSION").to_string(),
+        description: env!("CARGO_PKG_DESCRIPTION").to_string(),
+        authors: env!("CARGO_PKG_AUTHORS")
+            .split(':')
+            .filter(|author| !author.trim().is_empty())
+            .map(|author| author.trim().to_string())
+            .collect(),
+        repository: "https://github.com/gordonbeeming/ide".to_string(),
+    }
 }
 
 #[tauri::command]
@@ -1284,11 +1313,11 @@ pub fn run() {
                 .ui_state
                 .write()
                 .map_err(|_| std::io::Error::other("ui state lock poisoned"))? = loaded_ui_state;
-            let workspace_index_path = app
+            let app_local_data_dir = app
                 .path()
                 .app_local_data_dir()
-                .map_err(|error| std::io::Error::other(error.to_string()))?
-                .join("workspace-index.sqlite");
+                .map_err(|error| std::io::Error::other(error.to_string()))?;
+            let workspace_index_path = app_local_data_dir.join("workspace-index.sqlite");
             http_state
                 .workspace_index
                 .set_database_path(workspace_index_path)
@@ -1318,7 +1347,14 @@ pub fn run() {
             let claude_bridge = http_state.claude_bridge.clone();
             let claude_bridge_error = http_state.claude_bridge_error.clone();
             let frontend_dist = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../dist");
-            let mcp_token = uuid::Uuid::new_v4().to_string();
+            let (mcp_token, mcp_token_error) =
+                codex_mcp_token_for_startup(&app_local_data_dir.join(CODEX_MCP_TOKEN_FILE));
+            if let Some(error) = mcp_token_error {
+                let http_error = http_error.clone();
+                tauri::async_runtime::spawn(async move {
+                    *http_error.write().await = Some(error);
+                });
+            }
             let app_handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 match http_server::start_http_server(http_server::HttpServerConfig {
@@ -1569,6 +1605,16 @@ pub fn run() {
                 return;
             }
 
+            if id == "show_key_bindings" {
+                emit_to_active_window(app, "menu://show-key-bindings", ());
+                return;
+            }
+
+            if id == "show_about" {
+                emit_to_active_window(app, "menu://show-about", ());
+                return;
+            }
+
             if id == "show_settings" {
                 emit_to_active_window(app, "menu://show-settings", ());
             }
@@ -1577,6 +1623,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_workspace_root,
             get_initial_file,
+            get_app_info,
             take_opened_launch_targets,
             list_files,
             list_directory,
@@ -1779,7 +1826,7 @@ fn rebuild_app_menu(app: &tauri::AppHandle, state: &AppState) -> Result<(), Comm
         .build()
         .map_err(|error| CommandError::Recent(error.to_string()))?;
 
-    let file_menu = SubmenuBuilder::new(app, "File")
+    let file_menu_builder = SubmenuBuilder::new(app, "File")
         .item(&new_file)
         .item(&new_folder)
         .separator()
@@ -1796,20 +1843,53 @@ fn rebuild_app_menu(app: &tauri::AppHandle, state: &AppState) -> Result<(), Comm
         .item(&delete_selected)
         .separator()
         .item(&close_tab)
-        .item(&close_all)
-        .separator()
-        .quit()
+        .item(&close_all);
+    #[cfg(not(target_os = "macos"))]
+    let file_menu_builder = file_menu_builder.separator().quit();
+    let file_menu = file_menu_builder
         .build()
         .map_err(|error| CommandError::Recent(error.to_string()))?;
     let show_integrations = MenuItemBuilder::with_id("show_integrations", "Integrations...")
+        .build(app)
+        .map_err(|error| CommandError::Recent(error.to_string()))?;
+    let show_key_bindings = MenuItemBuilder::with_id("show_key_bindings", "Key Bindings...")
+        .build(app)
+        .map_err(|error| CommandError::Recent(error.to_string()))?;
+    #[cfg(target_os = "macos")]
+    let about = MenuItemBuilder::with_id("show_about", "About ide")
         .build(app)
         .map_err(|error| CommandError::Recent(error.to_string()))?;
     let settings = MenuItemBuilder::with_id("show_settings", "Settings...")
         .accelerator("CmdOrCtrl+,")
         .build(app)
         .map_err(|error| CommandError::Recent(error.to_string()))?;
+    #[cfg(target_os = "macos")]
+    let app_menu = {
+        let pkg_info = app.package_info();
+        SubmenuBuilder::new(app, pkg_info.name.clone())
+            .item(&about)
+            .separator()
+            .item(&settings)
+            .separator()
+            .services()
+            .separator()
+            .hide()
+            .hide_others()
+            .separator()
+            .quit()
+            .build()
+            .map_err(|error| CommandError::Recent(error.to_string()))?
+    };
+    #[cfg(target_os = "macos")]
     let view_menu = SubmenuBuilder::new(app, "View")
         .item(&show_integrations)
+        .item(&show_key_bindings)
+        .build()
+        .map_err(|error| CommandError::Recent(error.to_string()))?;
+    #[cfg(not(target_os = "macos"))]
+    let view_menu = SubmenuBuilder::new(app, "View")
+        .item(&show_integrations)
+        .item(&show_key_bindings)
         .item(&settings)
         .build()
         .map_err(|error| CommandError::Recent(error.to_string()))?;
@@ -1864,7 +1944,10 @@ fn rebuild_app_menu(app: &tauri::AppHandle, state: &AppState) -> Result<(), Comm
         .item(&find_in_files)
         .build()
         .map_err(|error| CommandError::Recent(error.to_string()))?;
-    let menu = MenuBuilder::new(app)
+    let menu_builder = MenuBuilder::new(app);
+    #[cfg(target_os = "macos")]
+    let menu_builder = menu_builder.item(&app_menu);
+    let menu = menu_builder
         .item(&file_menu)
         .item(&edit_menu)
         .item(&search_menu)
@@ -2039,6 +2122,67 @@ fn load_ui_state(path: &Path) -> Result<AppUiState, std::io::Error> {
     let mut state: AppUiState = serde_json::from_str(&contents).map_err(std::io::Error::other)?;
     state.view = sanitize_view_settings(state.view);
     Ok(state)
+}
+
+fn load_or_create_codex_mcp_token(path: &Path) -> Result<String, std::io::Error> {
+    if path.exists() {
+        let token = std::fs::read_to_string(path)?.trim().to_string();
+        if !token.is_empty() {
+            set_secret_file_permissions(path)?;
+            return Ok(token);
+        }
+    }
+
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let token = uuid::Uuid::new_v4().to_string();
+    write_secret_file(path, &token)?;
+    Ok(token)
+}
+
+fn codex_mcp_token_for_startup(path: &Path) -> (String, Option<String>) {
+    match load_or_create_codex_mcp_token(path) {
+        Ok(token) => (token, None),
+        Err(error) => (
+            uuid::Uuid::new_v4().to_string(),
+            Some(format!(
+                "Unable to persist Codex MCP token at {}. Using an in-memory token for this session: {error}",
+                path.display()
+            )),
+        ),
+    }
+}
+
+#[cfg(unix)]
+fn write_secret_file(path: &Path, contents: &str) -> Result<(), std::io::Error> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(path)?;
+    file.write_all(contents.as_bytes())
+}
+
+#[cfg(not(unix))]
+fn write_secret_file(path: &Path, contents: &str) -> Result<(), std::io::Error> {
+    std::fs::write(path, contents)
+}
+
+#[cfg(unix)]
+fn set_secret_file_permissions(path: &Path) -> Result<(), std::io::Error> {
+    use std::os::unix::fs::PermissionsExt;
+
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
+}
+
+#[cfg(not(unix))]
+fn set_secret_file_permissions(_path: &Path) -> Result<(), std::io::Error> {
+    Ok(())
 }
 
 pub(crate) fn workspace_display_context(
@@ -2217,7 +2361,7 @@ fn launch_target_from_saved_context(
         .find_map(|workspace| launch_target_for_saved_workspace(&workspace.path))
         .or_else(|| {
             let mut workspaces = ui_state.workspaces.iter().collect::<Vec<_>>();
-            workspaces.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+            workspaces.sort_by_key(|workspace| std::cmp::Reverse(workspace.updated_at));
             workspaces
                 .into_iter()
                 .find_map(|workspace| launch_target_for_saved_workspace(&workspace.workspace_root))
@@ -2400,7 +2544,7 @@ fn launch_target_from_args(
     args.iter()
         .map(PathBuf::from)
         .filter(|path| {
-            !current_exe.is_some_and(|exe| path.canonicalize().ok().as_deref() == Some(exe))
+            current_exe.is_none_or(|exe| path.canonicalize().ok().as_deref() != Some(exe))
         })
         .find(|path| path.exists())
         .map(launch_target_for_path)
@@ -2740,6 +2884,7 @@ mod tests {
             view: PersistedViewSettings {
                 show_dotfiles: true,
                 show_generated_internal: true,
+                show_diagnostics_panel: true,
                 tree_scan_limit: 12_000,
                 max_open_file_kb: 8_192,
                 workspace_search_result_limit: 750,
@@ -2765,6 +2910,7 @@ mod tests {
         let loaded = load_ui_state(&ui_state_path).unwrap();
         assert!(loaded.view.show_dotfiles);
         assert!(loaded.view.show_generated_internal);
+        assert!(loaded.view.show_diagnostics_panel);
         assert_eq!(loaded.view.max_open_file_kb, 8_192);
         assert_eq!(loaded.view.workspace_search_result_limit, 750);
         assert_eq!(loaded.view.workspace_search_max_file_kb, 2_048);
@@ -2811,6 +2957,54 @@ mod tests {
             locations.workspace_index_file,
             Some(path_to_string(&workspace_index_path))
         );
+    }
+
+    #[test]
+    fn codex_mcp_token_is_created_once_and_reused() {
+        let dir = tempdir().unwrap();
+        let token_path = dir.path().join("nested").join(CODEX_MCP_TOKEN_FILE);
+
+        let first = load_or_create_codex_mcp_token(&token_path).unwrap();
+        let second = load_or_create_codex_mcp_token(&token_path).unwrap();
+
+        assert!(!first.is_empty());
+        assert_eq!(first, second);
+        assert_eq!(std::fs::read_to_string(&token_path).unwrap(), first);
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+
+            assert_eq!(
+                std::fs::metadata(&token_path).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+        }
+    }
+
+    #[test]
+    fn codex_mcp_token_replaces_empty_files() {
+        let dir = tempdir().unwrap();
+        let token_path = dir.path().join(CODEX_MCP_TOKEN_FILE);
+        std::fs::write(&token_path, "\n").unwrap();
+
+        let token = load_or_create_codex_mcp_token(&token_path).unwrap();
+
+        assert!(!token.is_empty());
+        assert_eq!(std::fs::read_to_string(&token_path).unwrap(), token);
+    }
+
+    #[test]
+    fn codex_mcp_token_startup_falls_back_when_persistence_fails() {
+        let dir = tempdir().unwrap();
+        let blocked_parent = dir.path().join("not-a-directory");
+        std::fs::write(&blocked_parent, "file").unwrap();
+        let token_path = blocked_parent.join(CODEX_MCP_TOKEN_FILE);
+
+        let (token, error) = codex_mcp_token_for_startup(&token_path);
+
+        assert!(!token.is_empty());
+        assert!(error.unwrap().contains("Unable to persist Codex MCP token"));
     }
 
     #[test]

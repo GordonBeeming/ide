@@ -29,6 +29,8 @@ const expectedFrontendEvents = new Set([
   "menu://save-all",
   "menu://save-file",
   "menu://show-integrations",
+  "menu://show-key-bindings",
+  "menu://show-about",
   "menu://show-settings",
 ]);
 
@@ -57,6 +59,8 @@ const expectedRoutedMenuIds = new Set([
   "save_all",
   "save_file",
   "show_integrations",
+  "show_key_bindings",
+  "show_about",
   "show_settings",
 ]);
 
@@ -120,6 +124,30 @@ for (const event of listenedEvents) {
   if (!emittedEvents.has(event)) {
     errors.push(`React listens to a native event Rust does not emit: ${event}`);
   }
+}
+
+if (
+  !/#\[cfg\(target_os = "macos"\)\]\s+let app_menu = \{[\s\S]*?\.item\(&settings\)[\s\S]*?\.quit\(\)/.test(
+    rustSource,
+  )
+) {
+  errors.push("macOS app menu must contain Settings and Quit");
+}
+
+if (
+  !/#\[cfg\(target_os = "macos"\)\]\s+let view_menu = SubmenuBuilder::new\(app, "View"\)\s+\.item\(&show_integrations\)\s+\.item\(&show_key_bindings\)\s+\.build\(\)/.test(
+    rustSource,
+  )
+) {
+  errors.push("macOS View menu must not contain Settings");
+}
+
+if (
+  !/#\[cfg\(not\(target_os = "macos"\)\)\]\s+let view_menu = SubmenuBuilder::new\(app, "View"\)[\s\S]*?\.item\(&settings\)/.test(
+    rustSource,
+  )
+) {
+  errors.push("non-macOS View menu must keep Settings available");
 }
 
 if (errors.length > 0) {

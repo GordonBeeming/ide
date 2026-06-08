@@ -113,6 +113,17 @@ async function fulfillApi(route) {
     return;
   }
 
+  if (url.pathname === "/api/workspace-display") {
+    await route.fulfill(
+      json({
+        appTitle: "ide - ide-smoke-workspace",
+        workspaceLabel: "ide-smoke-workspace",
+        fullLabel: "ide-smoke-workspace",
+      }),
+    );
+    return;
+  }
+
   if (url.pathname === "/api/files") {
     await route.fulfill(json(files));
     return;
@@ -127,6 +138,17 @@ async function fulfillApi(route) {
   if (url.pathname === "/api/file") {
     const filePath = url.searchParams.get("path") ?? "";
     await route.fulfill(text(fileContents.get(filePath) ?? ""));
+    return;
+  }
+
+  if (url.pathname === "/api/file-metadata") {
+    const filePath = url.searchParams.get("path") ?? "";
+    const entry = files.find((candidate) => candidate.path === filePath);
+    if (entry) {
+      await route.fulfill(json(entry));
+    } else {
+      await route.fulfill({ status: 404, body: `Missing file metadata: ${filePath}` });
+    }
     return;
   }
 
@@ -175,6 +197,19 @@ async function fulfillApi(route) {
         indexedFolders: 3,
         loadedFolders: 2,
         pendingFolders: 1,
+      }),
+    );
+    return;
+  }
+
+  if (url.pathname === "/api/workspace-index/advance") {
+    await route.fulfill(
+      json({
+        indexedEntries: 7,
+        indexedFiles: 4,
+        indexedFolders: 3,
+        loadedFolders: 3,
+        pendingFolders: 0,
       }),
     );
     return;
@@ -457,8 +492,8 @@ async function runScenario(browser, url, colorScheme) {
   page.on("pageerror", (error) => pageErrors.push(error.message));
 
   await page.goto(url, { waitUntil: "networkidle" });
-  await page.getByText("Workspace", { exact: true }).waitFor();
-  await page.locator(".sidebar__title strong", { hasText: "ide-smoke-workspace" }).waitFor();
+  await page.waitForFunction(() => document.title === "ide - ide-smoke-workspace");
+  await page.getByText("Open a file from the tree").waitFor();
   await page.getByText("No file selected").waitFor();
 
   if ((await page.locator('input[placeholder="Filter files"]').count()) !== 0) {
@@ -627,7 +662,8 @@ async function runSystemThemeScenario(browser, url) {
 
   const page = await context.newPage();
   await page.goto(url, { waitUntil: "networkidle" });
-  await page.getByText("Workspace", { exact: true }).waitFor();
+  await page.waitForFunction(() => document.title === "ide - ide-smoke-workspace");
+  await page.getByText("Open a file from the tree").waitFor();
   await page.getByText("No file selected").waitFor();
 
   const expectedScheme = await page.evaluate(() =>

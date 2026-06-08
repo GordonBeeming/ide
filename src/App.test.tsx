@@ -57,6 +57,7 @@ const files: FileEntry[] = [
 const tauriMocks = vi.hoisted(() => ({
   getWorkspaceRoot: vi.fn(),
   getInitialFile: vi.fn(),
+  getAppInfo: vi.fn(),
   takeOpenedLaunchTargets: vi.fn(),
   listFiles: vi.fn(),
   listDirectory: vi.fn(),
@@ -120,6 +121,7 @@ vi.mock("./tauri", async () => {
     ...actual,
     getWorkspaceRoot: tauriMocks.getWorkspaceRoot,
     getInitialFile: tauriMocks.getInitialFile,
+    getAppInfo: tauriMocks.getAppInfo,
     takeOpenedLaunchTargets: tauriMocks.takeOpenedLaunchTargets,
     listFiles: tauriMocks.listFiles,
     listDirectory: tauriMocks.listDirectory,
@@ -242,6 +244,13 @@ describe("App shell interactions", () => {
     lspMocks.setLspStatusHandler.mockReset();
     tauriMocks.getWorkspaceRoot.mockResolvedValue("/workspace");
     tauriMocks.getInitialFile.mockResolvedValue(undefined);
+    tauriMocks.getAppInfo.mockResolvedValue({
+      name: "ide",
+      version: "0.1.0",
+      description: "A lean local IDE.",
+      authors: ["Gordon Beeming"],
+      repository: "https://github.com/gordonbeeming/ide",
+    });
     tauriMocks.takeOpenedLaunchTargets.mockResolvedValue([]);
     tauriMocks.listFiles.mockResolvedValue(files);
     tauriMocks.listDirectory.mockImplementation(async (path: string) =>
@@ -271,6 +280,7 @@ describe("App shell interactions", () => {
       view: {
         showDotfiles: false,
         showGeneratedInternal: false,
+        showDiagnosticsPanel: false,
       },
       workspace: {
         expandedFolders: [],
@@ -720,6 +730,7 @@ describe("App shell interactions", () => {
       view: {
         showDotfiles: true,
         showGeneratedInternal: true,
+        showDiagnosticsPanel: true,
         treeScanLimit: 12000,
       },
       workspace: {
@@ -815,6 +826,7 @@ describe("App shell interactions", () => {
         expect.objectContaining({
           showDotfiles: false,
           showGeneratedInternal: false,
+          showDiagnosticsPanel: false,
           treeScanLimit: 10000,
           maxOpenFileKb: 5120,
           workspaceSearchResultLimit: 200,
@@ -847,12 +859,14 @@ describe("App shell interactions", () => {
       "true",
     );
     expect(screen.getByLabelText("Show dotfiles and dot folders")).toBeInTheDocument();
+    expect(screen.getByLabelText("Show diagnostics panel")).toBeInTheDocument();
     expect(screen.queryByLabelText("Initial tree scan entries")).not.toBeInTheDocument();
 
     selectSettingsTab("Performance");
 
     expect(screen.getByLabelText("Initial tree scan entries")).toBeInTheDocument();
     expect(screen.queryByLabelText("Show dotfiles and dot folders")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Show diagnostics panel")).not.toBeInTheDocument();
   });
 
   it("shows OS storage paths from Settings", async () => {
@@ -1249,6 +1263,98 @@ describe("App shell interactions", () => {
     expect(screen.queryByText("Claude Bridge")).not.toBeInTheDocument();
     expect(screen.queryByText("Codex MCP")).not.toBeInTheDocument();
     expect(screen.queryByText("Language Servers")).not.toBeInTheDocument();
+  });
+
+  it("shows copy actions for integration endpoints and config values", async () => {
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    tauriMocks.getClaudeBridgeStatus.mockResolvedValueOnce({
+      endpoint: "ws://127.0.0.1:53126",
+      lockFile: "/Users/gordon/.claude/ide/ide.lock",
+    });
+    tauriMocks.getCodexMcpStatus.mockResolvedValueOnce({
+      endpoint: "http://127.0.0.1:1420/mcp",
+      bearerToken: "session-token",
+    });
+    render(<App />);
+
+    expect(await treeButton("README.md")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(eventMocks.listeners.has("menu://show-integrations")).toBe(true),
+    );
+
+    act(() => {
+      eventMocks.listeners.get("menu://show-integrations")?.({ payload: undefined });
+    });
+
+    expect(screen.getByRole("dialog", { name: "Integrations" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Copy browser endpoint" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Copy Claude bridge endpoint" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("ide ~/.codex/config.toml")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Copy Codex MCP endpoint" }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Copy Codex MCP token" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Copy Codex MCP config" })).toBeInTheDocument();
+  });
+
+  it("shows searchable key bindings from the native View menu", async () => {
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    render(<App />);
+
+    expect(await treeButton("README.md")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(eventMocks.listeners.has("menu://show-key-bindings")).toBe(true),
+    );
+
+    act(() => {
+      eventMocks.listeners.get("menu://show-key-bindings")?.({ payload: undefined });
+    });
+
+    expect(screen.getByRole("dialog", { name: "Key Bindings" })).toBeInTheDocument();
+    expect(screen.getByText("Save All")).toBeInTheDocument();
+    expect(screen.getByText("Cmd/Ctrl+Shift+S")).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("Search key bindings"), {
+      target: { value: "definition" },
+    });
+
+    expect(screen.getByText("Go to Definition")).toBeInTheDocument();
+    expect(screen.getByText("F12")).toBeInTheDocument();
+    expect(screen.queryByText("Save All")).not.toBeInTheDocument();
+  });
+
+  it("shows app details from the native About menu", async () => {
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    tauriMocks.getAppInfo.mockResolvedValueOnce({
+      name: "ide Test",
+      version: "9.8.7",
+      description: "Metadata-backed app details.",
+      authors: ["Gordon Beeming"],
+      repository: "https://example.com/ide-test/",
+    });
+    render(<App />);
+
+    expect(await treeButton("README.md")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(eventMocks.listeners.has("menu://show-about")).toBe(true),
+    );
+
+    act(() => {
+      eventMocks.listeners.get("menu://show-about")?.({ payload: undefined });
+    });
+
+    const dialog = screen.getByRole("dialog", { name: "ide Test" });
+    expect(dialog).toHaveTextContent("Version 9.8.7");
+    expect(dialog).toHaveTextContent("Metadata-backed app details.");
+    expect(
+      within(dialog).getByRole("link", { name: /example.com\/ide-test/i }),
+    ).toHaveAttribute("href", "https://example.com/ide-test/");
+
+    fireEvent.keyDown(window, { key: "Escape" });
+
+    expect(screen.queryByRole("dialog", { name: "ide Test" })).not.toBeInTheDocument();
   });
 
   it("keeps search fields collapsed until the search controls are used", async () => {
@@ -2372,7 +2478,48 @@ describe("App shell interactions", () => {
     );
   });
 
+  it("keeps diagnostics panel hidden by default while publishing diagnostics to agent context", async () => {
+    render(<App />);
+
+    expect(await treeButton("README.md")).toBeInTheDocument();
+    await waitFor(() => expect(lspMocks.diagnosticsHandler).toBeTypeOf("function"));
+
+    act(() => {
+      lspMocks.diagnosticsHandler?.("src/App.tsx", [
+        diagnostic("src/App.tsx", "Expected semicolon", 1, 7, 13),
+      ]);
+    });
+
+    expect(screen.queryByLabelText("Diagnostics")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", {
+        name: "Error at src/App.tsx:7:13: Expected semicolon",
+      }),
+    ).not.toBeInTheDocument();
+    await waitFor(() =>
+      expect(latestAgentContext()).toMatchObject({
+        diagnostics: [
+          expect.objectContaining({
+            filePath: "src/App.tsx",
+            message: "Expected semicolon",
+          }),
+        ],
+      }),
+    );
+  });
+
   it("opens diagnostics at the precise reported location", async () => {
+    tauriMocks.getUiState.mockResolvedValueOnce({
+      view: {
+        showDotfiles: false,
+        showGeneratedInternal: false,
+        showDiagnosticsPanel: true,
+      },
+      workspace: {
+        expandedFolders: [],
+        openFiles: [],
+      },
+    });
     render(<App />);
 
     expect(await treeButton("README.md")).toBeInTheDocument();
@@ -2399,6 +2546,17 @@ describe("App shell interactions", () => {
   });
 
   it("pins diagnostic tabs when opened with a double click", async () => {
+    tauriMocks.getUiState.mockResolvedValueOnce({
+      view: {
+        showDotfiles: false,
+        showGeneratedInternal: false,
+        showDiagnosticsPanel: true,
+      },
+      workspace: {
+        expandedFolders: [],
+        openFiles: [],
+      },
+    });
     render(<App />);
 
     expect(await treeButton("README.md")).toBeInTheDocument();

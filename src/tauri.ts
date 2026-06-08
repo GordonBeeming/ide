@@ -107,6 +107,7 @@ export type OpenLaunchRequest =
 export interface PersistedViewSettings {
   showDotfiles: boolean;
   showGeneratedInternal: boolean;
+  showDiagnosticsPanel?: boolean;
   treeScanLimit?: number;
   maxOpenFileKb?: number;
   workspaceSearchResultLimit?: number;
@@ -144,6 +145,14 @@ export interface WorkspaceDisplayContext {
   gitRoot?: string;
 }
 
+export interface AppInfo {
+  name: string;
+  version: string;
+  description: string;
+  authors: string[];
+  repository: string;
+}
+
 export interface WorkspaceIndexStats {
   indexedEntries: number;
   indexedFiles: number;
@@ -156,6 +165,7 @@ const defaultUiSnapshot: PersistedUiSnapshot = {
   view: {
     showDotfiles: false,
     showGeneratedInternal: false,
+    showDiagnosticsPanel: false,
     treeScanLimit: 10000,
     maxOpenFileKb: 5120,
     workspaceSearchResultLimit: 200,
@@ -184,6 +194,20 @@ export function getWorkspaceRoot() {
 export function getInitialFile() {
   if (!isNativeTauri()) return Promise.resolve(undefined);
   return invoke<string | undefined>("get_initial_file");
+}
+
+export function getAppInfo() {
+  if (!isNativeTauri()) {
+    return Promise.resolve<AppInfo>({
+      name: "ide",
+      version: "dev",
+      description: "A lean local IDE.",
+      authors: ["Gordon Beeming"],
+      repository: "https://github.com/gordonbeeming/ide",
+    });
+  }
+
+  return invoke<AppInfo>("get_app_info");
 }
 
 export function takeOpenedLaunchTargets() {

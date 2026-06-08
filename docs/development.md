@@ -19,7 +19,7 @@ Pass a file or folder path to open that target as the launch workspace:
 
 Folder targets become the workspace root. File targets open their parent folder as the workspace and then open the file as a persistent tab.
 
-When a file or folder target is supplied and an ide instance is already reachable on the loopback API, `run.sh` authenticates with the per-run bearer token and hands the target to `/api/open-path` instead of starting another dev instance.
+When a file or folder target is supplied and an ide instance is already reachable on the loopback API, `run.sh` authenticates with the persisted app-local bearer token and hands the target to `/api/open-path` instead of starting another dev instance.
 
 When no target is supplied and an ide instance is already reachable, `run.sh` tries to activate the existing macOS app and exits without starting a duplicate dev process. This avoids the Vite port and Cargo build-lock failures that happen when two dev instances are started from the same checkout.
 
@@ -218,6 +218,8 @@ The Search menu owns:
 - `Find in File`
 - `Find in Files`
 
+The View menu owns `Integrations...` and `Key Bindings...`. On non-macOS platforms it also keeps `Settings...` available, while macOS keeps Settings in the app menu.
+
 Menu selections are delivered to the frontend through Tauri events. The frontend reuses the toolbar and keyboard workflow handlers, including dirty-file guards before closing or reloading files, stale-write checks before saving, and collapsed search controls that open only when requested. Modal dialogs block global IDE shortcuts and native menu actions while still allowing `Escape` to dismiss the active dialog, so save/close/open commands cannot fire behind confirmations or settings.
 
 The command palette exposes the same daily-driver actions from the keyboard. Native-only actions such as `Open File` use Rust-owned Tauri dialog commands and stay disabled in hosted browser mode.
@@ -256,7 +258,7 @@ The planned LSP support is:
 
 The editor should use the official `@codemirror/lsp-client` transport interface. The Rust backend should own language-server process management so the UI can stay browser-safe and avoid spawning processes from the frontend.
 
-`@codemirror/lsp-client` currently provides the editor-side keymaps for definition/declaration/type-definition/implementation jumps, references, rename, formatting, completion, hover, and signature help through `languageServerExtensions()`. The native Navigate menu also forwards Go to Definition and Find References to the active lazy-loaded editor so those actions are discoverable without loading editor code into the shell. LSP workspace roots and document paths must be encoded as file URIs with tests for spaces, Windows-style drive roots, and rejected workspace escapes. Diagnostics are persisted for bridge access and shown in the sidebar diagnostics panel with `file:line:column` targets; single click opens a preview tab at the diagnostic line, while double click pins the tab.
+`@codemirror/lsp-client` currently provides the editor-side keymaps for definition/declaration/type-definition/implementation jumps, references, rename, formatting, completion, hover, and signature help through `languageServerExtensions()`. The native Navigate menu also forwards Go to Definition and Find References to the active lazy-loaded editor so those actions are discoverable without loading editor code into the shell. LSP workspace roots and document paths must be encoded as file URIs with tests for spaces, Windows-style drive roots, and rejected workspace escapes. Diagnostics are persisted for bridge access and can be shown from the Settings-enabled sidebar diagnostics panel with `file:line:column` targets; single click opens a preview tab at the diagnostic line, while double click pins the tab.
 
 The TypeScript language server is reused for `.ts`, `.tsx`, `.js`, and `.jsx` files, but editor documents must still use path-specific language IDs: `typescript`, `typescriptreact`, `javascript`, and `javascriptreact`. This keeps React and JavaScript files aligned with TypeScript server expectations without launching separate servers.
 
@@ -267,10 +269,10 @@ Changing workspace roots must disconnect cached frontend LSP clients and dispose
 The app tracks active file, open files, and selected text through shared backend state. Current bridge surfaces:
 
 - Claude-compatible localhost IDE bridge using `~/.claude/ide/*.lock`, WebSocket MCP, and a per-run auth token.
-- Codex-compatible localhost MCP endpoint over HTTP with a per-run bearer token.
+- Codex-compatible localhost MCP endpoint over HTTP with a persisted app-local bearer token.
 - Local HTTP context endpoint for terminal/browser integrations.
 
-The local HTTP API supports terminal/browser views over loopback. `POST /api/file`, `POST /api/folder`, `PATCH /api/file`, `DELETE /api/file`, `PUT /api/file`, and `PUT /api/agent-context` require the per-run bearer token; unauthenticated local callers can read context but cannot mutate files or editor state. `PUT /api/file` accepts an optional `expectedModifiedMs` value and returns `409 Conflict` when it does not match the current disk timestamp.
+The local HTTP API supports terminal/browser views over loopback. `POST /api/file`, `POST /api/folder`, `PATCH /api/file`, `DELETE /api/file`, `PUT /api/file`, and `PUT /api/agent-context` require the persisted app-local bearer token; unauthenticated local callers can read context but cannot mutate files or editor state. `PUT /api/file` accepts an optional `expectedModifiedMs` value and returns `409 Conflict` when it does not match the current disk timestamp.
 
 Selection context is published only when the recorded selection belongs to the current active file. Tab changes and file switches should never leak a stale selection from a previously active editor into Claude or Codex context.
 
