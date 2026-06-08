@@ -2739,6 +2739,11 @@ export default function App() {
         setKeyBindingsOpen(false);
         return;
       }
+      if (event.key === "Escape" && aboutOpen) {
+        event.preventDefault();
+        setAboutOpen(false);
+        return;
+      }
       if (event.key === "Escape" && settingsOpen) {
         event.preventDefault();
         setSettingsOpen(false);
@@ -2876,6 +2881,7 @@ export default function App() {
     newFolderDialogOpen,
     integrationsOpen,
     keyBindingsOpen,
+    aboutOpen,
     settingsOpen,
     goToLineDialogOpen,
     modalUiOpen,

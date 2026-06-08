@@ -2131,9 +2131,27 @@ fn load_or_create_codex_mcp_token(path: &Path) -> Result<String, std::io::Error>
         std::fs::create_dir_all(parent)?;
     }
     let token = uuid::Uuid::new_v4().to_string();
-    std::fs::write(path, &token)?;
-    set_secret_file_permissions(path)?;
+    write_secret_file(path, &token)?;
     Ok(token)
+}
+
+#[cfg(unix)]
+fn write_secret_file(path: &Path, contents: &str) -> Result<(), std::io::Error> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(path)?;
+    file.write_all(contents.as_bytes())
+}
+
+#[cfg(not(unix))]
+fn write_secret_file(path: &Path, contents: &str) -> Result<(), std::io::Error> {
+    std::fs::write(path, contents)
 }
 
 #[cfg(unix)]

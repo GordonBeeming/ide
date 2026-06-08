@@ -1344,6 +1344,10 @@ describe("App shell interactions", () => {
     expect(
       within(dialog).getByRole("link", { name: /github.com\/gordonbeeming\/ide/i }),
     ).toHaveAttribute("href", "https://github.com/gordonbeeming/ide");
+
+    fireEvent.keyDown(window, { key: "Escape" });
+
+    expect(screen.queryByRole("dialog", { name: "ide" })).not.toBeInTheDocument();
   });
 
   it("keeps search fields collapsed until the search controls are used", async () => {
