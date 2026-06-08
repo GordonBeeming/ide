@@ -6,8 +6,13 @@
   --text: oklch(18% 0.02 230);
   --muted: oklch(43% 0.018 230);
   --border: oklch(73% 0.018 230);
-  --accent: oklch(52% 0.19 26);
-  --accent-weak: oklch(86% 0.055 26);
+  --brand-primary: #0063b2;
+  --brand-accent: #0075a3;
+  --brand-highlight: #46cbff;
+  --accent: var(--brand-primary);
+  --accent-weak: color-mix(in oklch, var(--accent) 12%, var(--panel));
+  --warning: oklch(69% 0.14 78);
+  --danger: oklch(58% 0.19 28);
   --editor-bg: oklch(96% 0.006 230);
   --editor-text: oklch(18% 0.02 230);
   --editor-gutter-bg: oklch(93% 0.008 230);
@@ -28,8 +33,13 @@
   --text: oklch(18% 0.02 230);
   --muted: oklch(43% 0.018 230);
   --border: oklch(73% 0.018 230);
-  --accent: oklch(52% 0.19 26);
-  --accent-weak: oklch(86% 0.055 26);
+  --brand-primary: #0063b2;
+  --brand-accent: #0075a3;
+  --brand-highlight: #46cbff;
+  --accent: var(--brand-primary);
+  --accent-weak: color-mix(in oklch, var(--accent) 12%, var(--panel));
+  --warning: oklch(69% 0.14 78);
+  --danger: oklch(58% 0.19 28);
   --editor-bg: oklch(96% 0.006 230);
   --editor-text: oklch(18% 0.02 230);
   --editor-gutter-bg: oklch(93% 0.008 230);
@@ -45,8 +55,13 @@
   --text: oklch(93% 0.01 230);
   --muted: oklch(68% 0.018 230);
   --border: oklch(34% 0.02 230);
-  --accent: oklch(70% 0.18 31);
-  --accent-weak: oklch(28% 0.07 31);
+  --brand-primary: #0063b2;
+  --brand-accent: #0075a3;
+  --brand-highlight: #46cbff;
+  --accent: #3d92e8;
+  --accent-weak: color-mix(in oklch, var(--accent) 20%, var(--panel));
+  --warning: oklch(76% 0.13 78);
+  --danger: oklch(67% 0.18 28);
   --editor-bg: oklch(15% 0.012 230);
   --editor-text: oklch(93% 0.01 230);
   --editor-gutter-bg: oklch(19% 0.014 230);
@@ -62,8 +77,13 @@
     --text: oklch(93% 0.01 230);
     --muted: oklch(68% 0.018 230);
     --border: oklch(34% 0.02 230);
-    --accent: oklch(70% 0.18 31);
-    --accent-weak: oklch(28% 0.07 31);
+    --brand-primary: #0063b2;
+    --brand-accent: #0075a3;
+    --brand-highlight: #46cbff;
+    --accent: #3d92e8;
+    --accent-weak: color-mix(in oklch, var(--accent) 20%, var(--panel));
+    --warning: oklch(76% 0.13 78);
+    --danger: oklch(67% 0.18 28);
     --editor-bg: oklch(15% 0.012 230);
     --editor-text: oklch(93% 0.01 230);
     --editor-gutter-bg: oklch(19% 0.014 230);
@@ -1239,7 +1259,7 @@ button {
 }
 
 .command-button--danger {
-  border-color: color-mix(in oklch, var(--accent) 72%, var(--border));
+  border-color: color-mix(in oklch, var(--danger) 72%, var(--border));
   color: var(--text);
 }
 
