@@ -2324,9 +2324,21 @@ fn open_launch_request_window(app: &tauri::AppHandle, request: OpenLaunchRequest
 fn explicit_launch_target_from_args(
     args: &[String],
 ) -> Result<Option<LaunchTarget>, std::io::Error> {
+    let current_exe = std::env::current_exe()
+        .ok()
+        .and_then(|path| path.canonicalize().ok());
+    launch_target_from_args(args, current_exe.as_deref())
+}
+
+fn launch_target_from_args(
+    args: &[String],
+    current_exe: Option<&Path>,
+) -> Result<Option<LaunchTarget>, std::io::Error> {
     args.iter()
-        .skip(1)
         .map(PathBuf::from)
+        .filter(|path| {
+            !current_exe.is_some_and(|exe| path.canonicalize().ok().as_deref() == Some(exe))
+        })
         .find(|path| path.exists())
         .map(launch_target_for_path)
         .transpose()
@@ -2456,6 +2468,48 @@ mod tests {
 
         assert_eq!(requests.len(), 1);
         assert!(matches!(requests[0], OpenLaunchRequest::File { .. }));
+    }
+
+    #[test]
+    fn launch_target_from_args_accepts_target_without_executable_arg() {
+        let dir = tempdir().unwrap();
+        let canonical_dir = dir.path().canonicalize().unwrap();
+        let args = vec![dir.path().to_string_lossy().to_string()];
+
+        let target = launch_target_from_args(&args, None).unwrap();
+
+        assert_eq!(
+            target,
+            Some(LaunchTarget {
+                workspace_root: canonical_dir,
+                initial_file: None,
+            })
+        );
+    }
+
+    #[test]
+    fn launch_target_from_args_ignores_executable_arg_when_present() {
+        let dir = tempdir().unwrap();
+        let fake_exe = dir.path().join("ide-bin");
+        let workspace = dir.path().join("workspace");
+        std::fs::write(&fake_exe, "").unwrap();
+        std::fs::create_dir(&workspace).unwrap();
+        let canonical_workspace = workspace.canonicalize().unwrap();
+        let canonical_exe = fake_exe.canonicalize().unwrap();
+        let args = vec![
+            fake_exe.to_string_lossy().to_string(),
+            workspace.to_string_lossy().to_string(),
+        ];
+
+        let target = launch_target_from_args(&args, Some(&canonical_exe)).unwrap();
+
+        assert_eq!(
+            target,
+            Some(LaunchTarget {
+                workspace_root: canonical_workspace,
+                initial_file: None,
+            })
+        );
     }
 
     #[test]
@@ -2631,6 +2685,7 @@ mod tests {
                 current_file_result_preview_limit: 16,
                 quick_open_result_limit: 24,
                 background_index_batch_entries: 3_000,
+                workspace_title_max_chars: 50,
                 command_palette_result_limit: 32,
             },
             workspaces: vec![PersistedWorkspaceUiState {
@@ -2767,6 +2822,7 @@ mod tests {
         AppState {
             workspace_root: Arc::new(RwLock::new(PathBuf::new())),
             initial_file: Arc::new(RwLock::new(None)),
+            window_sessions: Arc::new(std::sync::RwLock::new(HashMap::new())),
             pending_open_requests: Arc::new(std::sync::RwLock::new(Vec::new())),
             recent_items: Arc::new(std::sync::RwLock::new(RecentItems::default())),
             recent_store_path: Arc::new(std::sync::RwLock::new(Some(recents_path))),

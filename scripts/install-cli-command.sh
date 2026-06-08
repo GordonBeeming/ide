@@ -59,9 +59,15 @@ install_generated_launcher() {
 set -euo pipefail
 
 APP_BUNDLE="$app_bundle"
+APP_BINARY="\$APP_BUNDLE/Contents/MacOS/ide"
 
 if [ ! -d "\$APP_BUNDLE" ]; then
   echo "ide app bundle was not found: \$APP_BUNDLE" >&2
+  exit 1
+fi
+
+if [ ! -x "\$APP_BINARY" ]; then
+  echo "ide app binary was not found: \$APP_BINARY" >&2
   exit 1
 fi
 
@@ -98,6 +104,10 @@ for arg in "\$@"; do
 done
 
 if [ "\${#ARGS[@]}" -gt 0 ]; then
+  if running_app_reachable; then
+    "\$APP_BINARY" "\${ARGS[@]}" >/dev/null 2>&1 &
+    exit 0
+  fi
   open "\$APP_BUNDLE" --args "\${ARGS[@]}" >/dev/null 2>&1 &
 else
   open "\$APP_BUNDLE" >/dev/null 2>&1 &
