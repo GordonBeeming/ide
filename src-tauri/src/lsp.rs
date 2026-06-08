@@ -13,7 +13,7 @@ use uuid::Uuid;
 
 #[derive(Clone)]
 pub struct LspManager {
-    sessions: Arc<RwLock<HashMap<String, LspSession>>>,
+    sessions: Arc<RwLock<HashMap<LspSessionKey, LspSession>>>,
 }
 
 impl LspManager {
@@ -29,7 +29,7 @@ impl LspManager {
             .iter()
             .map(|config| {
                 let probe = probe_command(config);
-                let running = sessions.contains_key(config.language);
+                let running = sessions.keys().any(|key| key.language == config.language);
                 LspServerStatus {
                     language: config.language.to_string(),
                     display_name: config.display_name.to_string(),
@@ -49,7 +49,8 @@ impl LspManager {
         language: &str,
         workspace_root: &Path,
     ) -> Result<LspStartResult, LspError> {
-        if let Some(existing) = self.sessions.read().await.get(language) {
+        let key = LspSessionKey::new(language, workspace_root);
+        if let Some(existing) = self.sessions.read().await.get(&key) {
             return Ok(LspStartResult {
                 language: language.to_string(),
                 session_id: existing.session_id.clone(),
@@ -83,10 +84,7 @@ impl LspManager {
             stdin: Arc::new(Mutex::new(stdin)),
         };
 
-        self.sessions
-            .write()
-            .await
-            .insert(language.to_string(), session);
+        self.sessions.write().await.insert(key.clone(), session);
 
         spawn_stdout_reader(
             app.clone(),
@@ -108,6 +106,7 @@ impl LspManager {
             session_id.clone(),
             child,
             self.sessions.clone(),
+            key,
         );
 
         Ok(LspStartResult {
@@ -117,12 +116,18 @@ impl LspManager {
         })
     }
 
-    pub async fn send(&self, language: &str, message: &str) -> Result<(), LspError> {
+    pub async fn send(
+        &self,
+        language: &str,
+        workspace_root: &Path,
+        message: &str,
+    ) -> Result<(), LspError> {
+        let key = LspSessionKey::new(language, workspace_root);
         let session = self
             .sessions
             .read()
             .await
-            .get(language)
+            .get(&key)
             .cloned()
             .ok_or_else(|| LspError::NotRunning(language.to_string()))?;
         let payload = format!("Content-Length: {}\r\n\r\n{}", message.len(), message);
@@ -135,8 +140,27 @@ impl LspManager {
         Ok(())
     }
 
-    pub async fn stop_all(&self) {
-        self.sessions.write().await.clear();
+    pub async fn stop_for_root(&self, workspace_root: &Path) {
+        let root = workspace_root.to_path_buf();
+        self.sessions
+            .write()
+            .await
+            .retain(|key, _| key.workspace_root != root);
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct LspSessionKey {
+    language: String,
+    workspace_root: PathBuf,
+}
+
+impl LspSessionKey {
+    fn new(language: &str, workspace_root: &Path) -> Self {
+        Self {
+            language: language.to_string(),
+            workspace_root: workspace_root.to_path_buf(),
+        }
     }
 }
 
@@ -369,14 +393,15 @@ fn spawn_exit_watcher(
     language: String,
     session_id: String,
     mut child: Child,
-    sessions: Arc<RwLock<HashMap<String, LspSession>>>,
+    sessions: Arc<RwLock<HashMap<LspSessionKey, LspSession>>>,
+    key: LspSessionKey,
 ) {
     tauri::async_runtime::spawn(async move {
         let message = match child.wait().await {
             Ok(status) => format!("language server exited with {status}"),
             Err(error) => format!("language server exit watch failed: {error}"),
         };
-        remove_session_if_matches(&sessions, &language, &session_id).await;
+        remove_session_if_matches(&sessions, &key, &session_id).await;
         let _ = app.emit(
             "lsp://log",
             LspLogEvent {
@@ -421,18 +446,16 @@ where
 }
 
 async fn remove_session_if_matches(
-    sessions: &Arc<RwLock<HashMap<String, LspSession>>>,
-    language: &str,
+    sessions: &Arc<RwLock<HashMap<LspSessionKey, LspSession>>>,
+    key: &LspSessionKey,
     session_id: &str,
 ) {
     let mut sessions = sessions.write().await;
     if should_remove_session(
-        sessions
-            .get(language)
-            .map(|session| session.session_id.as_str()),
+        sessions.get(key).map(|session| session.session_id.as_str()),
         session_id,
     ) {
-        sessions.remove(language);
+        sessions.remove(key);
     }
 }
 
@@ -464,5 +487,16 @@ mod tests {
         assert!(should_remove_session(Some("current"), "current"));
         assert!(!should_remove_session(Some("current"), "old"));
         assert!(!should_remove_session(None, "current"));
+    }
+
+    #[test]
+    fn session_keys_include_workspace_root() {
+        let root_a = PathBuf::from("/workspace-a");
+        let root_b = PathBuf::from("/workspace-b");
+
+        assert_ne!(
+            LspSessionKey::new("typescript", &root_a),
+            LspSessionKey::new("typescript", &root_b)
+        );
     }
 }
