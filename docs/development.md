@@ -19,7 +19,7 @@ Pass a file or folder path to open that target as the launch workspace:
 
 Folder targets become the workspace root. File targets open their parent folder as the workspace and then open the file as a persistent tab.
 
-When a file or folder target is supplied and an ide instance is already reachable on the loopback API, `run.sh` authenticates with the per-run bearer token and hands the target to `/api/open-path` instead of starting another dev instance.
+When a file or folder target is supplied and an ide instance is already reachable on the loopback API, `run.sh` authenticates with the persisted app-local bearer token and hands the target to `/api/open-path` instead of starting another dev instance.
 
 When no target is supplied and an ide instance is already reachable, `run.sh` tries to activate the existing macOS app and exits without starting a duplicate dev process. This avoids the Vite port and Cargo build-lock failures that happen when two dev instances are started from the same checkout.
 
@@ -267,10 +267,10 @@ Changing workspace roots must disconnect cached frontend LSP clients and dispose
 The app tracks active file, open files, and selected text through shared backend state. Current bridge surfaces:
 
 - Claude-compatible localhost IDE bridge using `~/.claude/ide/*.lock`, WebSocket MCP, and a per-run auth token.
-- Codex-compatible localhost MCP endpoint over HTTP with a per-run bearer token.
+- Codex-compatible localhost MCP endpoint over HTTP with a persisted app-local bearer token.
 - Local HTTP context endpoint for terminal/browser integrations.
 
-The local HTTP API supports terminal/browser views over loopback. `POST /api/file`, `POST /api/folder`, `PATCH /api/file`, `DELETE /api/file`, `PUT /api/file`, and `PUT /api/agent-context` require the per-run bearer token; unauthenticated local callers can read context but cannot mutate files or editor state. `PUT /api/file` accepts an optional `expectedModifiedMs` value and returns `409 Conflict` when it does not match the current disk timestamp.
+The local HTTP API supports terminal/browser views over loopback. `POST /api/file`, `POST /api/folder`, `PATCH /api/file`, `DELETE /api/file`, `PUT /api/file`, and `PUT /api/agent-context` require the persisted app-local bearer token; unauthenticated local callers can read context but cannot mutate files or editor state. `PUT /api/file` accepts an optional `expectedModifiedMs` value and returns `409 Conflict` when it does not match the current disk timestamp.
 
 Selection context is published only when the recorded selection belongs to the current active file. Tab changes and file switches should never leak a stale selection from a previously active editor into Claude or Codex context.
 

@@ -51,7 +51,7 @@ Implemented:
 - LSP diagnostics panel with precise line/column navigation and read-only agent context.
 - Local HTTP context endpoint for terminal/browser integrations.
 - Claude Code `/ide` discovery bridge with authenticated localhost WebSocket MCP and read-only editor-context tools.
-- Codex-compatible read-only MCP endpoint with a per-run bearer token.
+- Codex-compatible read-only MCP endpoint with a persisted app-local bearer token.
 - Bearer-token protection for mutating local HTTP browser API calls.
 
 Planned:
@@ -127,17 +127,17 @@ Known optional language-server tools:
 
 Claude Code can discover the running editor through `/ide` after the native app starts. The app writes a user-only lock file under `~/.claude/ide/` and exposes only read-only context tools in this first bridge.
 
-Codex can consume editor context through the MCP endpoint shown from the native integration menu. Add it to Codex with the shown bearer token:
+Codex can consume editor context through the MCP endpoint shown from the native integration menu. Copy the Codex MCP config from the integrations panel and add it to `~/.codex/config.toml`:
 
 ```toml
 [mcp_servers.ide]
 url = "http://127.0.0.1:17877/mcp"
-bearer_token_env_var = "IDE_CODEX_MCP_TOKEN"
+http_headers = { Authorization = "Bearer paste-token-from-ide" }
 ```
 
 The public Codex docs describe `/ide` for Codex-owned IDE surfaces and `codex app-server` for rich clients, but do not currently document a Claude-style third-party lockfile protocol. The MCP endpoint remains the supported local context bridge for this app.
 
-The loopback browser API is read-friendly for local terminal/browser views. Mutating routes, including file writes and editor-context updates, require the same per-run bearer token.
+The loopback browser API is read-friendly for local terminal/browser views. Mutating routes, including file writes and editor-context updates, require the same persisted app-local bearer token.
 
 ## Verification
 

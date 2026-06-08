@@ -24,8 +24,8 @@ Security is a core product constraint for this IDE. Changes should be reviewed w
 - Local HTTP and Claude bridge servers bind only to `127.0.0.1`.
 - Claude IDE bridge discovery uses a user-only `~/.claude/ide/` directory, a `0600` lock file, and a per-run UUID auth token.
 - Claude bridge tools are read-only in the first implementation.
-- Codex MCP requests require a per-run bearer token and expose only read-only editor context tools. The token is available from the loopback status API because the terminal-browser UI needs to show it.
-- Mutating local HTTP browser API routes require the per-run bearer token. Read routes remain available for local terminal/browser views.
+- Codex MCP requests require a persisted app-local bearer token and expose only read-only editor context tools. The token is stored in the app-local data directory with user-only permissions and is available from the loopback status API because the terminal-browser UI needs to show it.
+- Mutating local HTTP browser API routes require the persisted app-local bearer token. Read routes remain available for local terminal/browser views.
 - Dev-mode CORS is limited to loopback origins so the Vite frontend can talk to the Rust loopback API without opening the API to arbitrary websites.
 - Errors should be surfaced to the UI. Do not add empty catches or console-only error handling.
 
