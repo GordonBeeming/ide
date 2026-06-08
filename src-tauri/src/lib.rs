@@ -2303,7 +2303,7 @@ fn launch_target_from_saved_context(
         .find_map(|workspace| launch_target_for_saved_workspace(&workspace.path))
         .or_else(|| {
             let mut workspaces = ui_state.workspaces.iter().collect::<Vec<_>>();
-            workspaces.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+            workspaces.sort_by_key(|workspace| std::cmp::Reverse(workspace.updated_at));
             workspaces
                 .into_iter()
                 .find_map(|workspace| launch_target_for_saved_workspace(&workspace.workspace_root))
@@ -2486,7 +2486,7 @@ fn launch_target_from_args(
     args.iter()
         .map(PathBuf::from)
         .filter(|path| {
-            !current_exe.is_some_and(|exe| path.canonicalize().ok().as_deref() == Some(exe))
+            current_exe.is_none_or(|exe| path.canonicalize().ok().as_deref() != Some(exe))
         })
         .find(|path| path.exists())
         .map(launch_target_for_path)
