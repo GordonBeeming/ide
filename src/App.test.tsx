@@ -869,6 +869,51 @@ describe("App shell interactions", () => {
     expect(screen.queryByLabelText("Show diagnostics panel")).not.toBeInTheDocument();
   });
 
+  it("shows preview feature flags and persists a toggle", async () => {
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    render(<App />);
+
+    expect(await treeButton("README.md")).toBeInTheDocument();
+    await openSettingsDialog();
+    selectSettingsTab("Preview Features");
+
+    const toggle = await screen.findByLabelText("Git attribution");
+    expect(toggle).not.toBeChecked();
+    // Internal-only flags must never surface here.
+    expect(screen.queryByLabelText("Show dotfiles and dot folders")).not.toBeInTheDocument();
+
+    fireEvent.click(toggle);
+
+    await waitFor(() =>
+      expect(tauriMocks.updateUiState).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          featureFlags: expect.objectContaining({ gitAttribution: true }),
+        }),
+        expect.anything(),
+      ),
+    );
+  });
+
+  it("restores a persisted preview flag override", async () => {
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    tauriMocks.getUiState.mockResolvedValueOnce({
+      view: {
+        showDotfiles: false,
+        showGeneratedInternal: false,
+        featureFlags: { gitAttribution: true, retiredFlag: true },
+      },
+      workspace: { expandedFolders: [], openFiles: [] },
+    });
+
+    render(<App />);
+
+    expect(await treeButton("README.md")).toBeInTheDocument();
+    await openSettingsDialog();
+    selectSettingsTab("Preview Features");
+
+    expect(await screen.findByLabelText("Git attribution")).toBeChecked();
+  });
+
   it("shows OS storage paths from Settings", async () => {
     (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
     render(<App />);

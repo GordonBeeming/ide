@@ -82,6 +82,7 @@ points before committing anything to the backlog. It should include:
 - A comparison table across all proposed features with effort, likely files,
   rough LOC, complexity, foreignness, dependencies, risk, and confidence.
 - A detailed section for each proposed feature using the analysis fields below.
+- A feature flag recommendation for each proposed feature (see below).
 - A "GitHub transposition plan" that maps each proposed feature to one future
   issue title and body source.
 - A change log section for review iterations.
@@ -150,6 +151,16 @@ For each feature, include:
 - **User value**: Why this matters to the end user or operator.
 - **Scope**: In scope, out of scope, and assumptions.
 - **Acceptance criteria**: Concrete behavior that proves the feature is done.
+- **Feature flag recommendation**: State whether the feature should ship behind
+  a flag first, and either way explain the reasoning:
+  - Required or not required.
+  - Reason: why a flag does or does not reduce risk for this feature. Larger,
+    riskier, or hard-to-reverse work usually warrants one; foundational or
+    trivial work usually does not.
+  - When required, also give the proposed flag id, default state (on or off),
+    and user visibility (a user-facing preview flag, or internal-only).
+  - Graduation criteria: what makes the flag removable or promotable to a normal
+    setting, so it does not linger as flag debt.
 - **Implementation tasks**: Checklist items for what work is needed across
   product behavior, user experience, data, permissions, telemetry, docs, tests,
   and rollout. Keep these stable if the code moves before implementation.
@@ -313,6 +324,15 @@ Use this shape for each issue:
 ## Acceptance Criteria
 
 - [ ] ...
+
+## Feature Flag Recommendation
+
+- Required: yes or no.
+- Reason: ...
+- Proposed flag id: ... (when required)
+- Default state: on or off (when required)
+- User visibility: preview flag or internal-only (when required)
+- Graduation criteria: what makes the flag removable or promotable to a setting.
 
 ## Implementation Tasks
 

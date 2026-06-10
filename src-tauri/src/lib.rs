@@ -4,7 +4,7 @@ mod lsp;
 mod workspace;
 mod workspace_index;
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -183,6 +183,11 @@ struct PersistedViewSettings {
     workspace_title_max_chars: usize,
     #[serde(default = "default_command_palette_result_limit")]
     command_palette_result_limit: usize,
+    // Persisted feature-flag overrides only. Defaults and metadata live in the
+    // frontend registry (src/featureFlags.ts); unknown/retired ids are pruned by
+    // sanitize_view_settings so the settings file stays tidy as flags retire.
+    #[serde(default)]
+    feature_flags: BTreeMap<String, bool>,
 }
 
 impl Default for PersistedViewSettings {
@@ -201,9 +206,15 @@ impl Default for PersistedViewSettings {
             background_index_batch_entries: default_background_index_batch_entries(),
             workspace_title_max_chars: default_workspace_title_max_chars(),
             command_palette_result_limit: default_command_palette_result_limit(),
+            feature_flags: BTreeMap::new(),
         }
     }
 }
+
+// Flag ids the app currently knows about. Persisted overrides for any id not in
+// this list are pruned on load, so retiring a flag is just removing it here (and
+// from the frontend registry). Keep in sync with src/featureFlags.ts.
+const KNOWN_FEATURE_FLAGS: &[&str] = &["gitAttribution"];
 
 const MIN_TREE_SCAN_LIMIT: usize = 500;
 const DEFAULT_TREE_SCAN_LIMIT: usize = 10_000;
@@ -314,6 +325,9 @@ fn sanitize_view_settings(mut settings: PersistedViewSettings) -> PersistedViewS
         MIN_COMMAND_PALETTE_RESULT_LIMIT,
         MAX_COMMAND_PALETTE_RESULT_LIMIT,
     );
+    settings
+        .feature_flags
+        .retain(|id, _| KNOWN_FEATURE_FLAGS.contains(&id.as_str()));
     settings
 }
 
@@ -2895,6 +2909,7 @@ mod tests {
                 background_index_batch_entries: 3_000,
                 workspace_title_max_chars: 50,
                 command_palette_result_limit: 32,
+                feature_flags: BTreeMap::new(),
             },
             workspaces: vec![PersistedWorkspaceUiState {
                 workspace_root: "/workspace".to_string(),
@@ -2931,6 +2946,56 @@ mod tests {
             snapshot.workspace.active_file,
             Some("src/App.tsx".to_string())
         );
+    }
+
+    #[test]
+    fn unknown_feature_flags_are_pruned_and_known_flags_survive_a_round_trip() {
+        let dir = tempdir().unwrap();
+        let ui_state_path = dir.path().join("ui-state.json");
+        let state = test_state(dir.path().join("recents.json"));
+        *state.ui_state_store_path.write().unwrap() = Some(ui_state_path.clone());
+
+        let mut flags = BTreeMap::new();
+        flags.insert("gitAttribution".to_string(), true);
+        flags.insert("retiredFlag".to_string(), true);
+
+        let sanitized = sanitize_view_settings(PersistedViewSettings {
+            feature_flags: flags,
+            ..PersistedViewSettings::default()
+        });
+
+        assert_eq!(sanitized.feature_flags.get("gitAttribution"), Some(&true));
+        assert!(!sanitized.feature_flags.contains_key("retiredFlag"));
+
+        *state.ui_state.write().unwrap() = AppUiState {
+            view: sanitized,
+            workspaces: Vec::new(),
+        };
+        persist_ui_state(&state).unwrap();
+
+        let loaded = load_ui_state(&ui_state_path).unwrap();
+        assert_eq!(loaded.view.feature_flags.get("gitAttribution"), Some(&true));
+        assert!(!loaded.view.feature_flags.contains_key("retiredFlag"));
+    }
+
+    #[test]
+    fn feature_flags_default_to_empty_and_load_prunes_unknown_ids() {
+        let dir = tempdir().unwrap();
+        let ui_state_path = dir.path().join("ui-state.json");
+        assert!(PersistedViewSettings::default().feature_flags.is_empty());
+
+        std::fs::write(
+            &ui_state_path,
+            r#"{"view":{"showDotfiles":false,"showGeneratedInternal":false,"featureFlags":{"gitAttribution":false,"ghostFlag":true}},"workspaces":[]}"#,
+        )
+        .unwrap();
+
+        let loaded = load_ui_state(&ui_state_path).unwrap();
+        assert_eq!(
+            loaded.view.feature_flags.get("gitAttribution"),
+            Some(&false)
+        );
+        assert!(!loaded.view.feature_flags.contains_key("ghostFlag"));
     }
 
     #[test]

@@ -108,6 +108,7 @@ The app is intentionally split into a small always-loaded shell and lazy-loaded 
 - `src/commandPalette.ts`: tested command palette matching, ranking, and keyboard selection rules.
 - `src/editorNavigation.ts`: tested line clamping for search-result reveal behavior.
 - `src/currentFileSearch.ts`: tested current-file search over loaded and unsaved editor contents.
+- `src/featureFlags.ts`: typed feature-flag registry plus default/override resolution and the helper that lists user-facing preview flags. See [Feature Flags](#feature-flags).
 - `src/App.test.tsx`: rendered shell coverage for non-text file selection, collapsed search controls and Escape dismissal, keyboard tree expansion/opening, accessible tree selection/expanded state, categorized Settings navigation, preview-tab lifecycle, dirty-tab save-and-close prompts, native Close Tab/Close All/Search menu handling, native menu blocking while modal dialogs are open, command-palette file opening, keyboard file/folder creation shortcuts, keyboard tab switching, go-to-line navigation and validation, caret status reporting, current-file search navigation, precise diagnostic navigation, new-file/folder creation, file/folder rename/delete, reload-from-disk behavior, stale-save handling, Save All success/failure behavior, active-file-safe agent selection context, and content search result/error behavior.
 - `src/tauri.test.ts`: hosted browser transport coverage for bearer-token file/folder creation, native-only file picking, file rename/delete/writes, stale-save tokens, and loopback API base selection.
 - `scripts/bundle-budget.mjs`: production bundle budget coverage for startup assets and the lazy editor chunk.
@@ -124,6 +125,28 @@ The app is intentionally split into a small always-loaded shell and lazy-loaded 
 
 Security rules live in [security.md](security.md). Treat them as part of the development process, not a release checklist.
 Research notes and protocol references live in [research.md](research.md).
+
+## Feature Flags
+
+Larger or riskier features can ship behind a flag before they become a normal setting or always-on behavior. The flagging system is deliberately local-only: no remote config, cohorts, or rollout service.
+
+Two pieces hold the state:
+
+- `src/featureFlags.ts` is the registry. Each flag carries an id, label, description, default state, visibility, lifecycle state, and graduation criteria. The registry owns the defaults and metadata; feature code asks `isFeatureEnabled(id, overrides)` so every call site gets the same answer.
+- `src-tauri/src/lib.rs` persists overrides only. A flag's effective value is its registry default unless the user has set a different value, and that override is the single thing written to `ui-state.json` under `featureFlags`. `KNOWN_FEATURE_FLAGS` lists the ids the backend recognizes, and `sanitize_view_settings` drops any persisted override whose id is not in that list, so retired flags do not pile up. Keep `KNOWN_FEATURE_FLAGS` in sync with the registry.
+
+Visibility decides where a flag shows up. A `preview` flag appears in Settings under **Preview Features**, where a user can opt in and out. An `internal` flag is gated in code and never rendered as a toggle.
+
+The lifecycle runs in four steps:
+
+1. **Introduce.** A feature adds a flag to the registry, defaulting off, usually as a preview flag people can opt into.
+2. **Stabilize.** The feature runs behind the flag while the implementation, UX, and performance settle. A disabled flag must render no UI, start no background work, and change no stored data.
+3. **Decide.** Once stable, choose whether users still need a switch or the feature should be on for everyone.
+4. **Promote or remove.** Promote the flag into a normal setting in whatever category fits the feature, or delete it from the registry and `KNOWN_FEATURE_FLAGS` so the next load prunes the stale override and the feature is always on.
+
+When promoting a flag to a real setting, migrate any saved override into the new setting before the flag id is pruned, so a user who opted in keeps their preference.
+
+`gitAttribution` is the first seeded flag, a preview flag defaulting off. It reserves the id the Git attribution feature will check; no attribution behavior ships with the flag itself.
 
 ## Performance Notes
 

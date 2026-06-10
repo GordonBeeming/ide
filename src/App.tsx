@@ -45,6 +45,12 @@ import {
   nextCurrentFileMatchIndex,
 } from "./currentFileSearch";
 import { iconForFile, isKnownBinaryFile } from "./fileTypes";
+import {
+  type FeatureFlagOverrides,
+  isFeatureEnabled,
+  previewFeatureFlags,
+  sanitizeFeatureFlagOverrides,
+} from "./featureFlags";
 import { codexMcpConfigSnippet } from "./integrations";
 import {
   applyDocumentTheme,
@@ -173,7 +179,12 @@ interface OpenFailure {
 }
 
 type SidebarSearchMode = "filter" | "content";
-type SettingsCategory = "view" | "performance" | "search" | "storage";
+type SettingsCategory =
+  | "view"
+  | "performance"
+  | "search"
+  | "preview"
+  | "storage";
 
 const settingsCategories: Array<{
   id: SettingsCategory;
@@ -183,6 +194,7 @@ const settingsCategories: Array<{
   { id: "view", title: "View", detail: "Tree visibility" },
   { id: "performance", title: "Performance", detail: "Scan, file, and palette caps" },
   { id: "search", title: "Search", detail: "Search result and file caps" },
+  { id: "preview", title: "Preview Features", detail: "Opt into in-progress features" },
   { id: "storage", title: "Storage", detail: "Settings and index files" },
 ];
 
@@ -441,6 +453,7 @@ export default function App() {
   const [commandPaletteResultLimit, setCommandPaletteResultLimit] = useState(
     defaultCommandPaletteResultLimit,
   );
+  const [featureFlags, setFeatureFlags] = useState<FeatureFlagOverrides>({});
   const [prefersDark, setPrefersDark] = useState(systemPrefersDark);
   const [uiStateLoaded, setUiStateLoaded] = useState(false);
   const [workspaceUiRestored, setWorkspaceUiRestored] = useState(false);
@@ -757,6 +770,7 @@ export default function App() {
         defaultCommandPaletteResultLimit,
       ),
     );
+    setFeatureFlags(sanitizeFeatureFlagOverrides(snapshot.view.featureFlags));
     setExpandedFolders(new Set(snapshot.workspace.expandedFolders));
     setSelectedPath(snapshot.workspace.selectedPath);
   }, []);
@@ -1279,6 +1293,7 @@ export default function App() {
           quickOpenResultLimit,
           backgroundIndexBatchEntries,
           commandPaletteResultLimit,
+          featureFlags,
         },
         {
           expandedFolders: [...expandedFolders],
@@ -1310,6 +1325,7 @@ export default function App() {
     quickOpenResultLimit,
     backgroundIndexBatchEntries,
     commandPaletteResultLimit,
+    featureFlags,
     uiStateLoaded,
     workspaceUiRestored,
   ]);
@@ -3990,6 +4006,52 @@ export default function App() {
                           }}
                         />
                       </label>
+                    </section>
+                  ) : null}
+
+                  {settingsCategory === "preview" ? (
+                    <section
+                      className="settings-section"
+                      aria-label="Preview features"
+                      role="tabpanel"
+                      id="settings-panel-preview"
+                      aria-labelledby="settings-tab-preview"
+                    >
+                      <div className="settings-section__title">Preview Features</div>
+                      <p className="settings-note">
+                        In-progress features you can opt into. They may change or be
+                        removed, and stable ones graduate into a normal setting.
+                      </p>
+                      {previewFeatureFlags().map((flag) => {
+                        const enabled = isFeatureEnabled(flag.id, featureFlags);
+                        return (
+                          <label className="settings-row settings-flag" key={flag.id}>
+                            <input
+                              type="checkbox"
+                              aria-label={flag.label}
+                              checked={enabled}
+                              onChange={(event) => {
+                                const next = event.target.checked;
+                                setFeatureFlags((prev) => ({
+                                  ...prev,
+                                  [flag.id]: next,
+                                }));
+                                setStatus(
+                                  next
+                                    ? `Enabled preview feature: ${flag.label}`
+                                    : `Disabled preview feature: ${flag.label}`,
+                                );
+                              }}
+                            />
+                            <span className="settings-flag__text">
+                              <span className="settings-flag__label">{flag.label}</span>
+                              <span className="settings-flag__desc">
+                                {flag.description}
+                              </span>
+                            </span>
+                          </label>
+                        );
+                      })}
                     </section>
                   ) : null}
 
