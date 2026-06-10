@@ -1279,6 +1279,32 @@ button {
   line-height: 1.45;
 }
 
+.settings-flag {
+  align-items: start;
+  min-height: 0;
+}
+
+.settings-flag input {
+  margin-top: 2px;
+}
+
+.settings-flag__text {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.settings-flag__label {
+  font-weight: 600;
+}
+
+.settings-flag__desc {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 450;
+  line-height: 1.45;
+}
+
 .settings-path-list {
   display: grid;
   gap: 8px;

@@ -118,6 +118,8 @@ export interface PersistedViewSettings {
   backgroundIndexBatchEntries?: number;
   workspaceTitleMaxChars?: number;
   commandPaletteResultLimit?: number;
+  // Persisted feature-flag overrides only; defaults live in src/featureFlags.ts.
+  featureFlags?: Record<string, boolean>;
 }
 
 export interface WorkspaceUiState {
@@ -176,6 +178,7 @@ const defaultUiSnapshot: PersistedUiSnapshot = {
     backgroundIndexBatchEntries: 2000,
     workspaceTitleMaxChars: 50,
     commandPaletteResultLimit: 18,
+    featureFlags: {},
   },
   workspace: {
     expandedFolders: [],

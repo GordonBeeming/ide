@@ -328,6 +328,7 @@ describe("hosted Tauri API transport", () => {
         backgroundIndexBatchEntries: 2000,
         workspaceTitleMaxChars: 50,
         commandPaletteResultLimit: 18,
+        featureFlags: {},
       },
       workspace: {
         expandedFolders: [],
