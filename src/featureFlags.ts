@@ -84,7 +84,11 @@ export function isFeatureEnabled(
   id: FeatureFlagId,
   overrides: FeatureFlagOverrides,
 ): boolean {
-  return resolveFeatureFlags(overrides)[id];
+  // Direct O(1) lookup with no allocation — this runs in render hot paths, so
+  // avoid resolving the whole registry per check. A non-boolean (hand-edited)
+  // override falls back to the registry default, same as sanitization would.
+  const override = overrides[id];
+  return typeof override === "boolean" ? override : FEATURE_FLAGS[id].defaultEnabled;
 }
 
 // Flags that belong in the Settings "Preview Features" surface. Internal flags
