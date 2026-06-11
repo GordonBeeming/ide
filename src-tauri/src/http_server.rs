@@ -272,14 +272,13 @@ pub async fn start_http_server(config: HttpServerConfig) -> Result<HttpServerInf
     // so it has to run BEFORE routing. `Router::layer` runs after a route is matched
     // (the same gotcha as tower-http's NormalizePath), so wrap the whole router from
     // the outside instead and serve the wrapped service.
-    let app = middleware::from_fn_with_state(resolve_state, resolve_workspace_middleware)
-        .layer(app);
+    let app =
+        middleware::from_fn_with_state(resolve_state, resolve_workspace_middleware).layer(app);
 
     let listener = bind_loopback().await?;
     let endpoint = format!("http://{}", listener.local_addr()?);
     tauri::async_runtime::spawn(async move {
-        let make_service =
-            axum::ServiceExt::<Request<axum::body::Body>>::into_make_service(app);
+        let make_service = axum::ServiceExt::<Request<axum::body::Body>>::into_make_service(app);
         if let Err(error) = axum::serve(listener, make_service).await {
             *server_error.write().await = Some(error.to_string());
         }
@@ -386,8 +385,7 @@ async fn resolve_workspace_by_hash(
 ) -> Option<ResolvedWorkspace> {
     // Snapshot the Arcs under the sync lock, then read each root on the async side,
     // mirroring `workspace_root_is_used_by_any_session` in lib.rs.
-    let snapshot: Vec<WorkspaceSessionState> =
-        sessions.read().ok()?.values().cloned().collect();
+    let snapshot: Vec<WorkspaceSessionState> = sessions.read().ok()?.values().cloned().collect();
     for session in snapshot {
         let root = session.workspace_root.read().await.clone();
         if workspace_root_hash(&root) == hash {
@@ -835,7 +833,9 @@ async fn search(
     )?))
 }
 
-async fn get_agent_context(Extension(resolved): Extension<ResolvedWorkspace>) -> Json<AgentContext> {
+async fn get_agent_context(
+    Extension(resolved): Extension<ResolvedWorkspace>,
+) -> Json<AgentContext> {
     Json(resolved.agent_context.read().await.clone())
 }
 
@@ -2301,10 +2301,7 @@ mod tests {
         let second = tempdir().unwrap();
         let mut sessions = HashMap::new();
         sessions.insert("main".to_string(), test_session(first.path()));
-        sessions.insert(
-            "workspace-1".to_string(),
-            test_session(second.path()),
-        );
+        sessions.insert("workspace-1".to_string(), test_session(second.path()));
         let sessions = Arc::new(std::sync::RwLock::new(sessions));
 
         let hash = workspace_root_hash(second.path());
@@ -2428,11 +2425,8 @@ mod tests {
             .with_state(state.clone());
         // Wrap from the outside, exactly like start_http_server, so the resolver runs
         // before routing.
-        let router = middleware::from_fn_with_state(
-            state.clone(),
-            resolve_workspace_middleware,
-        )
-        .layer(inner);
+        let router = middleware::from_fn_with_state(state.clone(), resolve_workspace_middleware)
+            .layer(inner);
 
         let hash_a = workspace_root_hash(dir_a.path());
         let hash_b = workspace_root_hash(dir_b.path());
@@ -2446,7 +2440,11 @@ mod tests {
 
         // No prefix → the shared/default root.
         let (_, body) = response_text(
-            router.clone().oneshot(request("/api/workspace-root")).await.unwrap(),
+            router
+                .clone()
+                .oneshot(request("/api/workspace-root"))
+                .await
+                .unwrap(),
         )
         .await;
         assert!(body.contains(&shared.path().to_string_lossy().to_string()));
@@ -2476,8 +2474,7 @@ mod tests {
         assert_eq!(body, "SPA_MARKER");
 
         // Bare `/` with two open workspaces lists them instead of redirecting.
-        let (_, body) =
-            response_text(router.clone().oneshot(request("/")).await.unwrap()).await;
+        let (_, body) = response_text(router.clone().oneshot(request("/")).await.unwrap()).await;
         assert!(body.contains("Open workspaces"));
         assert!(body.contains(&format!("/{hash_a}/")));
         assert!(body.contains(&format!("/{hash_b}/")));
