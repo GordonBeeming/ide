@@ -441,17 +441,23 @@ async fn resolve_workspace_middleware(
         agent_context: state.agent_context.clone(),
         scoped: false,
     };
-    let path = request.uri().path().to_string();
-    let (candidate, rest) = split_workspace_prefix(&path);
-    let resolved = if !looks_like_workspace_hash(candidate) {
-        default
-    } else {
+    // Borrow the path and only allocate when there's a hash-shaped prefix to strip —
+    // the owned `candidate`/rewritten path are needed because the URI mutation and the
+    // `.await` below outlive the borrow. Unscoped requests (the hot path) allocate nothing.
+    let rewrite = {
+        let (candidate, rest) = split_workspace_prefix(request.uri().path());
+        looks_like_workspace_hash(candidate).then(|| (candidate.to_string(), format!("/{rest}")))
+    };
+    let resolved = match rewrite {
         // Strip the hash-shaped prefix regardless of whether it resolves; an unknown
         // token falls back to the shared root rather than serving HTML from an API path.
-        rewrite_request_path(&mut request, &format!("/{rest}"));
-        resolve_workspace_by_hash(&state.window_sessions, candidate)
-            .await
-            .unwrap_or(default)
+        Some((candidate, rewritten)) => {
+            rewrite_request_path(&mut request, &rewritten);
+            resolve_workspace_by_hash(&state.window_sessions, &candidate)
+                .await
+                .unwrap_or(default)
+        }
+        None => default,
     };
     request.extensions_mut().insert(resolved);
     next.run(request).await
