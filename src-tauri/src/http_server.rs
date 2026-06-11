@@ -368,15 +368,28 @@ fn is_loopback_host_port(value: &str) -> bool {
 }
 
 /// Splits a leading path segment (the candidate workspace hash) off the request
-/// path, returning that segment plus the remainder with a leading slash. The
-/// remainder is what the request is rewritten to once the segment is confirmed to
-/// match an open workspace. A bare `/` yields an empty segment and `/` remainder.
-fn split_workspace_prefix(path: &str) -> (&str, String) {
+/// path, returning that segment plus the remainder (without a leading slash). The
+/// remainder is borrowed from the input — the caller formats `/{rest}` only when it
+/// actually rewrites, so unscoped requests (the common case) allocate nothing. A
+/// bare `/` yields two empty strings.
+fn split_workspace_prefix(path: &str) -> (&str, &str) {
     let trimmed = path.strip_prefix('/').unwrap_or(path);
     match trimmed.split_once('/') {
-        Some((first, rest)) => (first, format!("/{rest}")),
-        None => (trimmed, "/".to_string()),
+        Some((first, rest)) => (first, rest),
+        None => (trimmed, ""),
     }
+}
+
+/// Whether a path segment is shaped like a `workspace_root_hash` token: 1–16
+/// lowercase hex digits. Real top-level routes (`api`, `assets`, `mcp`) and static
+/// filenames (which carry a `.`) never match, so this distinguishes a workspace
+/// prefix from an ordinary path without consulting the session list.
+fn looks_like_workspace_hash(segment: &str) -> bool {
+    !segment.is_empty()
+        && segment.len() <= 16
+        && segment
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
 async fn resolve_workspace_by_hash(
@@ -412,8 +425,12 @@ fn rewrite_request_path(request: &mut Request<axum::body::Body>, new_path: &str)
 /// Resolves a leading `/{hash}` path segment to an open workspace, rewriting the URI
 /// to drop the prefix and stashing the resolved root + agent context as a request
 /// extension. Runs before route matching so the existing `/api/...` and `/` routes
-/// see the stripped path. Requests without a matching prefix get the shared/default
-/// workspace, leaving the no-hash API surface unchanged.
+/// see the stripped path. Requests without a hash-shaped prefix get the
+/// shared/default workspace, leaving the no-hash API surface unchanged.
+///
+/// A hash-shaped prefix is stripped even when it doesn't match an open workspace, so
+/// a stale `/{hash}/` bookmark falls back to the shared root (and the chooser for
+/// `/`) instead of leaking SPA HTML out of `/{hash}/api/...` paths.
 async fn resolve_workspace_middleware(
     State(state): State<HttpServerState>,
     mut request: Request<axum::body::Body>,
@@ -426,15 +443,15 @@ async fn resolve_workspace_middleware(
     };
     let path = request.uri().path().to_string();
     let (candidate, rest) = split_workspace_prefix(&path);
-    let resolved = if candidate.is_empty() {
+    let resolved = if !looks_like_workspace_hash(candidate) {
         default
-    } else if let Some(resolved) =
-        resolve_workspace_by_hash(&state.window_sessions, candidate).await
-    {
-        rewrite_request_path(&mut request, &rest);
-        resolved
     } else {
-        default
+        // Strip the hash-shaped prefix regardless of whether it resolves; an unknown
+        // token falls back to the shared root rather than serving HTML from an API path.
+        rewrite_request_path(&mut request, &format!("/{rest}"));
+        resolve_workspace_by_hash(&state.window_sessions, candidate)
+            .await
+            .unwrap_or(default)
     };
     request.extensions_mut().insert(resolved);
     next.run(request).await
@@ -2263,23 +2280,28 @@ mod tests {
     fn split_workspace_prefix_peels_the_first_segment() {
         assert_eq!(
             split_workspace_prefix("/abc123/api/file"),
-            ("abc123", "/api/file".to_string())
+            ("abc123", "api/file")
         );
-        assert_eq!(
-            split_workspace_prefix("/abc123/"),
-            ("abc123", "/".to_string())
-        );
-        assert_eq!(
-            split_workspace_prefix("/abc123"),
-            ("abc123", "/".to_string())
-        );
+        assert_eq!(split_workspace_prefix("/abc123/"), ("abc123", ""));
+        assert_eq!(split_workspace_prefix("/abc123"), ("abc123", ""));
         // A bare root has no candidate segment.
-        assert_eq!(split_workspace_prefix("/"), ("", "/".to_string()));
+        assert_eq!(split_workspace_prefix("/"), ("", ""));
         // Plain API calls keep their path; "api" simply won't resolve to a workspace.
-        assert_eq!(
-            split_workspace_prefix("/api/files"),
-            ("api", "/files".to_string())
-        );
+        assert_eq!(split_workspace_prefix("/api/files"), ("api", "files"));
+    }
+
+    #[test]
+    fn looks_like_workspace_hash_matches_only_hex_tokens() {
+        assert!(looks_like_workspace_hash("beb036bfb04ac22b"));
+        assert!(looks_like_workspace_hash("0"));
+        // Real top-level routes and static filenames must not be mistaken for hashes.
+        assert!(!looks_like_workspace_hash("api"));
+        assert!(!looks_like_workspace_hash("assets"));
+        assert!(!looks_like_workspace_hash("mcp"));
+        assert!(!looks_like_workspace_hash("index.html"));
+        assert!(!looks_like_workspace_hash(""));
+        // Hash tokens are u64 hex — never longer than 16 chars.
+        assert!(!looks_like_workspace_hash("00000000000000000"));
     }
 
     #[test]
@@ -2478,6 +2500,25 @@ mod tests {
         assert!(body.contains("Open workspaces"));
         assert!(body.contains(&format!("/{hash_a}/")));
         assert!(body.contains(&format!("/{hash_b}/")));
+
+        // A stale/unknown but hash-shaped prefix is stripped and falls back to the
+        // shared root — an API path returns JSON, never SPA HTML.
+        let (status, body) = response_text(
+            router
+                .clone()
+                .oneshot(request("/deadbeef/api/workspace-root"))
+                .await
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(body.contains(&shared.path().to_string_lossy().to_string()));
+        assert!(!body.contains("SPA_MARKER"));
+
+        // And an unknown `/{hash}/` lands on the chooser, not a dead SPA shell.
+        let (_, body) =
+            response_text(router.clone().oneshot(request("/deadbeef/")).await.unwrap()).await;
+        assert!(body.contains("Open workspaces"));
     }
 
     #[test]

@@ -2492,19 +2492,20 @@ fn launch_target_window_label(target: &LaunchTarget) -> String {
     format!("workspace-{:x}", hasher.finish())
 }
 
-/// Stable URL token for a workspace folder, used by the HTTP server to route
-/// `/{hash}/...` requests to the right open workspace in a browser. Hashes the
-/// canonical path so the same folder always yields the same token regardless of
-/// which file was opened (unlike `launch_target_window_label`, which folds in the
-/// initial file). `DefaultHasher::new()` seeds from fixed keys, so the token is
-/// deterministic across process restarts and safe to bookmark.
+/// URL token for a workspace folder, used by the HTTP server to route `/{hash}/...`
+/// requests to the right open workspace in a browser. Hashes the stored path string
+/// directly — workspace roots are already canonicalized at open time (see
+/// `set_workspace_root_path` and `launch_target_for_path`), so re-canonicalizing
+/// here would just add a blocking filesystem syscall on every HTTP request.
+///
+/// `DefaultHasher::new()` seeds from fixed keys, so within a given build the token is
+/// deterministic across process restarts. It is NOT a cross-version stability
+/// contract: the standard library may change the algorithm, which would shift tokens
+/// after a Rust upgrade. Good enough for a same-session browser tab; not a permanent
+/// public identifier.
 pub(crate) fn workspace_root_hash(path: &Path) -> String {
-    let canonical = path
-        .canonicalize()
-        .map(|canonical| canonical.to_string_lossy().to_string())
-        .unwrap_or_else(|_| path.to_string_lossy().to_string());
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    canonical.hash(&mut hasher);
+    path.to_string_lossy().hash(&mut hasher);
     format!("{:x}", hasher.finish())
 }
 
@@ -2634,15 +2635,16 @@ mod tests {
     }
 
     #[test]
-    fn workspace_root_hash_ignores_path_spelling_via_canonicalization() {
+    fn workspace_root_hash_is_a_pure_function_of_the_path_string() {
         let dir = tempdir().unwrap();
         let nested = dir.path().join("project");
         std::fs::create_dir(&nested).unwrap();
 
+        // The hash is taken over the stored path string verbatim (callers store
+        // canonical paths), so two spellings of the same folder are distinct tokens.
         let direct = workspace_root_hash(&nested);
-        let indirect = workspace_root_hash(&dir.path().join("project").join("."));
-
-        assert_eq!(direct, indirect);
+        let dotted = workspace_root_hash(&nested.join("."));
+        assert_ne!(direct, dotted);
     }
 
     #[test]
