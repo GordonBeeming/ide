@@ -189,6 +189,22 @@ describe("hosted Tauri API transport", () => {
     expect(apiBaseForLocation({ port: "17877" })).toBe("");
   });
 
+  it("derives the workspace path prefix from the hosted URL", async () => {
+    const { workspacePathPrefix } = await import("./tauri");
+
+    // Dev server proxies to the single shared workspace — no prefix.
+    expect(workspacePathPrefix({ port: "1420", pathname: "/abc123/" })).toBe("");
+    // Hosted under /{hash}/ — every API call carries that segment.
+    expect(workspacePathPrefix({ port: "17877", pathname: "/abc123/" })).toBe(
+      "/abc123",
+    );
+    expect(
+      workspacePathPrefix({ port: "17877", pathname: "/abc123/some/route" }),
+    ).toBe("/abc123");
+    // Bare root (chooser) has no workspace segment.
+    expect(workspacePathPrefix({ port: "17877", pathname: "/" })).toBe("");
+  });
+
   it("uses the same-origin API base when hosted by the app HTTP server", async () => {
     const fetchMock = vi
       .fn()

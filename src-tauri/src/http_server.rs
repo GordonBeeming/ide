@@ -1,19 +1,21 @@
+use std::collections::{HashMap, HashSet};
 use std::net::{Ipv4Addr, SocketAddr};
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use std::{fmt, io};
 
 use axum::extract::{Query, State};
-use axum::http::{header, HeaderMap, HeaderValue, Request, StatusCode};
+use axum::http::{header, HeaderMap, HeaderValue, Request, StatusCode, Uri};
 use axum::middleware::{self, Next};
 use axum::response::{Html, IntoResponse, Response};
 use axum::routing::{get, post};
-use axum::{Json, Router};
+use axum::{Extension, Json, Router};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tauri::Emitter;
 use tokio::net::TcpListener;
 use tokio::sync::RwLock;
+use tower::Layer;
 
 use crate::lsp::{LspManager, LspServerStatus};
 use crate::workspace::{
@@ -23,7 +25,7 @@ use crate::workspace::{
     FileEntry, WorkspaceScan, WorkspaceSearch,
 };
 use crate::workspace_index::{advance_workspace_index, WorkspaceIndex, WorkspaceIndexAdvanceError};
-use crate::AgentContext;
+use crate::{workspace_root_hash, AgentContext, WorkspaceSessionState};
 
 #[derive(Clone)]
 pub struct HttpServerState {
@@ -39,6 +41,21 @@ pub struct HttpServerState {
     lsp_manager: LspManager,
     frontend_dist: PathBuf,
     mcp_token: String,
+    window_sessions: Arc<std::sync::RwLock<HashMap<String, WorkspaceSessionState>>>,
+}
+
+/// The workspace a request resolves to, set by `resolve_workspace_middleware` and
+/// read by every workspace-scoped handler. A `/{hash}/...` request resolves to the
+/// matching open session; everything else falls back to the shared/default root, so
+/// the no-hash API surface (dev on port 1420, `/mcp`, Codex) is unchanged.
+#[derive(Clone)]
+struct ResolvedWorkspace {
+    workspace_root: Arc<RwLock<PathBuf>>,
+    agent_context: Arc<RwLock<AgentContext>>,
+    /// True when the request carried a `/{hash}` prefix that matched an open
+    /// workspace. The `/` handler uses this to serve the SPA for `/{hash}/`
+    /// (rewritten to `/`) versus the chooser landing page for a bare `/`.
+    scoped: bool,
 }
 
 pub struct HttpServerConfig {
@@ -56,6 +73,7 @@ pub struct HttpServerConfig {
     pub mcp_token: String,
     pub app_handle: tauri::AppHandle,
     pub server_error: Arc<RwLock<Option<String>>>,
+    pub window_sessions: Arc<std::sync::RwLock<HashMap<String, WorkspaceSessionState>>>,
 }
 
 #[derive(Debug, Serialize)]
@@ -181,6 +199,7 @@ pub async fn start_http_server(config: HttpServerConfig) -> Result<HttpServerInf
         mcp_token,
         app_handle,
         server_error,
+        window_sessions,
     } = config;
     let state = HttpServerState {
         workspace_root: root_path,
@@ -195,7 +214,9 @@ pub async fn start_http_server(config: HttpServerConfig) -> Result<HttpServerInf
         lsp_manager,
         frontend_dist,
         mcp_token: mcp_token.clone(),
+        window_sessions,
     };
+    let resolve_state = state.clone();
     let open_path_app = app_handle.clone();
     let open_path_token = mcp_token.clone();
     let app = Router::new()
@@ -240,16 +261,25 @@ pub async fn start_http_server(config: HttpServerConfig) -> Result<HttpServerInf
         )
         .route("/api/lsp", get(lsp_servers))
         .route("/api/codex-mcp", get(codex_mcp_status))
+        .route("/api/workspaces", get(workspaces))
         .route("/mcp", post(codex_mcp).options(cors_preflight))
         .route("/", get(index))
         .route("/{*path}", get(static_file).options(cors_preflight))
         .with_state(state)
         .layer(middleware::from_fn(loopback_cors));
 
+    // The workspace resolver rewrites the request URI (stripping a `/{hash}` prefix),
+    // so it has to run BEFORE routing. `Router::layer` runs after a route is matched
+    // (the same gotcha as tower-http's NormalizePath), so wrap the whole router from
+    // the outside instead and serve the wrapped service.
+    let app =
+        middleware::from_fn_with_state(resolve_state, resolve_workspace_middleware).layer(app);
+
     let listener = bind_loopback().await?;
     let endpoint = format!("http://{}", listener.local_addr()?);
     tauri::async_runtime::spawn(async move {
-        if let Err(error) = axum::serve(listener, app).await {
+        let make_service = axum::ServiceExt::<Request<axum::body::Body>>::into_make_service(app);
+        if let Err(error) = axum::serve(listener, make_service).await {
             *server_error.write().await = Some(error.to_string());
         }
     });
@@ -337,9 +367,105 @@ fn is_loopback_host_port(value: &str) -> bool {
     matches!(host, "127.0.0.1" | "localhost" | "[::1]")
 }
 
-async fn workspace_root(State(state): State<HttpServerState>) -> Json<String> {
+/// Splits a leading path segment (the candidate workspace hash) off the request
+/// path, returning that segment plus the remainder (without a leading slash). The
+/// remainder is borrowed from the input — the caller formats `/{rest}` only when it
+/// actually rewrites, so unscoped requests (the common case) allocate nothing. A
+/// bare `/` yields two empty strings.
+fn split_workspace_prefix(path: &str) -> (&str, &str) {
+    let trimmed = path.strip_prefix('/').unwrap_or(path);
+    match trimmed.split_once('/') {
+        Some((first, rest)) => (first, rest),
+        None => (trimmed, ""),
+    }
+}
+
+/// Whether a path segment is shaped like a `workspace_root_hash` token: 1–16
+/// lowercase hex digits. Real top-level routes (`api`, `assets`, `mcp`) and static
+/// filenames (which carry a `.`) never match, so this distinguishes a workspace
+/// prefix from an ordinary path without consulting the session list.
+fn looks_like_workspace_hash(segment: &str) -> bool {
+    !segment.is_empty()
+        && segment.len() <= 16
+        && segment
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+async fn resolve_workspace_by_hash(
+    sessions: &Arc<std::sync::RwLock<HashMap<String, WorkspaceSessionState>>>,
+    hash: &str,
+) -> Option<ResolvedWorkspace> {
+    // Snapshot the Arcs under the sync lock, then read each root on the async side,
+    // mirroring `workspace_root_is_used_by_any_session` in lib.rs.
+    let snapshot: Vec<WorkspaceSessionState> = sessions.read().ok()?.values().cloned().collect();
+    for session in snapshot {
+        let root = session.workspace_root.read().await.clone();
+        if workspace_root_hash(&root) == hash {
+            return Some(ResolvedWorkspace {
+                workspace_root: session.workspace_root.clone(),
+                agent_context: session.agent_context.clone(),
+                scoped: true,
+            });
+        }
+    }
+    None
+}
+
+fn rewrite_request_path(request: &mut Request<axum::body::Body>, new_path: &str) {
+    let path_and_query = match request.uri().query() {
+        Some(query) => format!("{new_path}?{query}"),
+        None => new_path.to_string(),
+    };
+    if let Ok(uri) = path_and_query.parse::<Uri>() {
+        *request.uri_mut() = uri;
+    }
+}
+
+/// Resolves a leading `/{hash}` path segment to an open workspace, rewriting the URI
+/// to drop the prefix and stashing the resolved root + agent context as a request
+/// extension. Runs before route matching so the existing `/api/...` and `/` routes
+/// see the stripped path. Requests without a hash-shaped prefix get the
+/// shared/default workspace, leaving the no-hash API surface unchanged.
+///
+/// A hash-shaped prefix is stripped even when it doesn't match an open workspace, so
+/// a stale `/{hash}/` bookmark falls back to the shared root (and the chooser for
+/// `/`) instead of leaking SPA HTML out of `/{hash}/api/...` paths.
+async fn resolve_workspace_middleware(
+    State(state): State<HttpServerState>,
+    mut request: Request<axum::body::Body>,
+    next: Next,
+) -> Response {
+    let default = ResolvedWorkspace {
+        workspace_root: state.workspace_root.clone(),
+        agent_context: state.agent_context.clone(),
+        scoped: false,
+    };
+    // Borrow the path and only allocate when there's a hash-shaped prefix to strip —
+    // the owned `candidate`/rewritten path are needed because the URI mutation and the
+    // `.await` below outlive the borrow. Unscoped requests (the hot path) allocate nothing.
+    let rewrite = {
+        let (candidate, rest) = split_workspace_prefix(request.uri().path());
+        looks_like_workspace_hash(candidate).then(|| (candidate.to_string(), format!("/{rest}")))
+    };
+    let resolved = match rewrite {
+        // Strip the hash-shaped prefix regardless of whether it resolves; an unknown
+        // token falls back to the shared root rather than serving HTML from an API path.
+        Some((candidate, rewritten)) => {
+            rewrite_request_path(&mut request, &rewritten);
+            resolve_workspace_by_hash(&state.window_sessions, &candidate)
+                .await
+                .unwrap_or(default)
+        }
+        None => default,
+    };
+    request.extensions_mut().insert(resolved);
+    next.run(request).await
+}
+
+async fn workspace_root(Extension(resolved): Extension<ResolvedWorkspace>) -> Json<String> {
     Json(
-        state
+        resolved
             .workspace_root
             .read()
             .await
@@ -349,10 +475,10 @@ async fn workspace_root(State(state): State<HttpServerState>) -> Json<String> {
 }
 
 async fn workspace_display(
-    State(state): State<HttpServerState>,
+    Extension(resolved): Extension<ResolvedWorkspace>,
     Query(query): Query<WorkspaceDisplayQuery>,
 ) -> Json<crate::WorkspaceDisplayContext> {
-    let workspace_root = state.workspace_root.read().await.clone();
+    let workspace_root = resolved.workspace_root.read().await.clone();
     Json(crate::workspace_display_context(
         &workspace_root,
         query.title_max_chars.unwrap_or(50).clamp(20, 120),
@@ -361,9 +487,10 @@ async fn workspace_display(
 
 async fn files(
     State(state): State<HttpServerState>,
+    Extension(resolved): Extension<ResolvedWorkspace>,
     Query(query): Query<FilesQuery>,
 ) -> Result<Json<WorkspaceScan>, ApiError> {
-    let workspace_root = state.workspace_root.read().await.clone();
+    let workspace_root = resolved.workspace_root.read().await.clone();
     let tree_scan_limit = query
         .tree_scan_limit
         .unwrap_or_else(|| {
@@ -390,9 +517,10 @@ async fn files(
 
 async fn indexed_files(
     State(state): State<HttpServerState>,
+    Extension(resolved): Extension<ResolvedWorkspace>,
     Query(query): Query<IndexedFilesQuery>,
 ) -> Result<Json<Vec<FileEntry>>, ApiError> {
-    let workspace_root = state.workspace_root.read().await.clone();
+    let workspace_root = resolved.workspace_root.read().await.clone();
     let limit = query
         .limit
         .unwrap_or_else(|| {
@@ -422,16 +550,18 @@ async fn indexed_files(
 
 async fn workspace_index_stats(
     State(state): State<HttpServerState>,
+    Extension(resolved): Extension<ResolvedWorkspace>,
 ) -> Result<Json<crate::workspace_index::WorkspaceIndexStats>, ApiError> {
-    let workspace_root = state.workspace_root.read().await.clone();
+    let workspace_root = resolved.workspace_root.read().await.clone();
     Ok(Json(state.workspace_index.stats_for_root(&workspace_root)?))
 }
 
 async fn advance_workspace_index_route(
     State(state): State<HttpServerState>,
+    Extension(resolved): Extension<ResolvedWorkspace>,
     Query(query): Query<AdvanceWorkspaceIndexQuery>,
 ) -> Result<Json<crate::workspace_index::WorkspaceIndexStats>, ApiError> {
-    let workspace_root = state.workspace_root.read().await.clone();
+    let workspace_root = resolved.workspace_root.read().await.clone();
     let entry_limit = query
         .entry_limit
         .unwrap_or_else(|| {
@@ -504,9 +634,10 @@ fn stale_indexed_directory_error(error: &crate::workspace::WorkspaceError) -> bo
 
 async fn directory(
     State(state): State<HttpServerState>,
+    Extension(resolved): Extension<ResolvedWorkspace>,
     Query(query): Query<FileQuery>,
 ) -> Result<Json<Vec<FileEntry>>, ApiError> {
-    let workspace_root = state.workspace_root.read().await.clone();
+    let workspace_root = resolved.workspace_root.read().await.clone();
     let entries = workspace_directory_entries(
         &workspace_root,
         &query.path,
@@ -521,9 +652,10 @@ async fn directory(
 
 async fn read_file(
     State(state): State<HttpServerState>,
+    Extension(resolved): Extension<ResolvedWorkspace>,
     Query(query): Query<FileQuery>,
 ) -> Result<String, ApiError> {
-    let workspace_root = state.workspace_root.read().await.clone();
+    let workspace_root = resolved.workspace_root.read().await.clone();
     let max_open_bytes = query
         .max_open_bytes
         .unwrap_or_else(|| {
@@ -542,20 +674,21 @@ async fn read_file(
 }
 
 async fn stat_file(
-    State(state): State<HttpServerState>,
+    Extension(resolved): Extension<ResolvedWorkspace>,
     Query(query): Query<FileQuery>,
 ) -> Result<Json<FileEntry>, ApiError> {
-    let workspace_root = state.workspace_root.read().await.clone();
+    let workspace_root = resolved.workspace_root.read().await.clone();
     Ok(Json(workspace_file_entry(&workspace_root, &query.path)?))
 }
 
 async fn write_file(
     State(state): State<HttpServerState>,
+    Extension(resolved): Extension<ResolvedWorkspace>,
     headers: HeaderMap,
     Json(request): Json<WriteFileRequest>,
 ) -> Result<StatusCode, ApiError> {
     require_bearer_auth(&headers, &state.mcp_token)?;
-    let workspace_root = state.workspace_root.read().await.clone();
+    let workspace_root = resolved.workspace_root.read().await.clone();
     write_workspace_file(
         &workspace_root,
         &request.path,
@@ -568,11 +701,12 @@ async fn write_file(
 
 async fn create_file(
     State(state): State<HttpServerState>,
+    Extension(resolved): Extension<ResolvedWorkspace>,
     headers: HeaderMap,
     Json(request): Json<WriteFileRequest>,
 ) -> Result<StatusCode, ApiError> {
     require_bearer_auth(&headers, &state.mcp_token)?;
-    let workspace_root = state.workspace_root.read().await.clone();
+    let workspace_root = resolved.workspace_root.read().await.clone();
     create_workspace_file(&workspace_root, &request.path)?;
     refresh_indexed_entry(&state.workspace_index, &workspace_root, &request.path)?;
     Ok(StatusCode::CREATED)
@@ -580,11 +714,12 @@ async fn create_file(
 
 async fn create_folder(
     State(state): State<HttpServerState>,
+    Extension(resolved): Extension<ResolvedWorkspace>,
     headers: HeaderMap,
     Json(request): Json<CreateFolderRequest>,
 ) -> Result<StatusCode, ApiError> {
     require_bearer_auth(&headers, &state.mcp_token)?;
-    let workspace_root = state.workspace_root.read().await.clone();
+    let workspace_root = resolved.workspace_root.read().await.clone();
     create_workspace_folder(&workspace_root, &request.path)?;
     refresh_indexed_entry(&state.workspace_index, &workspace_root, &request.path)?;
     Ok(StatusCode::CREATED)
@@ -648,11 +783,12 @@ fn open_path_event_for_path(path: PathBuf) -> Result<OpenPathEvent, std::io::Err
 
 async fn rename_file(
     State(state): State<HttpServerState>,
+    Extension(resolved): Extension<ResolvedWorkspace>,
     headers: HeaderMap,
     Json(request): Json<RenameFileRequest>,
 ) -> Result<StatusCode, ApiError> {
     require_bearer_auth(&headers, &state.mcp_token)?;
-    let workspace_root = state.workspace_root.read().await.clone();
+    let workspace_root = resolved.workspace_root.read().await.clone();
     rename_workspace_file(&workspace_root, &request.from_path, &request.to_path)?;
     state
         .workspace_index
@@ -663,11 +799,12 @@ async fn rename_file(
 
 async fn delete_file(
     State(state): State<HttpServerState>,
+    Extension(resolved): Extension<ResolvedWorkspace>,
     headers: HeaderMap,
     Json(request): Json<DeleteFileRequest>,
 ) -> Result<StatusCode, ApiError> {
     require_bearer_auth(&headers, &state.mcp_token)?;
-    let workspace_root = state.workspace_root.read().await.clone();
+    let workspace_root = resolved.workspace_root.read().await.clone();
     delete_workspace_file(&workspace_root, &request.path)?;
     state
         .workspace_index
@@ -686,9 +823,10 @@ struct SearchQuery {
 
 async fn search(
     State(state): State<HttpServerState>,
+    Extension(resolved): Extension<ResolvedWorkspace>,
     Query(query): Query<SearchQuery>,
 ) -> Result<Json<WorkspaceSearch>, ApiError> {
-    let workspace_root = state.workspace_root.read().await.clone();
+    let workspace_root = resolved.workspace_root.read().await.clone();
     let max_results = query
         .max_results
         .unwrap_or_else(|| {
@@ -718,22 +856,28 @@ async fn search(
     )?))
 }
 
-async fn get_agent_context(State(state): State<HttpServerState>) -> Json<AgentContext> {
-    Json(state.agent_context.read().await.clone())
+async fn get_agent_context(
+    Extension(resolved): Extension<ResolvedWorkspace>,
+) -> Json<AgentContext> {
+    Json(resolved.agent_context.read().await.clone())
 }
 
 async fn put_agent_context(
     State(state): State<HttpServerState>,
+    Extension(resolved): Extension<ResolvedWorkspace>,
     headers: HeaderMap,
     Json(context): Json<AgentContext>,
 ) -> Result<StatusCode, ApiError> {
     require_bearer_auth(&headers, &state.mcp_token)?;
-    *state.agent_context.write().await = context;
+    *resolved.agent_context.write().await = context;
     Ok(StatusCode::NO_CONTENT)
 }
 
-async fn lsp_servers(State(state): State<HttpServerState>) -> Json<Vec<LspServerStatus>> {
-    let workspace_root = state.workspace_root.read().await.clone();
+async fn lsp_servers(
+    State(state): State<HttpServerState>,
+    Extension(resolved): Extension<ResolvedWorkspace>,
+) -> Json<Vec<LspServerStatus>> {
+    let workspace_root = resolved.workspace_root.read().await.clone();
     Json(state.lsp_manager.statuses(&workspace_root).await)
 }
 
@@ -995,8 +1139,124 @@ fn mcp_error_response(id: Option<Value>, code: i32, message: String) -> Value {
     })
 }
 
-async fn index(State(state): State<HttpServerState>) -> Response {
-    serve_static_path(&state.frontend_dist, "index.html").await
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+struct WorkspaceSummary {
+    hash: String,
+    path: String,
+    name: String,
+}
+
+/// One summary per distinct open workspace folder (deduped by hash, sorted by name).
+async fn workspace_summaries(
+    sessions: &Arc<std::sync::RwLock<HashMap<String, WorkspaceSessionState>>>,
+) -> Vec<WorkspaceSummary> {
+    let snapshot: Vec<WorkspaceSessionState> = sessions
+        .read()
+        .ok()
+        .map(|sessions| sessions.values().cloned().collect())
+        .unwrap_or_default();
+    let mut summaries: Vec<WorkspaceSummary> = Vec::new();
+    let mut seen: HashSet<String> = HashSet::new();
+    for session in snapshot {
+        let root = session.workspace_root.read().await.clone();
+        let hash = workspace_root_hash(&root);
+        if !seen.insert(hash.clone()) {
+            continue;
+        }
+        let name = root
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("workspace")
+            .to_string();
+        summaries.push(WorkspaceSummary {
+            hash,
+            path: root.to_string_lossy().to_string(),
+            name,
+        });
+    }
+    summaries.sort_by(|a, b| a.name.cmp(&b.name).then_with(|| a.path.cmp(&b.path)));
+    summaries
+}
+
+async fn workspaces(State(state): State<HttpServerState>) -> Json<Vec<WorkspaceSummary>> {
+    Json(workspace_summaries(&state.window_sessions).await)
+}
+
+async fn index(
+    State(state): State<HttpServerState>,
+    Extension(resolved): Extension<ResolvedWorkspace>,
+) -> Response {
+    // A matched `/{hash}` prefix was rewritten to `/`; serve the SPA for that
+    // workspace. A bare `/` lists the open workspaces instead.
+    if resolved.scoped {
+        return serve_static_path(&state.frontend_dist, "index.html").await;
+    }
+    render_workspace_chooser(&workspace_summaries(&state.window_sessions).await).into_response()
+}
+
+fn escape_html(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+}
+
+fn render_workspace_chooser(summaries: &[WorkspaceSummary]) -> Html<String> {
+    // A lone workspace doesn't need a chooser — bounce straight into the editor so
+    // the common single-window case behaves like it always has.
+    if let [only] = summaries {
+        return Html(format!(
+            "<!doctype html><meta charset=\"utf-8\">\
+             <meta http-equiv=\"refresh\" content=\"0; url=/{hash}/\">\
+             <title>ide</title>\
+             <p>Opening <a href=\"/{hash}/\">{name}</a>…</p>",
+            hash = escape_html(&only.hash),
+            name = escape_html(&only.name),
+        ));
+    }
+
+    let body = if summaries.is_empty() {
+        "<p class=\"empty\">No workspaces are open.</p>".to_string()
+    } else {
+        let items = summaries
+            .iter()
+            .map(|summary| {
+                format!(
+                    "<li><a href=\"/{hash}/\"><span class=\"name\">{name}</span>\
+                     <span class=\"path\">{path}</span></a></li>",
+                    hash = escape_html(&summary.hash),
+                    name = escape_html(&summary.name),
+                    path = escape_html(&summary.path),
+                )
+            })
+            .collect::<String>();
+        format!("<ul class=\"workspaces\">{items}</ul>")
+    };
+
+    Html(format!(
+        "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">\
+         <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\
+         <title>ide — open workspaces</title>\
+         <style>\
+         :root{{color-scheme:dark}}\
+         body{{margin:0;min-height:100vh;display:flex;flex-direction:column;align-items:center;\
+         justify-content:center;gap:1.5rem;background:#11131a;color:#e6e8ef;\
+         font:16px/1.5 ui-sans-serif,system-ui,-apple-system,'Segoe UI',sans-serif}}\
+         h1{{margin:0;font-size:1.1rem;font-weight:600;color:#aab1c5;letter-spacing:.02em}}\
+         ul.workspaces{{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;\
+         gap:.5rem;width:min(92vw,640px)}}\
+         a{{display:flex;flex-direction:column;gap:.15rem;padding:.85rem 1rem;border-radius:10px;\
+         background:#1b1e29;border:1px solid #272b3a;text-decoration:none;color:inherit;\
+         transition:border-color .12s,background .12s}}\
+         a:hover{{background:#212536;border-color:#3a4060}}\
+         .name{{font-weight:600}}\
+         .path{{font-size:.82rem;color:#8b93a7;word-break:break-all}}\
+         .empty{{color:#8b93a7}}\
+         </style></head><body>\
+         <h1>Open workspaces</h1>{body}</body></html>"
+    ))
 }
 
 async fn static_file(
@@ -1217,6 +1477,16 @@ mod tests {
         index
     }
 
+    /// The unscoped extension the middleware would insert for a no-hash request,
+    /// pointing at the state's shared root — what handler unit tests exercise.
+    fn default_resolved(state: &HttpServerState) -> Extension<ResolvedWorkspace> {
+        Extension(ResolvedWorkspace {
+            workspace_root: state.workspace_root.clone(),
+            agent_context: state.agent_context.clone(),
+            scoped: false,
+        })
+    }
+
     fn test_file_entry(path: &str, parent: Option<&str>, is_dir: bool) -> FileEntry {
         FileEntry {
             path: path.to_string(),
@@ -1360,10 +1630,12 @@ mod tests {
             lsp_manager: LspManager::new(),
             frontend_dist: dir.path().to_path_buf(),
             mcp_token: "token".to_string(),
+            window_sessions: Arc::new(std::sync::RwLock::new(HashMap::new())),
         };
 
         let result = write_file(
-            State(state),
+            State(state.clone()),
+            default_resolved(&state),
             HeaderMap::new(),
             Json(WriteFileRequest {
                 path: "note.txt".to_string(),
@@ -1403,10 +1675,12 @@ mod tests {
             lsp_manager: LspManager::new(),
             frontend_dist: dir.path().to_path_buf(),
             mcp_token: "token".to_string(),
+            window_sessions: Arc::new(std::sync::RwLock::new(HashMap::new())),
         };
 
         let Json(stats) = advance_workspace_index_route(
-            State(state),
+            State(state.clone()),
+            default_resolved(&state),
             Query(AdvanceWorkspaceIndexQuery {
                 entry_limit: Some(100),
                 show_dotfiles: Some(false),
@@ -1438,6 +1712,7 @@ mod tests {
             lsp_manager: LspManager::new(),
             frontend_dist: dir.path().to_path_buf(),
             mcp_token: "token".to_string(),
+            window_sessions: Arc::new(std::sync::RwLock::new(HashMap::new())),
         };
         let mut headers = HeaderMap::new();
         headers.insert(
@@ -1446,7 +1721,8 @@ mod tests {
         );
 
         let result = write_file(
-            State(state),
+            State(state.clone()),
+            default_resolved(&state),
             headers,
             Json(WriteFileRequest {
                 path: "note.txt".to_string(),
@@ -1478,6 +1754,7 @@ mod tests {
             lsp_manager: LspManager::new(),
             frontend_dist: dir.path().to_path_buf(),
             mcp_token: "token".to_string(),
+            window_sessions: Arc::new(std::sync::RwLock::new(HashMap::new())),
         };
         let mut headers = HeaderMap::new();
         headers.insert(
@@ -1486,7 +1763,8 @@ mod tests {
         );
 
         let result = write_file(
-            State(state),
+            State(state.clone()),
+            default_resolved(&state),
             headers,
             Json(WriteFileRequest {
                 path: "note.txt".to_string(),
@@ -1518,10 +1796,12 @@ mod tests {
             lsp_manager: LspManager::new(),
             frontend_dist: dir.path().to_path_buf(),
             mcp_token: "token".to_string(),
+            window_sessions: Arc::new(std::sync::RwLock::new(HashMap::new())),
         };
 
         let result = create_file(
-            State(state),
+            State(state.clone()),
+            default_resolved(&state),
             HeaderMap::new(),
             Json(WriteFileRequest {
                 path: "note.txt".to_string(),
@@ -1553,6 +1833,7 @@ mod tests {
             lsp_manager: LspManager::new(),
             frontend_dist: dir.path().to_path_buf(),
             mcp_token: "token".to_string(),
+            window_sessions: Arc::new(std::sync::RwLock::new(HashMap::new())),
         };
         let mut headers = HeaderMap::new();
         headers.insert(
@@ -1561,7 +1842,8 @@ mod tests {
         );
 
         let result = create_file(
-            State(state),
+            State(state.clone()),
+            default_resolved(&state),
             headers,
             Json(WriteFileRequest {
                 path: "note.txt".to_string(),
@@ -1592,10 +1874,12 @@ mod tests {
             lsp_manager: LspManager::new(),
             frontend_dist: dir.path().to_path_buf(),
             mcp_token: "token".to_string(),
+            window_sessions: Arc::new(std::sync::RwLock::new(HashMap::new())),
         };
 
         let result = create_folder(
-            State(state),
+            State(state.clone()),
+            default_resolved(&state),
             HeaderMap::new(),
             Json(CreateFolderRequest {
                 path: "src".to_string(),
@@ -1625,6 +1909,7 @@ mod tests {
             lsp_manager: LspManager::new(),
             frontend_dist: dir.path().to_path_buf(),
             mcp_token: "token".to_string(),
+            window_sessions: Arc::new(std::sync::RwLock::new(HashMap::new())),
         };
         let mut headers = HeaderMap::new();
         headers.insert(
@@ -1633,7 +1918,8 @@ mod tests {
         );
 
         let result = create_folder(
-            State(state),
+            State(state.clone()),
+            default_resolved(&state),
             headers,
             Json(CreateFolderRequest {
                 path: "src".to_string(),
@@ -1664,10 +1950,12 @@ mod tests {
             lsp_manager: LspManager::new(),
             frontend_dist: dir.path().to_path_buf(),
             mcp_token: "token".to_string(),
+            window_sessions: Arc::new(std::sync::RwLock::new(HashMap::new())),
         };
 
         let result = rename_file(
-            State(state),
+            State(state.clone()),
+            default_resolved(&state),
             HeaderMap::new(),
             Json(RenameFileRequest {
                 from_path: "note.txt".to_string(),
@@ -1701,6 +1989,7 @@ mod tests {
             lsp_manager: LspManager::new(),
             frontend_dist: dir.path().to_path_buf(),
             mcp_token: "token".to_string(),
+            window_sessions: Arc::new(std::sync::RwLock::new(HashMap::new())),
         };
         let mut headers = HeaderMap::new();
         headers.insert(
@@ -1709,7 +1998,8 @@ mod tests {
         );
 
         let result = rename_file(
-            State(state),
+            State(state.clone()),
+            default_resolved(&state),
             headers,
             Json(RenameFileRequest {
                 from_path: "note.txt".to_string(),
@@ -1741,10 +2031,12 @@ mod tests {
             lsp_manager: LspManager::new(),
             frontend_dist: dir.path().to_path_buf(),
             mcp_token: "token".to_string(),
+            window_sessions: Arc::new(std::sync::RwLock::new(HashMap::new())),
         };
 
         let result = delete_file(
-            State(state),
+            State(state.clone()),
+            default_resolved(&state),
             HeaderMap::new(),
             Json(DeleteFileRequest {
                 path: "note.txt".to_string(),
@@ -1775,6 +2067,7 @@ mod tests {
             lsp_manager: LspManager::new(),
             frontend_dist: dir.path().to_path_buf(),
             mcp_token: "token".to_string(),
+            window_sessions: Arc::new(std::sync::RwLock::new(HashMap::new())),
         };
         let mut headers = HeaderMap::new();
         headers.insert(
@@ -1783,7 +2076,8 @@ mod tests {
         );
 
         let result = delete_file(
-            State(state),
+            State(state.clone()),
+            default_resolved(&state),
             headers,
             Json(DeleteFileRequest {
                 path: "note.txt".to_string(),
@@ -1816,10 +2110,12 @@ mod tests {
             lsp_manager: LspManager::new(),
             frontend_dist: dir.path().to_path_buf(),
             mcp_token: "token".to_string(),
+            window_sessions: Arc::new(std::sync::RwLock::new(HashMap::new())),
         };
 
         let result = put_agent_context(
             State(state.clone()),
+            default_resolved(&state),
             HeaderMap::new(),
             Json(AgentContext {
                 active_file: Some("after.rs".to_string()),
@@ -1892,6 +2188,7 @@ mod tests {
             lsp_manager: LspManager::new(),
             frontend_dist: dir.path().to_path_buf(),
             mcp_token: "token".to_string(),
+            window_sessions: Arc::new(std::sync::RwLock::new(HashMap::new())),
         };
 
         let response = handle_mcp_request(
@@ -1934,6 +2231,7 @@ mod tests {
             lsp_manager: LspManager::new(),
             frontend_dist: dir.path().to_path_buf(),
             mcp_token: "token".to_string(),
+            window_sessions: Arc::new(std::sync::RwLock::new(HashMap::new())),
         };
 
         let response = handle_mcp_tool_call(
@@ -1974,5 +2272,279 @@ mod tests {
         assert_eq!(result["items"][0]["relativePath"], "src/main.rs");
         assert_eq!(result["items"][0]["message"], "expected item");
         assert_eq!(result["items"][0]["range"]["start"]["line"], 2);
+    }
+
+    fn test_session(root: &Path) -> WorkspaceSessionState {
+        WorkspaceSessionState {
+            workspace_root: Arc::new(RwLock::new(root.to_path_buf())),
+            initial_file: Arc::new(RwLock::new(None)),
+            agent_context: Arc::new(RwLock::new(AgentContext::default())),
+        }
+    }
+
+    #[test]
+    fn split_workspace_prefix_peels_the_first_segment() {
+        assert_eq!(
+            split_workspace_prefix("/abc123/api/file"),
+            ("abc123", "api/file")
+        );
+        assert_eq!(split_workspace_prefix("/abc123/"), ("abc123", ""));
+        assert_eq!(split_workspace_prefix("/abc123"), ("abc123", ""));
+        // A bare root has no candidate segment.
+        assert_eq!(split_workspace_prefix("/"), ("", ""));
+        // Plain API calls keep their path; "api" simply won't resolve to a workspace.
+        assert_eq!(split_workspace_prefix("/api/files"), ("api", "files"));
+    }
+
+    #[test]
+    fn looks_like_workspace_hash_matches_only_hex_tokens() {
+        assert!(looks_like_workspace_hash("beb036bfb04ac22b"));
+        assert!(looks_like_workspace_hash("0"));
+        // Real top-level routes and static filenames must not be mistaken for hashes.
+        assert!(!looks_like_workspace_hash("api"));
+        assert!(!looks_like_workspace_hash("assets"));
+        assert!(!looks_like_workspace_hash("mcp"));
+        assert!(!looks_like_workspace_hash("index.html"));
+        assert!(!looks_like_workspace_hash(""));
+        // Hash tokens are u64 hex — never longer than 16 chars.
+        assert!(!looks_like_workspace_hash("00000000000000000"));
+    }
+
+    #[test]
+    fn rewrite_request_path_drops_prefix_and_keeps_query() {
+        let mut request = Request::builder()
+            .uri("/abc123/api/file?path=src/main.rs")
+            .body(axum::body::Body::empty())
+            .unwrap();
+
+        rewrite_request_path(&mut request, "/api/file");
+
+        assert_eq!(request.uri().path(), "/api/file");
+        assert_eq!(request.uri().query(), Some("path=src/main.rs"));
+    }
+
+    #[tokio::test]
+    async fn resolve_workspace_by_hash_matches_the_open_session() {
+        let first = tempdir().unwrap();
+        let second = tempdir().unwrap();
+        let mut sessions = HashMap::new();
+        sessions.insert("main".to_string(), test_session(first.path()));
+        sessions.insert("workspace-1".to_string(), test_session(second.path()));
+        let sessions = Arc::new(std::sync::RwLock::new(sessions));
+
+        let hash = workspace_root_hash(second.path());
+        let resolved = resolve_workspace_by_hash(&sessions, &hash)
+            .await
+            .expect("known hash resolves");
+        assert!(resolved.scoped);
+        assert_eq!(
+            *resolved.workspace_root.read().await,
+            second.path().to_path_buf()
+        );
+
+        assert!(resolve_workspace_by_hash(&sessions, "deadbeef")
+            .await
+            .is_none());
+    }
+
+    #[tokio::test]
+    async fn workspace_summaries_dedupe_by_hash() {
+        let dir = tempdir().unwrap();
+        let mut sessions = HashMap::new();
+        // Two windows on the same folder collapse to one chooser entry.
+        sessions.insert("main".to_string(), test_session(dir.path()));
+        sessions.insert("workspace-1".to_string(), test_session(dir.path()));
+        let sessions = Arc::new(std::sync::RwLock::new(sessions));
+
+        let summaries = workspace_summaries(&sessions).await;
+
+        assert_eq!(summaries.len(), 1);
+        assert_eq!(summaries[0].hash, workspace_root_hash(dir.path()));
+    }
+
+    #[test]
+    fn render_workspace_chooser_redirects_for_a_single_workspace() {
+        let summaries = vec![WorkspaceSummary {
+            hash: "abc123".to_string(),
+            path: "/tmp/project".to_string(),
+            name: "project".to_string(),
+        }];
+
+        let Html(body) = render_workspace_chooser(&summaries);
+
+        assert!(body.contains("http-equiv=\"refresh\""));
+        assert!(body.contains("url=/abc123/"));
+    }
+
+    #[test]
+    fn render_workspace_chooser_lists_every_workspace_when_many() {
+        let summaries = vec![
+            WorkspaceSummary {
+                hash: "abc123".to_string(),
+                path: "/tmp/alpha".to_string(),
+                name: "alpha".to_string(),
+            },
+            WorkspaceSummary {
+                hash: "def456".to_string(),
+                path: "/tmp/beta".to_string(),
+                name: "beta".to_string(),
+            },
+        ];
+
+        let Html(body) = render_workspace_chooser(&summaries);
+
+        assert!(!body.contains("http-equiv=\"refresh\""));
+        assert!(body.contains("href=\"/abc123/\""));
+        assert!(body.contains("href=\"/def456/\""));
+    }
+
+    fn routing_test_state(
+        shared_root: &Path,
+        frontend_dist: &Path,
+        sessions: HashMap<String, WorkspaceSessionState>,
+    ) -> HttpServerState {
+        HttpServerState {
+            workspace_root: Arc::new(RwLock::new(shared_root.to_path_buf())),
+            tree_scan_limit: Arc::new(std::sync::RwLock::new(10_000)),
+            max_open_file_bytes: Arc::new(std::sync::RwLock::new(5_120 * 1024)),
+            workspace_search_result_limit: Arc::new(std::sync::RwLock::new(200)),
+            workspace_search_max_file_bytes: Arc::new(std::sync::RwLock::new(1_024 * 1_024)),
+            quick_open_result_limit: Arc::new(std::sync::RwLock::new(12)),
+            background_index_batch_entries: Arc::new(std::sync::RwLock::new(2_000)),
+            workspace_index: test_workspace_index(shared_root),
+            agent_context: Arc::new(RwLock::new(AgentContext::default())),
+            lsp_manager: LspManager::new(),
+            frontend_dist: frontend_dist.to_path_buf(),
+            mcp_token: "token".to_string(),
+            window_sessions: Arc::new(std::sync::RwLock::new(sessions)),
+        }
+    }
+
+    async fn response_text(response: Response) -> (StatusCode, String) {
+        let status = response.status();
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        (status, String::from_utf8(bytes.to_vec()).unwrap())
+    }
+
+    // Exercises the real layer → URI rewrite → route → handler chain that makes
+    // `/{hash}/...` resolve to the right open workspace in a browser.
+    #[tokio::test]
+    async fn hash_prefixed_requests_route_to_their_workspace() {
+        use tower::ServiceExt;
+
+        let shared = tempdir().unwrap();
+        let dir_a = tempdir().unwrap();
+        let dir_b = tempdir().unwrap();
+        let frontend = tempdir().unwrap();
+        std::fs::write(frontend.path().join("index.html"), "SPA_MARKER").unwrap();
+
+        let mut sessions = HashMap::new();
+        sessions.insert("main".to_string(), test_session(dir_a.path()));
+        sessions.insert("workspace-1".to_string(), test_session(dir_b.path()));
+        let state = routing_test_state(shared.path(), frontend.path(), sessions);
+
+        let inner = Router::new()
+            .route("/api/workspace-root", get(workspace_root))
+            .route("/api/workspaces", get(workspaces))
+            .route("/", get(index))
+            .route("/{*path}", get(static_file))
+            .with_state(state.clone());
+        // Wrap from the outside, exactly like start_http_server, so the resolver runs
+        // before routing.
+        let router = middleware::from_fn_with_state(state.clone(), resolve_workspace_middleware)
+            .layer(inner);
+
+        let hash_a = workspace_root_hash(dir_a.path());
+        let hash_b = workspace_root_hash(dir_b.path());
+
+        let request = |uri: &str| {
+            Request::builder()
+                .uri(uri)
+                .body(axum::body::Body::empty())
+                .unwrap()
+        };
+
+        // No prefix → the shared/default root.
+        let (_, body) = response_text(
+            router
+                .clone()
+                .oneshot(request("/api/workspace-root"))
+                .await
+                .unwrap(),
+        )
+        .await;
+        assert!(body.contains(&shared.path().to_string_lossy().to_string()));
+
+        // `/{hash}` prefix → that workspace's root, not the first/shared one.
+        let (_, body) = response_text(
+            router
+                .clone()
+                .oneshot(request(&format!("/{hash_b}/api/workspace-root")))
+                .await
+                .unwrap(),
+        )
+        .await;
+        assert!(body.contains(&dir_b.path().to_string_lossy().to_string()));
+        assert!(!body.contains(&shared.path().to_string_lossy().to_string()));
+
+        // `/{hash}/` serves the SPA for that workspace (rewritten to `/`, scoped).
+        let (status, body) = response_text(
+            router
+                .clone()
+                .oneshot(request(&format!("/{hash_a}/")))
+                .await
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, "SPA_MARKER");
+
+        // Bare `/` with two open workspaces lists them instead of redirecting.
+        let (_, body) = response_text(router.clone().oneshot(request("/")).await.unwrap()).await;
+        assert!(body.contains("Open workspaces"));
+        assert!(body.contains(&format!("/{hash_a}/")));
+        assert!(body.contains(&format!("/{hash_b}/")));
+
+        // A stale/unknown but hash-shaped prefix is stripped and falls back to the
+        // shared root — an API path returns JSON, never SPA HTML.
+        let (status, body) = response_text(
+            router
+                .clone()
+                .oneshot(request("/deadbeef/api/workspace-root"))
+                .await
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(body.contains(&shared.path().to_string_lossy().to_string()));
+        assert!(!body.contains("SPA_MARKER"));
+
+        // And an unknown `/{hash}/` lands on the chooser, not a dead SPA shell.
+        let (_, body) =
+            response_text(router.clone().oneshot(request("/deadbeef/")).await.unwrap()).await;
+        assert!(body.contains("Open workspaces"));
+    }
+
+    #[test]
+    fn render_workspace_chooser_escapes_workspace_names() {
+        let summaries = vec![
+            WorkspaceSummary {
+                hash: "a".to_string(),
+                path: "/tmp/<one>".to_string(),
+                name: "<script>".to_string(),
+            },
+            WorkspaceSummary {
+                hash: "b".to_string(),
+                path: "/tmp/two".to_string(),
+                name: "two".to_string(),
+            },
+        ];
+
+        let Html(body) = render_workspace_chooser(&summaries);
+
+        assert!(!body.contains("<script>"));
+        assert!(body.contains("&lt;script&gt;"));
     }
 }
