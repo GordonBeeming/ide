@@ -48,10 +48,10 @@ struct AppState {
 }
 
 #[derive(Clone)]
-struct WorkspaceSessionState {
-    workspace_root: Arc<RwLock<PathBuf>>,
-    initial_file: Arc<RwLock<Option<String>>>,
-    agent_context: Arc<RwLock<AgentContext>>,
+pub(crate) struct WorkspaceSessionState {
+    pub(crate) workspace_root: Arc<RwLock<PathBuf>>,
+    pub(crate) initial_file: Arc<RwLock<Option<String>>>,
+    pub(crate) agent_context: Arc<RwLock<AgentContext>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -1360,6 +1360,7 @@ pub fn run() {
             let codex_mcp = http_state.codex_mcp.clone();
             let claude_bridge = http_state.claude_bridge.clone();
             let claude_bridge_error = http_state.claude_bridge_error.clone();
+            let window_sessions = http_state.window_sessions.clone();
             let frontend_dist = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../dist");
             let (mcp_token, mcp_token_error) =
                 codex_mcp_token_for_startup(&app_local_data_dir.join(CODEX_MCP_TOKEN_FILE));
@@ -1386,6 +1387,7 @@ pub fn run() {
                     mcp_token,
                     app_handle,
                     server_error: http_error.clone(),
+                    window_sessions,
                 })
                 .await
                 {
@@ -2490,6 +2492,22 @@ fn launch_target_window_label(target: &LaunchTarget) -> String {
     format!("workspace-{:x}", hasher.finish())
 }
 
+/// Stable URL token for a workspace folder, used by the HTTP server to route
+/// `/{hash}/...` requests to the right open workspace in a browser. Hashes the
+/// canonical path so the same folder always yields the same token regardless of
+/// which file was opened (unlike `launch_target_window_label`, which folds in the
+/// initial file). `DefaultHasher::new()` seeds from fixed keys, so the token is
+/// deterministic across process restarts and safe to bookmark.
+pub(crate) fn workspace_root_hash(path: &Path) -> String {
+    let canonical = path
+        .canonicalize()
+        .map(|canonical| canonical.to_string_lossy().to_string())
+        .unwrap_or_else(|_| path.to_string_lossy().to_string());
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    canonical.hash(&mut hasher);
+    format!("{:x}", hasher.finish())
+}
+
 fn open_launch_target_window(
     app: &tauri::AppHandle,
     target: LaunchTarget,
@@ -2596,6 +2614,35 @@ mod tests {
         let root = project_root_for_process_dir(&tauri_dir);
 
         assert_eq!(root, dir.path());
+    }
+
+    #[test]
+    fn workspace_root_hash_is_stable_per_path_and_distinct_across_paths() {
+        let first = tempdir().unwrap();
+        let second = tempdir().unwrap();
+
+        // Same folder always hashes the same — that's what makes the URL bookmarkable.
+        assert_eq!(
+            workspace_root_hash(first.path()),
+            workspace_root_hash(first.path())
+        );
+        // Different folders must not collide onto the same URL token.
+        assert_ne!(
+            workspace_root_hash(first.path()),
+            workspace_root_hash(second.path())
+        );
+    }
+
+    #[test]
+    fn workspace_root_hash_ignores_path_spelling_via_canonicalization() {
+        let dir = tempdir().unwrap();
+        let nested = dir.path().join("project");
+        std::fs::create_dir(&nested).unwrap();
+
+        let direct = workspace_root_hash(&nested);
+        let indirect = workspace_root_hash(&dir.path().join("project").join("."));
+
+        assert_eq!(direct, indirect);
     }
 
     #[test]

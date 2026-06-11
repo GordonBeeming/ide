@@ -679,7 +679,7 @@ async function fetchHostedApi(
     headers.set("Authorization", `Bearer ${await localWriteToken()}`);
   }
 
-  return fetch(`${httpBase()}${path}`, {
+  return fetch(`${httpBase()}${workspacePathPrefix(window.location)}${path}`, {
     method: options.method ?? "GET",
     headers,
     body: options.body ? JSON.stringify(options.body) : undefined,
@@ -717,6 +717,20 @@ export function apiBaseForLocation(location: Pick<Location, "port">) {
     return "http://127.0.0.1:17877";
   }
   return "";
+}
+
+// When the IDE is served over HTTP at `/{hash}/`, every API call has to carry that
+// same prefix so the server can route it to the right open workspace. The Vite dev
+// server (port 1420) proxies to a single shared workspace and has no hash, so it
+// returns "". The native Tauri app never reaches this path (it uses invoke()).
+export function workspacePathPrefix(
+  location: Pick<Location, "pathname" | "port">,
+): string {
+  if (location.port === "1420") {
+    return "";
+  }
+  const segment = location.pathname.split("/").find((part) => part.length > 0);
+  return segment ? `/${segment}` : "";
 }
 
 async function localWriteToken() {
