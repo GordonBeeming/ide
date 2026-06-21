@@ -1,6 +1,7 @@
 // Git attribution should use embedded gitoxide/gix APIs. Keep direct `git`
 // commands out of this service unless gix does not cover the required behavior.
 use std::collections::{HashMap, HashSet};
+use std::fs;
 use std::path::Path;
 
 use gix::bstr::{BStr, BString, ByteSlice};
@@ -16,6 +17,7 @@ pub(crate) struct GitAttribution {
     pub unsupported_reason: Option<String>,
     pub file: Option<GitCommitInfo>,
     pub lines: Vec<GitLineAttribution>,
+    pub uncommitted_lines: Vec<usize>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -85,7 +87,7 @@ pub(crate) async fn attribution_for_file(workspace_root: &Path, relative: &str) 
         Ok(path) => normalize_path(path),
         Err(_) => return unsupported(relative, "File is outside the Git repository root"),
     };
-    let repo_relative_bstr = BString::from(repo_relative_path);
+    let repo_relative_bstr = BString::from(repo_relative_path.as_str());
 
     if !is_tracked(&repo, repo_relative_bstr.as_bstr()) {
         return unsupported(relative, "File is not tracked by Git");
@@ -110,6 +112,8 @@ pub(crate) async fn attribution_for_file(workspace_root: &Path, relative: &str) 
         Ok(lines) => lines,
         Err(_) => return unsupported(relative, "Git line attribution failed"),
     };
+    let uncommitted_lines =
+        uncommitted_line_numbers(&repo, &head_commit, &file_path, &repo_relative_path);
 
     let latest_commit = match latest_file_commit(&lines) {
         Some(commit) => commit,
@@ -125,6 +129,7 @@ pub(crate) async fn attribution_for_file(workspace_root: &Path, relative: &str) 
         unsupported_reason: None,
         file: Some(latest_commit),
         lines,
+        uncommitted_lines,
     }
 }
 
@@ -175,6 +180,134 @@ fn latest_file_commit(lines: &[GitLineAttribution]) -> Option<GitCommitInfo> {
         .iter()
         .map(|line| line.commit.clone())
         .max_by_key(|commit| commit.authored_at_seconds.unwrap_or(i64::MIN))
+}
+
+fn uncommitted_line_numbers(
+    repo: &gix::Repository,
+    head_commit: &gix::Commit<'_>,
+    file_path: &Path,
+    repo_relative_path: &str,
+) -> Vec<usize> {
+    let Ok(head_contents) = head_file_contents(repo, head_commit, repo_relative_path) else {
+        return Vec::new();
+    };
+    let Ok(current_contents) = fs::read(file_path) else {
+        return Vec::new();
+    };
+    if head_contents == current_contents {
+        return Vec::new();
+    }
+
+    let head_text = String::from_utf8_lossy(&head_contents);
+    let current_text = String::from_utf8_lossy(&current_contents);
+    let head_lines = document_lines(&head_text);
+    let current_lines = document_lines(&current_text);
+    let mapped_lines = current_to_original_line_map(&head_lines, &current_lines);
+
+    (1..=current_lines.len())
+        .filter(|line_number| !mapped_lines.contains_key(line_number))
+        .collect()
+}
+
+fn head_file_contents(
+    _repo: &gix::Repository,
+    head_commit: &gix::Commit<'_>,
+    repo_relative_path: &str,
+) -> Result<Vec<u8>, ()> {
+    let tree = head_commit.tree().map_err(|_| ())?;
+    let entry = tree
+        .lookup_entry_by_path(repo_relative_path)
+        .map_err(|_| ())?
+        .ok_or(())?;
+    let blob = entry
+        .object()
+        .map_err(|_| ())?
+        .try_into_blob()
+        .map_err(|_| ())?;
+    Ok(blob.data.clone())
+}
+
+fn document_lines(contents: &str) -> Vec<&str> {
+    contents.split('\n').collect()
+}
+
+fn current_to_original_line_map(
+    original_lines: &[&str],
+    current_lines: &[&str],
+) -> HashMap<usize, usize> {
+    let mut line_map = HashMap::new();
+    let mut prefix_length = 0;
+    while prefix_length < original_lines.len()
+        && prefix_length < current_lines.len()
+        && original_lines[prefix_length] == current_lines[prefix_length]
+    {
+        line_map.insert(prefix_length + 1, prefix_length + 1);
+        prefix_length += 1;
+    }
+
+    let mut suffix_length = 0;
+    while suffix_length < original_lines.len() - prefix_length
+        && suffix_length < current_lines.len() - prefix_length
+        && original_lines[original_lines.len() - 1 - suffix_length]
+            == current_lines[current_lines.len() - 1 - suffix_length]
+    {
+        line_map.insert(
+            current_lines.len() - suffix_length,
+            original_lines.len() - suffix_length,
+        );
+        suffix_length += 1;
+    }
+
+    let original_start = prefix_length;
+    let original_end = original_lines.len() - suffix_length;
+    let current_start = prefix_length;
+    let current_end = current_lines.len() - suffix_length;
+    let original_middle = &original_lines[original_start..original_end];
+    let current_middle = &current_lines[current_start..current_end];
+
+    let matrix_size = (original_middle.len() + 1) * (current_middle.len() + 1);
+    if matrix_size > 250_000 {
+        for index in 0..original_middle.len().min(current_middle.len()) {
+            if original_middle[index] == current_middle[index] {
+                line_map.insert(current_start + index + 1, original_start + index + 1);
+            }
+        }
+        return line_map;
+    }
+
+    let mut lengths = vec![vec![0usize; current_middle.len() + 1]; original_middle.len() + 1];
+    for original_index in (0..original_middle.len()).rev() {
+        for current_index in (0..current_middle.len()).rev() {
+            lengths[original_index][current_index] =
+                if original_middle[original_index] == current_middle[current_index] {
+                    lengths[original_index + 1][current_index + 1] + 1
+                } else {
+                    lengths[original_index + 1][current_index]
+                        .max(lengths[original_index][current_index + 1])
+                };
+        }
+    }
+
+    let mut original_index = 0;
+    let mut current_index = 0;
+    while original_index < original_middle.len() && current_index < current_middle.len() {
+        if original_middle[original_index] == current_middle[current_index] {
+            line_map.insert(
+                current_start + current_index + 1,
+                original_start + original_index + 1,
+            );
+            original_index += 1;
+            current_index += 1;
+        } else if lengths[original_index + 1][current_index]
+            >= lengths[original_index][current_index + 1]
+        {
+            original_index += 1;
+        } else {
+            current_index += 1;
+        }
+    }
+
+    line_map
 }
 
 fn commit_info_from_commit(
@@ -317,6 +450,7 @@ fn unsupported(path: &str, reason: impl Into<String>) -> GitAttribution {
         unsupported_reason: Some(reason.into()),
         file: None,
         lines: Vec::new(),
+        uncommitted_lines: Vec::new(),
     }
 }
 
@@ -413,6 +547,34 @@ mod tests {
         );
         assert_eq!(attribution.lines[0].commit.summary, "Add readme");
         assert_eq!(attribution.lines[1].commit.summary, "Update second line");
+    }
+
+    #[tokio::test]
+    async fn marks_saved_modified_lines_as_uncommitted() {
+        let dir = tempdir().unwrap();
+        init_repo(dir.path());
+        fs::write(dir.path().join("README.md"), "first\nsecond\n").unwrap();
+        commit_all(dir.path(), "Add readme", "1700000000 +0000");
+        fs::write(dir.path().join("README.md"), "first\nchanged\n").unwrap();
+
+        let attribution = attribution_for_file(dir.path(), "README.md").await;
+
+        assert_eq!(attribution.status, GitAttributionStatus::Available);
+        assert_eq!(attribution.uncommitted_lines, vec![2]);
+    }
+
+    #[tokio::test]
+    async fn marks_saved_inserted_lines_as_uncommitted() {
+        let dir = tempdir().unwrap();
+        init_repo(dir.path());
+        fs::write(dir.path().join("README.md"), "first\nsecond\n").unwrap();
+        commit_all(dir.path(), "Add readme", "1700000000 +0000");
+        fs::write(dir.path().join("README.md"), "first\n\nsecond\n").unwrap();
+
+        let attribution = attribution_for_file(dir.path(), "README.md").await;
+
+        assert_eq!(attribution.status, GitAttributionStatus::Available);
+        assert_eq!(attribution.uncommitted_lines, vec![2]);
     }
 
     #[tokio::test]

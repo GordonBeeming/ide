@@ -122,6 +122,7 @@ export interface GitAttribution {
   unsupportedReason?: string;
   file?: GitCommitInfo;
   lines: GitLineAttribution[];
+  uncommittedLines?: number[];
 }
 
 export interface OpenFileRequest {
@@ -526,6 +527,11 @@ export function normalizeGitAttribution(value: unknown): GitAttribution | undefi
     .map(normalizeGitLineAttribution)
     .filter((line): line is GitLineAttribution => Boolean(line));
   if (lines.length !== candidate.lines.length) return undefined;
+  const uncommittedLines =
+    candidate.uncommittedLines === undefined
+      ? []
+      : normalizeGitLineNumbers(candidate.uncommittedLines);
+  if (!uncommittedLines) return undefined;
 
   const file =
     candidate.file === undefined || candidate.file === null
@@ -544,7 +550,17 @@ export function normalizeGitAttribution(value: unknown): GitAttribution | undefi
         : undefined,
     file,
     lines,
+    uncommittedLines,
   };
+}
+
+function normalizeGitLineNumbers(value: unknown): number[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const lineNumbers = value.filter(
+    (lineNumber): lineNumber is number =>
+      Number.isInteger(lineNumber) && lineNumber >= 1,
+  );
+  return lineNumbers.length === value.length ? lineNumbers : undefined;
 }
 
 function normalizeGitLineAttribution(value: unknown): GitLineAttribution | undefined {

@@ -1,6 +1,6 @@
 import "@testing-library/jest-dom/vitest";
 import { fireEvent, render, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import EditorPane from "./EditorPane";
 import { lspExtensionsForPath } from "./lsp";
 
@@ -13,6 +13,17 @@ vi.mock("./lsp", () => ({
 }));
 
 describe("EditorPane", () => {
+  beforeAll(() => {
+    Object.defineProperty(Range.prototype, "getClientRects", {
+      configurable: true,
+      value: () => [],
+    });
+    Object.defineProperty(Range.prototype, "getBoundingClientRect", {
+      configurable: true,
+      value: () => new DOMRect(0, 0, 0, 0),
+    });
+  });
+
   beforeEach(() => {
     vi.mocked(lspExtensionsForPath).mockResolvedValue([]);
   });
@@ -230,6 +241,50 @@ describe("EditorPane", () => {
       "Add second line",
     );
     expect(container.querySelector(".git-attribution-ghost--dirty")).toBeNull();
+  });
+
+  it("marks saved uncommitted lines as local attribution", async () => {
+    const commit = {
+      sha: "abc123456789",
+      shortSha: "abc12345",
+      authorName: "Gordon Beeming",
+      authoredAtSeconds: Math.floor(Date.now() / 1000) - 600,
+      summary: "Add original line",
+      actions: [],
+    };
+    const { container } = render(
+      <EditorPane
+        contents={"first\nchanged"}
+        dateTimeFormat="yyyyMmDdHhMm"
+        gitAttribution={{
+          path: "src/App.tsx",
+          status: "available",
+          file: commit,
+          lines: [
+            { lineNumber: 1, commit },
+            { lineNumber: 2, commit },
+          ],
+          uncommittedLines: [2],
+        }}
+        isDirty={false}
+        onChange={vi.fn()}
+        onError={vi.fn()}
+        onGitCommitClick={vi.fn()}
+        onSelection={vi.fn()}
+        path="src/App.tsx"
+        recentRelativeThreshold="never"
+        revealLine={2}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(container.querySelector(".git-attribution-ghost--dirty")).toHaveTextContent(
+        "You - Uncommitted changes",
+      );
+    });
+    expect(container.querySelector(".git-attribution-ghost--dirty")).not.toHaveTextContent(
+      "Add original line",
+    );
   });
 });
 

@@ -922,6 +922,7 @@ describe("Git attribution response normalization", () => {
             },
           },
         ],
+        uncommittedLines: [2],
       }),
     ).toEqual({
       path: "README.md",
@@ -957,6 +958,27 @@ describe("Git attribution response normalization", () => {
           },
         },
       ],
+      uncommittedLines: [2],
+    });
+  });
+
+  it("defaults missing uncommitted line metadata to no uncommitted lines", async () => {
+    const { normalizeGitAttribution } = await import("./tauri");
+
+    expect(
+      normalizeGitAttribution({
+        path: "README.md",
+        status: "available",
+        file: null,
+        lines: [],
+      }),
+    ).toEqual({
+      path: "README.md",
+      status: "available",
+      unsupportedReason: undefined,
+      file: undefined,
+      lines: [],
+      uncommittedLines: [],
     });
   });
 
@@ -970,6 +992,15 @@ describe("Git attribution response normalization", () => {
         status: "available",
         file: null,
         lines: [{ lineNumber: 0, commit: {} }],
+      }),
+    ).toBeUndefined();
+    expect(
+      normalizeGitAttribution({
+        path: "README.md",
+        status: "available",
+        file: null,
+        lines: [],
+        uncommittedLines: [1, 0],
       }),
     ).toBeUndefined();
   });

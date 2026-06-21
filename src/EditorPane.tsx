@@ -374,8 +374,8 @@ function buildGitAttributionDecorations(
   if (!lineState) return Decoration.none;
 
   const widget =
-    lineState.kind === "dirty"
-      ? new LocalGitAttributionWidget(lineState.editedAtMs, dateTimeFormat)
+    lineState.kind === "local"
+      ? new LocalGitAttributionWidget(lineState.state, lineState.editedAtMs, dateTimeFormat)
       : new GitAttributionWidget(
           lineState.commit,
           dateTimeFormat,
@@ -393,7 +393,8 @@ function buildGitAttributionDecorations(
 
 type AttributionLineState =
   | { kind: "commit"; commit: GitCommitInfo }
-  | { kind: "dirty"; editedAtMs: number };
+  | { kind: "local"; state: "unsaved"; editedAtMs: number }
+  | { kind: "local"; state: "uncommitted"; editedAtMs?: undefined };
 
 function attributionLineState(
   attribution: GitAttribution,
@@ -405,7 +406,11 @@ function attributionLineState(
   const commitsByOriginalLine = new Map(
     attribution.lines.map((line) => [line.lineNumber, line.commit] as const),
   );
+  const uncommittedLines = new Set(attribution.uncommittedLines ?? []);
   if (cleanContents === currentContents) {
+    if (uncommittedLines.has(currentLineNumber)) {
+      return { kind: "local", state: "uncommitted" };
+    }
     const commit = commitsByOriginalLine.get(currentLineNumber);
     return commit ? { kind: "commit", commit } : undefined;
   }
@@ -416,12 +421,15 @@ function attributionLineState(
   );
   const originalLineNumber = mappedLines.get(currentLineNumber);
   if (originalLineNumber !== undefined) {
+    if (uncommittedLines.has(originalLineNumber)) {
+      return { kind: "local", state: "uncommitted" };
+    }
     const commit = commitsByOriginalLine.get(originalLineNumber);
     if (commit) return { kind: "commit", commit };
   }
 
   if (localEditStartedAtMs === undefined) return undefined;
-  return { kind: "dirty", editedAtMs: localEditStartedAtMs };
+  return { kind: "local", state: "unsaved", editedAtMs: localEditStartedAtMs };
 }
 
 function documentLines(contents: string) {
@@ -568,7 +576,8 @@ class GitAttributionWidget extends WidgetType {
 
 class LocalGitAttributionWidget extends WidgetType {
   constructor(
-    private readonly editedAtMs: number,
+    private readonly state: "unsaved" | "uncommitted",
+    private readonly editedAtMs: number | undefined,
     private readonly dateTimeFormat: DateTimeFormatId,
   ) {
     super();
@@ -576,6 +585,7 @@ class LocalGitAttributionWidget extends WidgetType {
 
   eq(other: LocalGitAttributionWidget) {
     return (
+      other.state === this.state &&
       other.editedAtMs === this.editedAtMs &&
       other.dateTimeFormat === this.dateTimeFormat
     );
@@ -584,14 +594,20 @@ class LocalGitAttributionWidget extends WidgetType {
   toDOM() {
     const span = document.createElement("span");
     span.className = "git-attribution-ghost git-attribution-ghost--dirty";
-    span.title = "Unsaved local changes";
-    span.textContent = [
-      "You",
-      formatDateTime(this.editedAtMs, this.dateTimeFormat, "oneMonth"),
-      "Unsaved changes",
-    ]
-      .filter(Boolean)
-      .join(" - ");
+    span.title =
+      this.state === "unsaved"
+        ? "Unsaved local changes"
+        : "Saved changes that have not been committed";
+    span.textContent =
+      this.state === "unsaved"
+        ? [
+            "You",
+            formatDateTime(this.editedAtMs, this.dateTimeFormat, "oneMonth"),
+            "Unsaved changes",
+          ]
+            .filter(Boolean)
+            .join(" - ")
+        : "You - Uncommitted changes";
     return span;
   }
 }
