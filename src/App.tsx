@@ -496,6 +496,7 @@ export default function App() {
   const sidebarFilterInputRef = useRef<HTMLInputElement | null>(null);
   const sidebarContentSearchInputRef = useRef<HTMLInputElement | null>(null);
   const currentFindInputRef = useRef<HTMLInputElement | null>(null);
+  const gitCommitPopoverCloseRef = useRef<HTMLButtonElement | null>(null);
   const initialFileOpenedRef = useRef(false);
   const openedLaunchTargetsDrainedRef = useRef(false);
   const persistedWorkspaceRef = useRef<WorkspaceUiState>({
@@ -692,6 +693,7 @@ export default function App() {
 
     let disposed = false;
     const requestedPath = activePath;
+    setGitCommitPopover(undefined);
     getGitAttribution(requestedPath)
       .then((attribution) => {
         if (disposed || attribution.path !== requestedPath) return;
@@ -714,6 +716,12 @@ export default function App() {
     activePath,
     gitAttributionEnabled,
   ]);
+
+  useEffect(() => {
+    if (gitCommitPopover) {
+      gitCommitPopoverCloseRef.current?.focus();
+    }
+  }, [gitCommitPopover]);
 
   useEffect(() => {
     let disposed = false;
@@ -2825,6 +2833,11 @@ export default function App() {
         closeGoToLineDialog();
         return;
       }
+      if (event.key === "Escape" && gitCommitPopover) {
+        event.preventDefault();
+        setGitCommitPopover(undefined);
+        return;
+      }
       if (event.key === "Escape" && pendingDeletePath) {
         event.preventDefault();
         cancelDeleteSelectedFile();
@@ -2956,6 +2969,7 @@ export default function App() {
     aboutOpen,
     settingsOpen,
     goToLineDialogOpen,
+    gitCommitPopover,
     modalUiOpen,
     nativePickerAvailable,
     commandPaletteVisible,
@@ -3445,6 +3459,7 @@ export default function App() {
               aria-label="Close Git commit details"
               className="icon-button"
               onClick={() => setGitCommitPopover(undefined)}
+              ref={gitCommitPopoverCloseRef}
               type="button"
             >
               <X size={14} />

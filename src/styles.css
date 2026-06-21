@@ -869,7 +869,12 @@ button {
 .statusbar__git-attribution:hover,
 .statusbar__git-attribution:focus-visible {
   color: var(--text);
-  outline: none;
+}
+
+.statusbar__git-attribution:focus-visible {
+  border-radius: 4px;
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .statusbar__git-attribution strong,
@@ -902,7 +907,12 @@ button {
 .git-attribution-ghost:focus-visible {
   color: var(--text);
   opacity: 0.9;
-  outline: none;
+}
+
+.git-attribution-ghost:focus-visible {
+  border-radius: 3px;
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .git-commit-popover {

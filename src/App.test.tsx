@@ -1038,9 +1038,69 @@ describe("App shell interactions", () => {
 
     fireEvent.click(screen.getByText("Last commit"));
 
-    expect(await screen.findByRole("dialog", { name: "Git commit details" })).toBeInTheDocument();
+    const dialog = await screen.findByRole("dialog", { name: "Git commit details" });
+    expect(dialog).toBeInTheDocument();
     expect(screen.getByText("abc12345")).toBeInTheDocument();
     expect(screen.getByText("Open in GitHub")).toBeInTheDocument();
+    expect(
+      within(dialog).getByRole("button", { name: "Close Git commit details" }),
+    ).toHaveFocus();
+
+    fireEvent.keyDown(window, { key: "Escape" });
+
+    expect(screen.queryByRole("dialog", { name: "Git commit details" }))
+      .not.toBeInTheDocument();
+  });
+
+  it("clears an open Git commit popover when switching files", async () => {
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    tauriMocks.getUiState.mockResolvedValueOnce({
+      view: {
+        showDotfiles: false,
+        showGeneratedInternal: false,
+        featureFlags: { gitAttribution: true },
+      },
+      workspace: {
+        expandedFolders: ["src"],
+        openFiles: ["README.md", "src/App.tsx"],
+        activeFile: "README.md",
+      },
+    });
+    tauriMocks.getGitAttribution
+      .mockResolvedValueOnce({
+        path: "README.md",
+        status: "available",
+        file: {
+          sha: "abc123456789",
+          shortSha: "abc12345",
+          authorName: "Gordon Beeming",
+          authoredAtSeconds: Math.floor(Date.now() / 1000) - 3600,
+          summary: "Add readme",
+          actions: [],
+        },
+        lines: [],
+      })
+      .mockResolvedValueOnce({
+        path: "src/App.tsx",
+        status: "unsupported",
+        unsupportedReason: "File is not tracked by Git",
+        lines: [],
+      });
+
+    render(<App />);
+
+    fireEvent.click(await screen.findByText("Last commit"));
+    expect(await screen.findByRole("dialog", { name: "Git commit details" })).toBeInTheDocument();
+
+    fireEvent.click(await treeButton("App.tsx"));
+
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "Git commit details" }))
+        .not.toBeInTheDocument(),
+    );
+    await waitFor(() =>
+      expect(tauriMocks.getGitAttribution).toHaveBeenCalledWith("src/App.tsx"),
+    );
   });
 
   it("shows OS storage paths from Settings", async () => {

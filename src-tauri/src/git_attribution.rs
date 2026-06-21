@@ -238,6 +238,11 @@ fn parse_blame_porcelain(output: &str, remotes: &[RemoteTemplate]) -> Vec<GitLin
 
     for raw_line in output.lines() {
         if let Some(content) = raw_line.strip_prefix('\t') {
+            if current.line_number == 0 {
+                current = BlameLine::default();
+                continue;
+            }
+
             let metadata = blame_metadata(&mut metadata_by_sha, &current);
             let summary = if is_zero_sha(&current.sha) && metadata.summary.is_empty() {
                 "Uncommitted change".to_string()
@@ -564,6 +569,25 @@ abc123456789abcdef123456789abcdef1234567 2 2 1
         );
         assert_eq!(lines[1].commit.authored_at_seconds, Some(1_700_000_000));
         assert_eq!(lines[1].commit.summary, "Add app shell");
+    }
+
+    #[test]
+    fn skips_blame_lines_with_malformed_headers() {
+        let remotes = Vec::new();
+        let output = "\
+not-a-header
+\tignored line
+abc123456789abcdef123456789abcdef1234567 1 4 1
+author Gordon Beeming
+summary Add app shell
+\tvalid line
+";
+
+        let lines = parse_blame_porcelain(output, &remotes);
+
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0].line_number, 4);
+        assert_eq!(lines[0].commit.summary, "Add app shell");
     }
 
     #[tokio::test]
