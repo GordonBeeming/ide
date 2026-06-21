@@ -154,6 +154,83 @@ describe("EditorPane", () => {
     expect(onGitCommitClick).toHaveBeenCalledWith(commit);
     expect(editorText(container)).toContain("first");
   });
+
+  it("keeps commit attribution while dirty and marks inserted lines as local edits", async () => {
+    const firstCommit = {
+      sha: "abc123456789",
+      shortSha: "abc12345",
+      authorName: "Gordon Beeming",
+      authoredAtSeconds: Math.floor(Date.now() / 1000) - 600,
+      summary: "Add first line",
+      actions: [],
+    };
+    const secondCommit = {
+      sha: "def123456789",
+      shortSha: "def12345",
+      authorName: "Alex Example",
+      authoredAtSeconds: Math.floor(Date.now() / 1000) - 300,
+      summary: "Add second line",
+      actions: [],
+    };
+    const attribution = {
+      path: "src/App.tsx",
+      status: "available" as const,
+      file: secondCommit,
+      lines: [
+        { lineNumber: 1, commit: firstCommit },
+        { lineNumber: 2, commit: secondCommit },
+      ],
+    };
+    const props = {
+      dateTimeFormat: "yyyyMmDdHhMm" as const,
+      gitAttribution: attribution,
+      onChange: vi.fn(),
+      onError: vi.fn(),
+      onGitCommitClick: vi.fn(),
+      onSelection: vi.fn(),
+      path: "src/App.tsx",
+      recentRelativeThreshold: "never" as const,
+    };
+    const { container, rerender } = render(
+      <EditorPane contents={"first\nsecond"} isDirty={false} revealLine={1} {...props} />,
+    );
+
+    await waitFor(() => {
+      expect(container.querySelector(".git-attribution-ghost")).toHaveTextContent(
+        "Gordon Beeming",
+      );
+    });
+
+    rerender(
+      <EditorPane contents={"first\n\nsecond"} isDirty revealLine={2} {...props} />,
+    );
+
+    await waitFor(() => {
+      expect(container.querySelector(".git-attribution-ghost--dirty")).toHaveTextContent(
+        "You",
+      );
+    });
+    expect(container.querySelector(".git-attribution-ghost--dirty")).toHaveTextContent(
+      "Unsaved changes",
+    );
+    expect(container.querySelector(".git-attribution-ghost--dirty")).not.toHaveTextContent(
+      "Add second line",
+    );
+
+    rerender(
+      <EditorPane contents={"first\n\nsecond"} isDirty revealLine={3} {...props} />,
+    );
+
+    await waitFor(() => {
+      expect(container.querySelector(".git-attribution-ghost")).toHaveTextContent(
+        "Alex Example",
+      );
+    });
+    expect(container.querySelector(".git-attribution-ghost")).toHaveTextContent(
+      "Add second line",
+    );
+    expect(container.querySelector(".git-attribution-ghost--dirty")).toBeNull();
+  });
 });
 
 function editorText(container: HTMLElement) {

@@ -1052,6 +1052,59 @@ describe("App shell interactions", () => {
       .not.toBeInTheDocument();
   });
 
+  it("keeps last commit attribution visible while the active file is dirty", async () => {
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    tauriMocks.getUiState.mockResolvedValueOnce({
+      view: {
+        showDotfiles: false,
+        showGeneratedInternal: false,
+        featureFlags: { gitAttribution: true },
+      },
+      workspace: {
+        expandedFolders: [],
+        openFiles: ["README.md"],
+        activeFile: "README.md",
+      },
+    });
+    tauriMocks.getGitAttribution.mockResolvedValueOnce({
+      path: "README.md",
+      status: "available",
+      file: {
+        sha: "abc123456789",
+        shortSha: "abc12345",
+        authorName: "Gordon Beeming",
+        authoredAtSeconds: Math.floor(Date.now() / 1000) - 3600,
+        summary: "Add readme",
+        actions: [],
+      },
+      lines: [
+        {
+          lineNumber: 1,
+          commit: {
+            sha: "abc123456789",
+            shortSha: "abc12345",
+            authorName: "Gordon Beeming",
+            authoredAtSeconds: Math.floor(Date.now() / 1000) - 3600,
+            summary: "Add readme",
+            actions: [],
+          },
+        },
+      ],
+    });
+
+    render(<App />);
+
+    expect(await screen.findByText("Last commit")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Editor README.md"), {
+      target: { value: "dirty readme" },
+    });
+
+    expect(screen.getByText("Last commit")).toBeInTheDocument();
+    expect(screen.getByText("Gordon Beeming")).toBeInTheDocument();
+    expect(screen.getByText("Add readme")).toBeInTheDocument();
+    expect(tauriMocks.getGitAttribution).toHaveBeenCalledTimes(1);
+  });
+
   it("clears an open Git commit popover when switching files", async () => {
     (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
     tauriMocks.getUiState.mockResolvedValueOnce({

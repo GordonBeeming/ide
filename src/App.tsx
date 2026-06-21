@@ -685,7 +685,7 @@ export default function App() {
   }, [activeFile]);
 
   useEffect(() => {
-    if (!gitAttributionEnabled || !activePath || !activeFile || activeFile.dirty) {
+    if (!gitAttributionEnabled || !activePath || !activeFile) {
       setGitAttribution(undefined);
       setGitCommitPopover(undefined);
       return;
@@ -710,8 +710,6 @@ export default function App() {
       disposed = true;
     };
   }, [
-    activeFile,
-    activeFile?.dirty,
     activeFile?.modifiedMs,
     activePath,
     gitAttributionEnabled,
@@ -3391,6 +3389,7 @@ export default function App() {
                 dateTimeFormat={dateTimeFormat}
                 editorCommand={editorCommand}
                 gitAttribution={activeGitAttribution}
+                isDirty={activeFile.dirty}
                 path={activeFile.path}
                 prefersDark={prefersDark}
                 recentRelativeThreshold={recentRelativeThreshold}
@@ -3422,8 +3421,8 @@ export default function App() {
         </div>
 
         <footer className="statusbar">
-          <span>{status}</span>
-          <span>{activePath ?? workspaceRoot}</span>
+          <span className="statusbar__state">{status}</span>
+          <span className="statusbar__path">{activePath ?? workspaceRoot}</span>
           {activeGitFileCommit ? (
             <button
               className="statusbar__git-attribution"
@@ -3431,19 +3430,21 @@ export default function App() {
               title={gitStatusTitle}
               type="button"
             >
-              <span>Last commit</span>
+              <span className="statusbar__git-label">Last commit</span>
               <strong>{activeGitFileCommit.authorName}</strong>
-              <span>
+              <span className="statusbar__git-date">
                 {commitTimeLabel(
                   activeGitFileCommit,
                   dateTimeFormat,
                   recentRelativeThreshold,
                 )}
               </span>
-              <span>{activeGitFileCommit.summary}</span>
+              <span className="statusbar__git-summary">
+                {activeGitFileCommit.summary}
+              </span>
             </button>
           ) : null}
-          <span>{cursorPosition}</span>
+          <span className="statusbar__cursor">{cursorPosition}</span>
         </footer>
       </section>
 
