@@ -251,23 +251,22 @@ The command palette exposes the same daily-driver actions from the keyboard. Nat
 
 Supported keyboard commands:
 
-- `Cmd/Ctrl+S`: save the active file.
-- `Cmd/Ctrl+Shift+S`: save all dirty files.
-- `Cmd/Ctrl+R`: reload the active file from disk.
-- `Cmd/Ctrl+W`: close the active tab.
-- `Cmd/Ctrl+Shift+W`: close all tabs.
-- `Cmd/Ctrl+B`: toggle the sidebar.
-- `Cmd/Ctrl+O`: open a file with the native picker.
-- `Cmd/Ctrl+Shift+O`: open a workspace folder with the native picker.
-- `Cmd/Ctrl+Shift+P`: open the command palette.
-- `Cmd/Ctrl+F`: open and focus current-file search.
-- `Cmd/Ctrl+Shift+F`: open and focus workspace content search.
-- `Ctrl+G`: jump to a line in the active file.
-- `Cmd/Ctrl+N`: create a new file.
-- `Cmd/Ctrl+Shift+N`: create a new folder.
-- `Cmd/Ctrl+P`: open the quick-open palette.
-- `F2`: rename the selected file or folder.
-- `Ctrl+Tab` / `Ctrl+Shift+Tab`: move between open tabs.
+- `Cmd+S` / `Ctrl+S`: save all dirty files.
+- `Cmd+Alt+Y` / `Ctrl+Alt+Y`: reload the active file from disk.
+- `Cmd+W` / `Ctrl+F4`: close the active tab.
+- `Cmd+Shift+W` / `Ctrl+Shift+F4`: close all tabs.
+- `Cmd+1` / `Alt+1`: show or hide the project sidebar.
+- `Cmd+Shift+A` / `Ctrl+Shift+A`: open the command palette.
+- `Cmd+F` / `Ctrl+F`: open and focus current-file search.
+- `Cmd+Shift+F` / `Ctrl+Shift+F`: open and focus workspace content search.
+- `Cmd+L` / `Ctrl+G`: jump to a line in the active file.
+- `Ctrl+Alt+N` / `Ctrl+Alt+Insert`: create a new file.
+- `Cmd+Shift+O` / `Ctrl+Shift+N`: open the quick-open palette.
+- `Shift+F6`: rename the selected file or folder.
+- `Cmd+B` / `Ctrl+B`: go to definition.
+- `Alt+F7`: find references.
+- `Cmd+Shift+]` / `Alt+Right`: move to the next tab.
+- `Cmd+Shift+[` / `Alt+Left`: move to the previous tab.
 
 Sidebar file filtering, workspace content search, and current-file search stay collapsed until requested; they remain open while they contain query text. `Escape` clears a populated search field first, then collapses the empty field on the next press. Tree rows support keyboard use: `Enter` opens files as preview tabs or toggles folders, `Space` toggles folders, and `ArrowRight` / `ArrowLeft` expand or collapse folders. Quick open lists editor-supported files only, so common binary/media/font/archive files are selectable in the tree without being offered as editor targets. Current-file search runs against the active tab contents, including unsaved edits, can reveal a matched line in the editor, and cycles matches with `Enter` / `Shift+Enter`. The status bar reports the active editor caret position without publishing empty selections into agent context. Common binary, media, font, archive, and executable file types select in the tree without attempting text-editor reads. New-file and new-folder creation use the selected folder or selected file's parent as the default path and reject existing targets. New-file and new-folder creation also creates missing parent directories for explicit nested paths such as `src/features/new.tsx` or `src/features/editor`. New files open as persistent tabs with their first scanned `modifiedMs`, so their first save gets the same stale-write protection as opened files. File and folder rename reject existing destination paths; file rename refreshes the renamed tab's `modifiedMs`, while folder rename updates any open child tab paths, expanded folder state, diagnostics, reveal state, and selection context. File and folder deletion require confirmation; deleting a folder also closes any open tabs under the folder and removes related diagnostics/context. Reload from disk refreshes the active file contents and modification timestamp; dirty files require confirmation before unsaved edits are discarded. Saves send the file's last known `modifiedMs`; if the disk file changed since it was opened, the backend returns a conflict and the tab remains dirty. Save All walks dirty tabs in order and stops at the first failed write so the error remains visible to the user. Close All uses the same dirty-file confirmation and failed-save behavior before clearing tabs.
 

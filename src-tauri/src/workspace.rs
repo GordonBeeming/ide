@@ -85,11 +85,16 @@ fn scan_workspace(
     max_entries: usize,
     show_dotfiles: bool,
     show_generated_internal: bool,
+    show_gitignored_files: bool,
 ) -> Result<Vec<FileEntry>, WorkspaceError> {
-    Ok(
-        scan_workspace_with_metadata(root, max_entries, show_dotfiles, show_generated_internal)?
-            .entries,
-    )
+    Ok(scan_workspace_with_metadata(
+        root,
+        max_entries,
+        show_dotfiles,
+        show_generated_internal,
+        show_gitignored_files,
+    )?
+    .entries)
 }
 
 pub fn scan_workspace_with_metadata(
@@ -97,6 +102,7 @@ pub fn scan_workspace_with_metadata(
     max_entries: usize,
     show_dotfiles: bool,
     show_generated_internal: bool,
+    show_gitignored_files: bool,
 ) -> Result<WorkspaceScan, WorkspaceError> {
     let mut entries = Vec::new();
     let mut seen_paths = HashSet::new();
@@ -104,7 +110,12 @@ pub fn scan_workspace_with_metadata(
 
     loop {
         let previous_seen_count = seen_paths.len();
-        let mut walker = workspace_walker(root, show_dotfiles, show_generated_internal);
+        let mut walker = workspace_walker(
+            root,
+            show_dotfiles,
+            show_generated_internal,
+            !show_gitignored_files,
+        );
         walker.max_depth(Some(max_depth));
 
         for result in walker.build() {
@@ -180,6 +191,7 @@ pub fn workspace_directory_entries(
     relative: &str,
     show_dotfiles: bool,
     show_generated_internal: bool,
+    show_gitignored_files: bool,
 ) -> Result<Vec<FileEntry>, WorkspaceError> {
     let path = if relative.is_empty() {
         root.canonicalize()?
@@ -193,7 +205,12 @@ pub fn workspace_directory_entries(
 
     let canonical_root = root.canonicalize()?;
     let mut entries = Vec::new();
-    let mut walker = workspace_walker(&path, show_dotfiles, show_generated_internal);
+    let mut walker = workspace_walker(
+        &path,
+        show_dotfiles,
+        show_generated_internal,
+        !show_gitignored_files,
+    );
     walker.max_depth(Some(1));
     for result in walker.build() {
         let entry = result?;
@@ -211,6 +228,81 @@ pub fn workspace_directory_entries(
 
     sort_scan_entries(&mut entries);
     Ok(entries)
+}
+
+pub fn filter_visible_workspace_entries(
+    root: &Path,
+    entries: Vec<FileEntry>,
+    show_dotfiles: bool,
+    show_generated_internal: bool,
+    show_gitignored_files: bool,
+) -> Result<Vec<FileEntry>, WorkspaceError> {
+    let entries = entries
+        .into_iter()
+        .filter(|entry| entry_passes_name_filters(entry, show_dotfiles, show_generated_internal))
+        .collect::<Vec<_>>();
+
+    if show_gitignored_files || entries.is_empty() {
+        return Ok(entries);
+    }
+
+    let targets = entries
+        .iter()
+        .map(|entry| entry.path.clone())
+        .collect::<HashSet<_>>();
+    let max_depth = entries
+        .iter()
+        .map(|entry| Path::new(&entry.path).components().count())
+        .max()
+        .unwrap_or(1);
+    let canonical_root = root.canonicalize()?;
+    let mut visible_paths = HashSet::new();
+    let mut walker = workspace_walker(
+        &canonical_root,
+        show_dotfiles,
+        show_generated_internal,
+        true,
+    );
+    walker.max_depth(Some(max_depth));
+
+    for result in walker.build() {
+        let entry = result?;
+        let path = entry.path();
+        if path == canonical_root {
+            continue;
+        }
+        let relative = path
+            .strip_prefix(&canonical_root)
+            .map_err(|_| WorkspaceError::OutsideWorkspace)?;
+        let relative_path = normalize_path(relative);
+        if targets.contains(&relative_path) {
+            visible_paths.insert(relative_path);
+            if visible_paths.len() == targets.len() {
+                break;
+            }
+        }
+    }
+
+    Ok(entries
+        .into_iter()
+        .filter(|entry| visible_paths.contains(&entry.path))
+        .collect())
+}
+
+fn entry_passes_name_filters(
+    entry: &FileEntry,
+    show_dotfiles: bool,
+    show_generated_internal: bool,
+) -> bool {
+    Path::new(&entry.path).components().all(|component| {
+        let Component::Normal(name) = component else {
+            return false;
+        };
+        if is_generated_name(name) {
+            return show_generated_internal;
+        }
+        show_dotfiles || !is_dot_name(name)
+    })
 }
 
 fn push_scan_entry(
@@ -321,7 +413,7 @@ pub fn search_workspace_with_metadata(
 
     loop {
         let previous_seen_count = seen_paths.len();
-        let mut walker = workspace_walker(root, show_dotfiles, false);
+        let mut walker = workspace_walker(root, show_dotfiles, false, true);
         walker.max_depth(Some(max_depth));
 
         for result in walker.build() {
@@ -511,12 +603,13 @@ fn workspace_walker(
     root: &Path,
     show_dotfiles: bool,
     show_generated_internal: bool,
+    respect_ignore_files: bool,
 ) -> WalkBuilder {
     let mut builder = WalkBuilder::new(root);
     builder
         .hidden(false)
-        .git_ignore(true)
-        .git_exclude(true)
+        .git_ignore(respect_ignore_files)
+        .git_exclude(respect_ignore_files)
         .parents(true)
         .filter_entry(move |entry| {
             if is_generated_name(entry.file_name()) {
@@ -1179,7 +1272,7 @@ mod tests {
         fs::write(dir.path().join("node_modules/pkg/index.js"), "").unwrap();
         fs::write(dir.path().join("src/main.rs"), "fn main() {}").unwrap();
 
-        let entries = scan_workspace(dir.path(), 100, false, false).unwrap();
+        let entries = scan_workspace(dir.path(), 100, false, false, true).unwrap();
         let paths = entries
             .iter()
             .map(|entry| entry.path.as_str())
@@ -1204,7 +1297,7 @@ mod tests {
         fs::write(dir.path().join(".vscode/settings.json"), "{}").unwrap();
         fs::write(dir.path().join(".gitignore"), "").unwrap();
 
-        let entries = scan_workspace(dir.path(), 100, true, false).unwrap();
+        let entries = scan_workspace(dir.path(), 100, true, false, true).unwrap();
         let paths = entries
             .iter()
             .map(|entry| entry.path.as_str())
@@ -1234,7 +1327,7 @@ mod tests {
         fs::write(dir.path().join(".github/workflows/test.yml"), "").unwrap();
         fs::write(dir.path().join(".gitignore"), "").unwrap();
 
-        let entries = scan_workspace(dir.path(), 100, false, true).unwrap();
+        let entries = scan_workspace(dir.path(), 100, false, true, true).unwrap();
         let paths = entries
             .iter()
             .map(|entry| entry.path.as_str())
@@ -1251,13 +1344,50 @@ mod tests {
     }
 
     #[test]
+    fn scan_workspace_includes_gitignored_files() {
+        let dir = tempdir().unwrap();
+        fs::create_dir(dir.path().join(".git")).unwrap();
+        fs::write(dir.path().join(".gitignore"), "ignored.txt\n").unwrap();
+        fs::write(dir.path().join("ignored.txt"), "").unwrap();
+        fs::write(dir.path().join("visible.txt"), "").unwrap();
+
+        let entries = scan_workspace(dir.path(), 100, false, false, true).unwrap();
+        let paths = entries
+            .iter()
+            .map(|entry| entry.path.as_str())
+            .collect::<Vec<_>>();
+
+        assert!(paths.contains(&"ignored.txt"));
+        assert!(paths.contains(&"visible.txt"));
+        assert!(!paths.contains(&".gitignore"));
+    }
+
+    #[test]
+    fn scan_workspace_can_hide_gitignored_files() {
+        let dir = tempdir().unwrap();
+        fs::create_dir(dir.path().join(".git")).unwrap();
+        fs::write(dir.path().join(".gitignore"), "ignored.txt\n").unwrap();
+        fs::write(dir.path().join("ignored.txt"), "").unwrap();
+        fs::write(dir.path().join("visible.txt"), "").unwrap();
+
+        let entries = scan_workspace(dir.path(), 100, false, false, false).unwrap();
+        let paths = entries
+            .iter()
+            .map(|entry| entry.path.as_str())
+            .collect::<Vec<_>>();
+
+        assert!(!paths.contains(&"ignored.txt"));
+        assert!(paths.contains(&"visible.txt"));
+    }
+
+    #[test]
     fn scan_workspace_returns_all_scoped_entries() {
         let dir = tempdir().unwrap();
         for index in 0..10 {
             fs::write(dir.path().join(format!("{index}.txt")), "").unwrap();
         }
 
-        let entries = scan_workspace(dir.path(), 100, false, false).unwrap();
+        let entries = scan_workspace(dir.path(), 100, false, false, true).unwrap();
         let paths = entries
             .iter()
             .map(|entry| entry.path.as_str())
@@ -1279,7 +1409,7 @@ mod tests {
         fs::write(dir.path().join("b/two/deep.txt"), "").unwrap();
         fs::write(dir.path().join("c.txt"), "").unwrap();
 
-        let entries = scan_workspace(dir.path(), 5, false, false).unwrap();
+        let entries = scan_workspace(dir.path(), 5, false, false, true).unwrap();
         let paths = entries
             .iter()
             .map(|entry| entry.path.as_str())
@@ -1302,7 +1432,7 @@ mod tests {
         fs::write(dir.path().join("b.txt"), "").unwrap();
         fs::write(dir.path().join("c.txt"), "").unwrap();
 
-        let scan = scan_workspace_with_metadata(dir.path(), 2, false, false).unwrap();
+        let scan = scan_workspace_with_metadata(dir.path(), 2, false, false, true).unwrap();
 
         assert_eq!(scan.entries.len(), 2);
         assert_eq!(scan.limit, 2);
@@ -1315,7 +1445,7 @@ mod tests {
         fs::write(dir.path().join("a.txt"), "").unwrap();
         fs::write(dir.path().join("b.txt"), "").unwrap();
 
-        let scan = scan_workspace_with_metadata(dir.path(), 2, false, false).unwrap();
+        let scan = scan_workspace_with_metadata(dir.path(), 2, false, false, true).unwrap();
 
         assert_eq!(scan.entries.len(), 2);
         assert_eq!(scan.limit, 2);
@@ -1325,24 +1455,28 @@ mod tests {
     #[test]
     fn workspace_directory_entries_returns_direct_children_with_filters() {
         let dir = tempdir().unwrap();
+        fs::create_dir(dir.path().join(".git")).unwrap();
         fs::create_dir_all(dir.path().join("src/.cache")).unwrap();
         fs::create_dir_all(dir.path().join("src/node_modules/pkg")).unwrap();
+        fs::write(dir.path().join(".gitignore"), "src/ignored.txt\n").unwrap();
+        fs::write(dir.path().join("src/ignored.txt"), "").unwrap();
         fs::write(dir.path().join("src/main.rs"), "").unwrap();
         fs::write(dir.path().join("src/.env"), "").unwrap();
         fs::write(dir.path().join("src/node_modules/pkg/index.js"), "").unwrap();
 
-        let entries = workspace_directory_entries(dir.path(), "src", false, false).unwrap();
+        let entries = workspace_directory_entries(dir.path(), "src", false, false, true).unwrap();
         let paths = entries
             .iter()
             .map(|entry| entry.path.as_str())
             .collect::<Vec<_>>();
 
+        assert!(paths.contains(&"src/ignored.txt"));
         assert!(paths.contains(&"src/main.rs"));
         assert!(!paths.contains(&"src/.cache"));
         assert!(!paths.contains(&"src/.env"));
         assert!(!paths.contains(&"src/node_modules"));
 
-        let entries = workspace_directory_entries(dir.path(), "src", true, true).unwrap();
+        let entries = workspace_directory_entries(dir.path(), "src", true, true, true).unwrap();
         let paths = entries
             .iter()
             .map(|entry| entry.path.as_str())
@@ -1360,7 +1494,7 @@ mod tests {
         fs::create_dir_all(dir.path().join("src")).unwrap();
         fs::write(dir.path().join("README.md"), "").unwrap();
 
-        let entries = workspace_directory_entries(dir.path(), "", false, false).unwrap();
+        let entries = workspace_directory_entries(dir.path(), "", false, false, true).unwrap();
         let paths = entries
             .iter()
             .map(|entry| entry.path.as_str())
@@ -1500,6 +1634,21 @@ mod tests {
         assert_eq!(hidden.matches[0].path, "README.md");
         assert_eq!(visible.matches.len(), 2);
         assert!(visible.matches.iter().any(|match_| match_.path == ".env"));
+    }
+
+    #[test]
+    fn search_workspace_respects_gitignore_rules() {
+        let dir = tempdir().unwrap();
+        fs::create_dir(dir.path().join(".git")).unwrap();
+        fs::write(dir.path().join(".gitignore"), "ignored.txt\n").unwrap();
+        fs::write(dir.path().join("ignored.txt"), "needle").unwrap();
+        fs::write(dir.path().join("README.md"), "needle").unwrap();
+
+        let search =
+            search_workspace_with_metadata(dir.path(), "needle", 10, 1_000_000, false).unwrap();
+
+        assert_eq!(search.matches.len(), 1);
+        assert_eq!(search.matches[0].path, "README.md");
     }
 
     #[test]

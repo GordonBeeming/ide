@@ -15,10 +15,10 @@ use tauri::{Emitter, Manager, State};
 use tauri_plugin_dialog::DialogExt;
 use tokio::sync::RwLock;
 use workspace::{
-    create_workspace_file, create_workspace_folder, delete_workspace_file, read_workspace_file,
-    rename_workspace_file, scan_workspace_with_metadata, search_workspace_with_metadata,
-    workspace_directory_entries, workspace_entry, workspace_file_entry, write_workspace_file,
-    WorkspaceError,
+    create_workspace_file, create_workspace_folder, delete_workspace_file,
+    filter_visible_workspace_entries, read_workspace_file, rename_workspace_file,
+    scan_workspace_with_metadata, search_workspace_with_metadata, workspace_directory_entries,
+    workspace_entry, workspace_file_entry, write_workspace_file, WorkspaceError,
 };
 
 #[derive(Clone)]
@@ -161,6 +161,8 @@ struct AppUiState {
 struct PersistedViewSettings {
     show_dotfiles: bool,
     show_generated_internal: bool,
+    #[serde(default = "default_show_gitignored_files")]
+    show_gitignored_files: bool,
     #[serde(default)]
     show_diagnostics_panel: bool,
     #[serde(default = "default_tree_scan_limit")]
@@ -195,6 +197,7 @@ impl Default for PersistedViewSettings {
         Self {
             show_dotfiles: false,
             show_generated_internal: false,
+            show_gitignored_files: default_show_gitignored_files(),
             show_diagnostics_panel: false,
             tree_scan_limit: default_tree_scan_limit(),
             max_open_file_kb: default_max_open_file_kb(),
@@ -215,6 +218,10 @@ impl Default for PersistedViewSettings {
 // this list are pruned on load, so retiring a flag is just removing it here (and
 // from the frontend registry). Keep in sync with src/featureFlags.ts.
 const KNOWN_FEATURE_FLAGS: &[&str] = &["gitAttribution"];
+
+fn default_show_gitignored_files() -> bool {
+    false
+}
 
 const MIN_TREE_SCAN_LIMIT: usize = 500;
 const DEFAULT_TREE_SCAN_LIMIT: usize = 10_000;
@@ -569,6 +576,7 @@ async fn list_files(
     state: State<'_, AppState>,
     show_dotfiles: bool,
     show_generated_internal: bool,
+    show_gitignored_files: bool,
     tree_scan_limit: Option<usize>,
 ) -> Result<workspace::WorkspaceScan, CommandError> {
     let workspace_root = workspace_root_for_window(&state, &window).await;
@@ -585,6 +593,7 @@ async fn list_files(
         tree_scan_limit,
         show_dotfiles,
         show_generated_internal,
+        show_gitignored_files,
     )
     .map_err(CommandError::from)?;
     state.workspace_index.reconcile_scanned_entries(
@@ -602,6 +611,7 @@ async fn list_directory(
     path: String,
     show_dotfiles: bool,
     show_generated_internal: bool,
+    show_gitignored_files: bool,
 ) -> Result<Vec<workspace::FileEntry>, CommandError> {
     let workspace_root = workspace_root_for_window(&state, &window).await;
     let entries = workspace_directory_entries(
@@ -609,6 +619,7 @@ async fn list_directory(
         &path,
         show_dotfiles,
         show_generated_internal,
+        show_gitignored_files,
     )
     .map_err(CommandError::from)?;
     state
@@ -625,6 +636,7 @@ async fn search_indexed_files(
     limit: Option<usize>,
     show_dotfiles: bool,
     show_generated_internal: bool,
+    show_gitignored_files: bool,
 ) -> Result<Vec<workspace::FileEntry>, CommandError> {
     let workspace_root = workspace_root_for_window(&state, &window).await;
     let limit = limit
@@ -642,9 +654,19 @@ async fn search_indexed_files(
         &query,
         limit,
         expansion_limit,
-        show_dotfiles,
-        show_generated_internal,
+        WorkspaceVisibility {
+            show_dotfiles,
+            show_generated_internal,
+            show_gitignored_files,
+        },
     )
+}
+
+#[derive(Clone, Copy)]
+struct WorkspaceVisibility {
+    show_dotfiles: bool,
+    show_generated_internal: bool,
+    show_gitignored_files: bool,
 }
 
 fn search_indexed_files_with_expansion(
@@ -653,10 +675,9 @@ fn search_indexed_files_with_expansion(
     query: &str,
     limit: usize,
     expansion_limit: usize,
-    show_dotfiles: bool,
-    show_generated_internal: bool,
+    visibility: WorkspaceVisibility,
 ) -> Result<Vec<workspace::FileEntry>, CommandError> {
-    let mut results = index.search_files(root, query, limit)?;
+    let mut results = search_visible_indexed_files(index, root, query, limit, visibility)?;
     if query.trim().is_empty() || results.len() >= limit {
         return Ok(results);
     }
@@ -673,23 +694,50 @@ fn search_indexed_files_with_expansion(
         let entries = match workspace_directory_entries(
             root,
             &directory,
-            show_dotfiles,
-            show_generated_internal,
+            visibility.show_dotfiles,
+            visibility.show_generated_internal,
+            visibility.show_gitignored_files,
         ) {
             Ok(entries) => entries,
             Err(error) if !directory.is_empty() && stale_indexed_directory_error(&error) => {
                 index.remove_path(root, &directory)?;
                 remaining_entries = remaining_entries.saturating_sub(1);
-                results = index.search_files(root, query, limit)?;
+                results = search_visible_indexed_files(index, root, query, limit, visibility)?;
                 continue;
             }
             Err(error) => return Err(CommandError::from(error)),
         };
         remaining_entries = remaining_entries.saturating_sub(entries.len().max(1));
         index.replace_directory_entries(root, &directory, &entries)?;
-        results = index.search_files(root, query, limit)?;
+        results = search_visible_indexed_files(index, root, query, limit, visibility)?;
     }
 
+    Ok(results)
+}
+
+fn search_visible_indexed_files(
+    index: &workspace_index::WorkspaceIndex,
+    root: &Path,
+    query: &str,
+    limit: usize,
+    visibility: WorkspaceVisibility,
+) -> Result<Vec<workspace::FileEntry>, CommandError> {
+    let search_limit = if visibility.show_dotfiles
+        && visibility.show_generated_internal
+        && visibility.show_gitignored_files
+    {
+        limit
+    } else {
+        limit.saturating_mul(20).max(limit)
+    };
+    let mut results = filter_visible_workspace_entries(
+        root,
+        index.search_files(root, query, search_limit)?,
+        visibility.show_dotfiles,
+        visibility.show_generated_internal,
+        visibility.show_gitignored_files,
+    )?;
+    results.truncate(limit);
     Ok(results)
 }
 
@@ -1059,6 +1107,7 @@ async fn advance_workspace_index(
     entry_limit: Option<usize>,
     show_dotfiles: bool,
     show_generated_internal: bool,
+    show_gitignored_files: bool,
 ) -> Result<workspace_index::WorkspaceIndexStats, CommandError> {
     let workspace_root = workspace_root_for_window(&state, &window).await;
     let entry_limit = entry_limit
@@ -1080,6 +1129,7 @@ async fn advance_workspace_index(
         entry_limit,
         show_dotfiles,
         show_generated_internal,
+        show_gitignored_files,
     )
     .map_err(CommandError::from)
 }
@@ -1748,6 +1798,78 @@ async fn set_workspace_root_path(
     Ok(canonical.to_string_lossy().to_string())
 }
 
+fn new_file_accelerator() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "Ctrl+Alt+N"
+    } else {
+        "Ctrl+Alt+Insert"
+    }
+}
+
+fn synchronize_accelerator() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "Cmd+Alt+Y"
+    } else {
+        "Ctrl+Alt+Y"
+    }
+}
+
+fn close_tab_accelerator() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "Cmd+W"
+    } else {
+        "Ctrl+F4"
+    }
+}
+
+fn close_all_accelerator() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "Cmd+Shift+W"
+    } else {
+        "Ctrl+Shift+F4"
+    }
+}
+
+fn settings_accelerator() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "Cmd+,"
+    } else {
+        "Ctrl+Alt+S"
+    }
+}
+
+fn go_to_definition_accelerator() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "Cmd+B"
+    } else {
+        "Ctrl+B"
+    }
+}
+
+fn command_palette_accelerator() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "Cmd+Shift+A"
+    } else {
+        "Ctrl+Shift+A"
+    }
+}
+
+fn go_to_file_accelerator() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "Cmd+Shift+O"
+    } else {
+        "Ctrl+Shift+N"
+    }
+}
+
+fn go_to_line_accelerator() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "Cmd+L"
+    } else {
+        "Ctrl+G"
+    }
+}
+
 fn rebuild_app_menu(app: &tauri::AppHandle, state: &AppState) -> Result<(), CommandError> {
     let recent_items = state
         .recent_items
@@ -1755,46 +1877,42 @@ fn rebuild_app_menu(app: &tauri::AppHandle, state: &AppState) -> Result<(), Comm
         .map_err(|_| CommandError::Recent("recent items lock poisoned".to_string()))?
         .clone();
     let open_file = MenuItemBuilder::with_id("open_file", "Open File...")
-        .accelerator("CmdOrCtrl+O")
         .build(app)
         .map_err(|error| CommandError::Recent(error.to_string()))?;
     let open_folder = MenuItemBuilder::with_id("open_folder", "Open Folder...")
-        .accelerator("CmdOrCtrl+Shift+O")
         .build(app)
         .map_err(|error| CommandError::Recent(error.to_string()))?;
     let new_file = MenuItemBuilder::with_id("new_file", "New File")
-        .accelerator("CmdOrCtrl+N")
+        .accelerator(new_file_accelerator())
         .build(app)
         .map_err(|error| CommandError::Recent(error.to_string()))?;
     let new_folder = MenuItemBuilder::with_id("new_folder", "New Folder")
-        .accelerator("CmdOrCtrl+Shift+N")
         .build(app)
         .map_err(|error| CommandError::Recent(error.to_string()))?;
     let save_file = MenuItemBuilder::with_id("save_file", "Save")
-        .accelerator("CmdOrCtrl+S")
         .build(app)
         .map_err(|error| CommandError::Recent(error.to_string()))?;
     let save_all = MenuItemBuilder::with_id("save_all", "Save All")
-        .accelerator("CmdOrCtrl+Shift+S")
+        .accelerator("CmdOrCtrl+S")
         .build(app)
         .map_err(|error| CommandError::Recent(error.to_string()))?;
     let reload_file = MenuItemBuilder::with_id("reload_file", "Reload from Disk")
-        .accelerator("CmdOrCtrl+R")
+        .accelerator(synchronize_accelerator())
         .build(app)
         .map_err(|error| CommandError::Recent(error.to_string()))?;
     let rename_selected = MenuItemBuilder::with_id("rename_selected", "Rename Selected")
-        .accelerator("F2")
+        .accelerator("Shift+F6")
         .build(app)
         .map_err(|error| CommandError::Recent(error.to_string()))?;
     let delete_selected = MenuItemBuilder::with_id("delete_selected", "Delete Selected")
         .build(app)
         .map_err(|error| CommandError::Recent(error.to_string()))?;
     let close_tab = MenuItemBuilder::with_id("close_tab", "Close Tab")
-        .accelerator("CmdOrCtrl+W")
+        .accelerator(close_tab_accelerator())
         .build(app)
         .map_err(|error| CommandError::Recent(error.to_string()))?;
     let close_all = MenuItemBuilder::with_id("close_all", "Close All")
-        .accelerator("CmdOrCtrl+Shift+W")
+        .accelerator(close_all_accelerator())
         .build(app)
         .map_err(|error| CommandError::Recent(error.to_string()))?;
 
@@ -1876,7 +1994,7 @@ fn rebuild_app_menu(app: &tauri::AppHandle, state: &AppState) -> Result<(), Comm
         .build(app)
         .map_err(|error| CommandError::Recent(error.to_string()))?;
     let settings = MenuItemBuilder::with_id("show_settings", "Settings...")
-        .accelerator("CmdOrCtrl+,")
+        .accelerator(settings_accelerator())
         .build(app)
         .map_err(|error| CommandError::Recent(error.to_string()))?;
     #[cfg(target_os = "macos")]
@@ -1919,11 +2037,11 @@ fn rebuild_app_menu(app: &tauri::AppHandle, state: &AppState) -> Result<(), Comm
         .build()
         .map_err(|error| CommandError::Recent(error.to_string()))?;
     let go_to_definition = MenuItemBuilder::with_id("go_to_definition", "Go to Definition")
-        .accelerator("F12")
+        .accelerator(go_to_definition_accelerator())
         .build(app)
         .map_err(|error| CommandError::Recent(error.to_string()))?;
     let find_references = MenuItemBuilder::with_id("find_references", "Find References")
-        .accelerator("Shift+F12")
+        .accelerator("Alt+F7")
         .build(app)
         .map_err(|error| CommandError::Recent(error.to_string()))?;
     let navigate_menu = SubmenuBuilder::new(app, "Navigate")
@@ -1932,15 +2050,15 @@ fn rebuild_app_menu(app: &tauri::AppHandle, state: &AppState) -> Result<(), Comm
         .build()
         .map_err(|error| CommandError::Recent(error.to_string()))?;
     let command_palette = MenuItemBuilder::with_id("command_palette", "Command Palette...")
-        .accelerator("CmdOrCtrl+Shift+P")
+        .accelerator(command_palette_accelerator())
         .build(app)
         .map_err(|error| CommandError::Recent(error.to_string()))?;
     let quick_open = MenuItemBuilder::with_id("quick_open", "Go to File...")
-        .accelerator("CmdOrCtrl+P")
+        .accelerator(go_to_file_accelerator())
         .build(app)
         .map_err(|error| CommandError::Recent(error.to_string()))?;
     let go_to_line = MenuItemBuilder::with_id("go_to_line", "Go to Line...")
-        .accelerator("Ctrl+G")
+        .accelerator(go_to_line_accelerator())
         .build(app)
         .map_err(|error| CommandError::Recent(error.to_string()))?;
     let find_in_file = MenuItemBuilder::with_id("find_in_file", "Find in File")
@@ -2947,6 +3065,7 @@ mod tests {
             view: PersistedViewSettings {
                 show_dotfiles: true,
                 show_generated_internal: true,
+                show_gitignored_files: false,
                 show_diagnostics_panel: true,
                 tree_scan_limit: 12_000,
                 max_open_file_kb: 8_192,
@@ -2974,6 +3093,7 @@ mod tests {
         let loaded = load_ui_state(&ui_state_path).unwrap();
         assert!(loaded.view.show_dotfiles);
         assert!(loaded.view.show_generated_internal);
+        assert!(!loaded.view.show_gitignored_files);
         assert!(loaded.view.show_diagnostics_panel);
         assert_eq!(loaded.view.max_open_file_kb, 8_192);
         assert_eq!(loaded.view.workspace_search_result_limit, 750);
@@ -3040,6 +3160,7 @@ mod tests {
         .unwrap();
 
         let loaded = load_ui_state(&ui_state_path).unwrap();
+        assert!(!loaded.view.show_gitignored_files);
         assert_eq!(
             loaded.view.feature_flags.get("gitAttribution"),
             Some(&false)
@@ -3164,12 +3285,84 @@ mod tests {
             .replace_directory_entries(dir.path(), "", &[test_entry("missing", None, true)])
             .unwrap();
 
-        let results =
-            search_indexed_files_with_expansion(&index, dir.path(), "needle", 10, 20, false, false)
-                .unwrap();
+        let results = search_indexed_files_with_expansion(
+            &index,
+            dir.path(),
+            "needle",
+            10,
+            20,
+            WorkspaceVisibility {
+                show_dotfiles: false,
+                show_generated_internal: false,
+                show_gitignored_files: true,
+            },
+        )
+        .unwrap();
 
         assert!(results.is_empty());
         assert!(index.entries_for_root(dir.path()).unwrap().is_empty());
+    }
+
+    #[test]
+    fn indexed_file_search_filters_cached_gitignored_entries_when_hidden() {
+        let dir = tempdir().unwrap();
+        std::fs::create_dir(dir.path().join(".git")).unwrap();
+        std::fs::write(dir.path().join(".gitignore"), "ignored.txt\n").unwrap();
+        std::fs::write(dir.path().join("ignored.txt"), "ignored").unwrap();
+        std::fs::write(dir.path().join("visible.txt"), "visible").unwrap();
+        let index = workspace_index::WorkspaceIndex::new();
+        index
+            .set_database_path(dir.path().join("workspace-index.sqlite"))
+            .unwrap();
+        index
+            .replace_root_entries(
+                dir.path(),
+                &[
+                    test_entry("ignored.txt", None, false),
+                    test_entry("visible.txt", None, false),
+                ],
+            )
+            .unwrap();
+
+        let hidden_results = search_indexed_files_with_expansion(
+            &index,
+            dir.path(),
+            "",
+            10,
+            20,
+            WorkspaceVisibility {
+                show_dotfiles: false,
+                show_generated_internal: false,
+                show_gitignored_files: false,
+            },
+        )
+        .unwrap();
+        let hidden_paths = hidden_results
+            .into_iter()
+            .map(|entry| entry.path)
+            .collect::<Vec<_>>();
+
+        assert_eq!(hidden_paths, vec!["visible.txt"]);
+
+        let shown_results = search_indexed_files_with_expansion(
+            &index,
+            dir.path(),
+            "",
+            10,
+            20,
+            WorkspaceVisibility {
+                show_dotfiles: false,
+                show_generated_internal: false,
+                show_gitignored_files: true,
+            },
+        )
+        .unwrap();
+        let shown_paths = shown_results
+            .into_iter()
+            .map(|entry| entry.path)
+            .collect::<Vec<_>>();
+
+        assert_eq!(shown_paths, vec!["ignored.txt", "visible.txt"]);
     }
 
     fn test_entry(path: &str, parent: Option<&str>, is_dir: bool) -> workspace::FileEntry {

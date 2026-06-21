@@ -514,8 +514,11 @@ async function runScenario(browser, url, colorScheme) {
   await assertTheme(page, colorScheme);
   await assertThemeTransition(page, colorScheme);
 
-  const commandModifier = process.platform === "darwin" ? "Meta" : "Control";
-  await page.keyboard.press(`${commandModifier}+P`);
+  const commandPaletteShortcut = process.platform === "darwin" ? "Meta+Shift+A" : "Control+Shift+A";
+  const goToFileShortcut = process.platform === "darwin" ? "Meta+Shift+O" : "Control+Shift+N";
+  const goToLineShortcut = process.platform === "darwin" ? "Meta+L" : "Control+G";
+
+  await page.keyboard.press(goToFileShortcut);
   await page.getByRole("dialog", { name: "Quick open" }).waitFor();
   await page.locator('input[placeholder="Open file"]').fill("nested");
   await page.getByText("deep/Nested.ts").waitFor();
@@ -523,13 +526,13 @@ async function runScenario(browser, url, colorScheme) {
   await page.locator(".cm-content").waitFor();
   await page.getByText("indexed smoke file").waitFor();
 
-  await page.keyboard.press(`${commandModifier}+Shift+P`);
+  await page.keyboard.press(commandPaletteShortcut);
   await page.getByRole("dialog", { name: "Command palette" }).waitFor();
   await page.locator('input[placeholder="Run command"]').fill("workspace");
   await page.keyboard.press("Enter");
   await page.locator('input[placeholder="Search contents"]').waitFor();
 
-  await page.keyboard.press(`${commandModifier}+Shift+P`);
+  await page.keyboard.press(commandPaletteShortcut);
   await page.getByRole("dialog", { name: "Command palette" }).waitFor();
   await page.locator('input[placeholder="Run command"]').fill("settings");
   await page.keyboard.press("Enter");
@@ -596,7 +599,7 @@ async function runScenario(browser, url, colorScheme) {
       ?.classList.contains("app-shell--sidebar-collapsed");
   });
 
-  await page.keyboard.press("Control+G");
+  await page.keyboard.press(goToLineShortcut);
   await page.getByRole("dialog", { name: "Go to line" }).waitFor();
   await page.getByLabel("Line number").fill("2");
   await page.keyboard.press("Enter");

@@ -333,6 +333,7 @@ describe("hosted Tauri API transport", () => {
       view: {
         showDotfiles: false,
         showGeneratedInternal: false,
+        showGitignoredFiles: false,
         showDiagnosticsPanel: false,
         treeScanLimit: 10000,
         maxOpenFileKb: 5120,
@@ -356,6 +357,7 @@ describe("hosted Tauri API transport", () => {
       {
         showDotfiles: true,
         showGeneratedInternal: true,
+        showGitignoredFiles: false,
         showDiagnosticsPanel: true,
         treeScanLimit: 10000,
         maxOpenFileKb: 5120,
@@ -512,6 +514,7 @@ describe("hosted Tauri API transport", () => {
       entryLimit: 2000,
       showDotfiles: true,
       showGeneratedInternal: true,
+      showGitignoredFiles: false,
     });
   });
 
@@ -582,10 +585,14 @@ describe("hosted Tauri API transport", () => {
 
     await searchIndexedFiles("app", 20);
     await searchIndexedFiles("app", 20, true, true);
+    await searchIndexedFiles("app", 20, false, false, true);
 
     expect(fetchMock.mock.calls[0][0]).toBe("/api/file-search?query=app&limit=20");
     expect(fetchMock.mock.calls[1][0]).toBe(
       "/api/file-search?query=app&limit=20&showDotfiles=true&showGeneratedInternal=true",
+    );
+    expect(fetchMock.mock.calls[2][0]).toBe(
+      "/api/file-search?query=app&limit=20&showGitignoredFiles=true",
     );
   });
 
@@ -599,6 +606,7 @@ describe("hosted Tauri API transport", () => {
     await listFiles(false, true);
     await listFiles(true, true);
     await listFiles(false, false, 8000);
+    await listFiles(false, false, undefined, true);
 
     expect(fetchMock.mock.calls[0][0]).toBe("/api/files");
     expect(fetchMock.mock.calls[1][0]).toBe("/api/files?showDotfiles=true");
@@ -609,6 +617,7 @@ describe("hosted Tauri API transport", () => {
       "/api/files?showDotfiles=true&showGeneratedInternal=true",
     );
     expect(fetchMock.mock.calls[4][0]).toBe("/api/files?treeScanLimit=8000");
+    expect(fetchMock.mock.calls[5][0]).toBe("/api/files?showGitignoredFiles=true");
   });
 
   it("passes visibility settings through hosted directory listing requests", async () => {
@@ -617,9 +626,14 @@ describe("hosted Tauri API transport", () => {
     const { listDirectory } = await import("./tauri");
 
     await listDirectory("src folder", true, true);
+    await listDirectory("src folder", false, false, true);
 
     expect(fetchMock).toHaveBeenCalledWith(
       "/api/directory?path=src+folder&showDotfiles=true&showGeneratedInternal=true",
+      expect.objectContaining({ method: "GET" }),
+    );
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/directory?path=src+folder&showGitignoredFiles=true",
       expect.objectContaining({ method: "GET" }),
     );
   });
@@ -678,6 +692,7 @@ describe("hosted Tauri API transport", () => {
     expect(invoke).toHaveBeenCalledWith("list_files", {
       showDotfiles: true,
       showGeneratedInternal: true,
+      showGitignoredFiles: false,
     });
   });
 
@@ -692,6 +707,7 @@ describe("hosted Tauri API transport", () => {
     expect(invoke).toHaveBeenCalledWith("list_files", {
       showDotfiles: false,
       showGeneratedInternal: false,
+      showGitignoredFiles: false,
       treeScanLimit: 8000,
     });
   });
@@ -793,6 +809,7 @@ describe("hosted Tauri API transport", () => {
       limit: 20,
       showDotfiles: false,
       showGeneratedInternal: false,
+      showGitignoredFiles: false,
     });
   });
 
@@ -808,6 +825,7 @@ describe("hosted Tauri API transport", () => {
       path: "src",
       showDotfiles: true,
       showGeneratedInternal: true,
+      showGitignoredFiles: false,
     });
   });
 
