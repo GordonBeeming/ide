@@ -44,6 +44,7 @@ interface EditorPaneProps {
   path: string;
   contents: string;
   dateTimeFormat?: DateTimeFormatId;
+  editorFontSize?: number;
   recentRelativeThreshold?: RecentRelativeThresholdId;
   prefersDark?: boolean;
   isDirty?: boolean;
@@ -63,6 +64,7 @@ export default function EditorPane({
   path,
   contents,
   dateTimeFormat = defaultDateTimeFormat,
+  editorFontSize = 13,
   recentRelativeThreshold = defaultRecentRelativeThreshold,
   editorCommand,
   gitAttribution,
@@ -176,7 +178,7 @@ export default function EditorPane({
                 emitCursorAndSelection(update.view, path, onCursor, onSelection);
               }
             }),
-            ...editorThemeExtensions(prefersDark),
+            ...editorThemeExtensions(prefersDark, editorFontSize),
           ],
         }),
       });
@@ -195,7 +197,7 @@ export default function EditorPane({
       viewRef.current?.destroy();
       viewRef.current = null;
     };
-  }, [path, prefersDark]);
+  }, [editorFontSize, path, prefersDark]);
 
   useEffect(() => {
     const view = viewRef.current;

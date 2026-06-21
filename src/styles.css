@@ -126,6 +126,7 @@ button {
   overflow: hidden;
   background: var(--bg);
   color-scheme: inherit;
+  zoom: var(--app-zoom, 1);
 }
 
 .app-shell--sidebar-collapsed {

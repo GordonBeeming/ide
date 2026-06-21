@@ -2,43 +2,49 @@ import { oneDark } from "@codemirror/theme-one-dark";
 import { EditorView } from "@codemirror/view";
 import type { Extension } from "@codemirror/state";
 
-export function editorThemeExtensions(prefersDark: boolean): Extension[] {
+export function editorThemeExtensions(
+  prefersDark: boolean,
+  fontSizePx = 13,
+): Extension[] {
+  const highContrastTheme = highContrastEditorTheme(fontSizePx);
   return prefersDark ? [oneDark, highContrastTheme] : [highContrastTheme];
 }
 
-const highContrastTheme = EditorView.theme({
-  "&": {
-    height: "100%",
-    fontSize: "13px",
-    backgroundColor: "var(--editor-bg)",
-    color: "var(--editor-text)",
-  },
-  ".cm-content": {
-    minHeight: "100%",
-  },
-  ".cm-scroller": {
-    fontFamily:
-      "'SF Mono', 'Cascadia Code', 'JetBrains Mono', ui-monospace, monospace",
-    lineHeight: "1.55",
-    backgroundColor: "var(--editor-bg)",
-  },
-  ".cm-gutters": {
-    minHeight: "100%",
-    borderRight: "1px solid var(--border)",
-    backgroundColor: "var(--editor-gutter-bg)",
-    color: "var(--muted)",
-  },
-  ".cm-activeLine": {
-    backgroundColor: "color-mix(in oklch, var(--accent-weak) 34%, transparent)",
-  },
-  ".cm-activeLineGutter": {
-    backgroundColor: "color-mix(in oklch, var(--accent-weak) 46%, transparent)",
-    color: "var(--text)",
-  },
-  ".cm-selectionBackground, &.cm-focused .cm-selectionBackground": {
-    backgroundColor: "color-mix(in oklch, var(--accent) 28%, transparent)",
-  },
-  ".cm-cursor": {
-    borderLeftColor: "var(--accent)",
-  },
-});
+function highContrastEditorTheme(fontSizePx: number) {
+  return EditorView.theme({
+    "&": {
+      height: "100%",
+      fontSize: `${fontSizePx}px`,
+      backgroundColor: "var(--editor-bg)",
+      color: "var(--editor-text)",
+    },
+    ".cm-content": {
+      minHeight: "100%",
+    },
+    ".cm-scroller": {
+      fontFamily:
+        "'SF Mono', 'Cascadia Code', 'JetBrains Mono', ui-monospace, monospace",
+      lineHeight: "1.55",
+      backgroundColor: "var(--editor-bg)",
+    },
+    ".cm-gutters": {
+      minHeight: "100%",
+      borderRight: "1px solid var(--border)",
+      backgroundColor: "var(--editor-gutter-bg)",
+      color: "var(--muted)",
+    },
+    ".cm-activeLine": {
+      backgroundColor: "color-mix(in oklch, var(--accent-weak) 34%, transparent)",
+    },
+    ".cm-activeLineGutter": {
+      backgroundColor: "color-mix(in oklch, var(--accent-weak) 46%, transparent)",
+      color: "var(--text)",
+    },
+    ".cm-selectionBackground, &.cm-focused .cm-selectionBackground": {
+      backgroundColor: "color-mix(in oklch, var(--accent) 28%, transparent)",
+    },
+    ".cm-cursor": {
+      borderLeftColor: "var(--accent)",
+    },
+  });
+}

@@ -345,6 +345,8 @@ describe("hosted Tauri API transport", () => {
         backgroundIndexBatchEntries: 2000,
         workspaceTitleMaxChars: 50,
         commandPaletteResultLimit: 18,
+        editorFontSize: 13,
+        appZoomPercent: 100,
         dateTimeFormat: "localMedium",
         recentRelativeThreshold: "oneWeek",
         featureFlags: {},

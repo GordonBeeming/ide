@@ -173,6 +173,7 @@ vi.mock("./EditorPane", () => ({
     contents,
     dateTimeFormat,
     editorCommand,
+    editorFontSize,
     gitAttribution,
     onChange,
     onCursor,
@@ -184,6 +185,7 @@ vi.mock("./EditorPane", () => ({
     contents: string;
     dateTimeFormat?: import("./dateTimeFormat").DateTimeFormatId;
     editorCommand?: EditorCommandRequest;
+    editorFontSize?: number;
     gitAttribution?: import("./tauri").GitAttribution;
     onChange: (path: string, contents: string) => void;
     onCursor?: (cursor: EditorCursor | undefined) => void;
@@ -219,6 +221,7 @@ vi.mock("./EditorPane", () => ({
           {editorCommand.name}:{editorCommand.nonce}
         </span>
       ) : null}
+      <span data-testid="editor-font-size">{editorFontSize}</span>
       {revealLine ? <span>Reveal line {revealLine}</span> : null}
     </div>
   ),
@@ -1843,6 +1846,34 @@ describe("App shell interactions", () => {
     fireEvent.keyDown(window, { key: "f", ctrlKey: true, shiftKey: true });
 
     expect(await screen.findByPlaceholderText("Search contents")).toHaveFocus();
+  });
+
+  it("zooms the editor and app from keyboard shortcuts", async () => {
+    render(<App />);
+
+    fireEvent.click(await treeButton("README.md"));
+    await findTab("README.md");
+    expect(screen.getByTestId("editor-font-size")).toHaveTextContent("13");
+
+    fireEvent.keyDown(window, { key: "=", ctrlKey: true });
+    expect(await screen.findByText("Editor font size 14px")).toBeInTheDocument();
+    expect(screen.getByTestId("editor-font-size")).toHaveTextContent("14");
+
+    fireEvent.keyDown(window, { key: "+", ctrlKey: true, shiftKey: true });
+    expect(await screen.findByText("App zoom 110%")).toBeInTheDocument();
+    expect(
+      (document.querySelector(".app-shell") as HTMLElement).style.getPropertyValue("--app-zoom"),
+    ).toBe("1.1");
+
+    await waitFor(() =>
+      expect(tauriMocks.updateUiState).toHaveBeenCalledWith(
+        expect.objectContaining({
+          editorFontSize: 14,
+          appZoomPercent: 110,
+        }),
+        expect.any(Object),
+      ),
+    );
   });
 
   it("opens the new file dialog from the IntelliJ new shortcut", async () => {
