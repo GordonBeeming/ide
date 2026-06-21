@@ -26,7 +26,7 @@ use crate::workspace::{
     WorkspaceSearch,
 };
 use crate::workspace_index::{advance_workspace_index, WorkspaceIndex, WorkspaceIndexAdvanceError};
-use crate::{workspace_root_hash, AgentContext, WorkspaceSessionState};
+use crate::{git_attribution, workspace_root_hash, AgentContext, WorkspaceSessionState};
 
 #[derive(Clone)]
 pub struct HttpServerState {
@@ -246,6 +246,7 @@ pub async fn start_http_server(config: HttpServerConfig) -> Result<HttpServerInf
                 .options(cors_preflight),
         )
         .route("/api/file-metadata", get(stat_file))
+        .route("/api/git-attribution", get(get_git_attribution))
         .route("/api/folder", post(create_folder).options(cors_preflight))
         .route(
             "/api/open-path",
@@ -723,6 +724,14 @@ async fn stat_file(
 ) -> Result<Json<FileEntry>, ApiError> {
     let workspace_root = resolved.workspace_root.read().await.clone();
     Ok(Json(workspace_file_entry(&workspace_root, &query.path)?))
+}
+
+async fn get_git_attribution(
+    Extension(resolved): Extension<ResolvedWorkspace>,
+    Query(query): Query<FileQuery>,
+) -> Json<git_attribution::GitAttribution> {
+    let workspace_root = resolved.workspace_root.read().await.clone();
+    Json(git_attribution::attribution_for_file(&workspace_root, &query.path).await)
 }
 
 async fn write_file(

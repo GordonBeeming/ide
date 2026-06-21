@@ -41,6 +41,18 @@ import {
   sortDiagnostics,
 } from "./diagnostics";
 import {
+  dateTimeFormatOptions,
+  defaultDateTimeFormat,
+  defaultRecentRelativeThreshold,
+  formatDateTime,
+  formatDateTimeAbsolute,
+  recentRelativeThresholdOptions,
+  sanitizeDateTimeFormat,
+  sanitizeRecentRelativeThreshold,
+  type DateTimeFormatId,
+  type RecentRelativeThresholdId,
+} from "./dateTimeFormat";
+import {
   currentFileMatches,
   nextCurrentFileMatchIndex,
 } from "./currentFileSearch";
@@ -86,6 +98,7 @@ import {
   deleteFile,
   getClaudeBridgeStatus,
   getCodexMcpStatus,
+  getGitAttribution,
   getHttpEndpoint,
   getInitialFile,
   getAppInfo,
@@ -116,6 +129,8 @@ import {
   type OpenLaunchRequest,
   type PersistedUiSnapshot,
   type SettingsLocations,
+  type GitAttribution,
+  type GitCommitInfo,
   type WorkspaceIndexStats,
   type WorkspaceDisplayContext,
   type WorkspaceUiState,
@@ -453,6 +468,10 @@ export default function App() {
   const [commandPaletteResultLimit, setCommandPaletteResultLimit] = useState(
     defaultCommandPaletteResultLimit,
   );
+  const [dateTimeFormat, setDateTimeFormat] =
+    useState<DateTimeFormatId>(defaultDateTimeFormat);
+  const [recentRelativeThreshold, setRecentRelativeThreshold] =
+    useState<RecentRelativeThresholdId>(defaultRecentRelativeThreshold);
   const [featureFlags, setFeatureFlags] = useState<FeatureFlagOverrides>({});
   const [prefersDark, setPrefersDark] = useState(systemPrefersDark);
   const [uiStateLoaded, setUiStateLoaded] = useState(false);
@@ -472,6 +491,8 @@ export default function App() {
   const [httpEndpoint, setHttpEndpoint] = useState<string>();
   const [codexMcp, setCodexMcp] = useState<CodexMcpStatus>();
   const [claudeBridge, setClaudeBridge] = useState<ClaudeBridgeStatus>();
+  const [gitAttribution, setGitAttribution] = useState<GitAttribution>();
+  const [gitCommitPopover, setGitCommitPopover] = useState<GitCommitInfo>();
   const sidebarFilterInputRef = useRef<HTMLInputElement | null>(null);
   const sidebarContentSearchInputRef = useRef<HTMLInputElement | null>(null);
   const currentFindInputRef = useRef<HTMLInputElement | null>(null);
@@ -498,6 +519,17 @@ export default function App() {
   const hasDirtyFiles = dirtyFiles.length > 0;
   const activeSelection = selection?.filePath === activePath ? selection : undefined;
   const cursorPosition = cursorStatus(activePath, cursor, revealTarget);
+  const gitAttributionEnabled = isFeatureEnabled("gitAttribution", featureFlags);
+  const activeGitAttribution =
+    gitAttributionEnabled &&
+    gitAttribution?.status === "available" &&
+    gitAttribution.path === activePath
+      ? gitAttribution
+      : undefined;
+  const activeGitFileCommit = activeGitAttribution?.file;
+  const gitStatusTitle = activeGitFileCommit
+    ? fullCommitDescription(activeGitFileCommit, dateTimeFormat, recentRelativeThreshold)
+    : undefined;
   const sidebarFiles = useMemo(() => {
     if (!singleFileMode || !singleFilePath) return files;
     const entry =
@@ -652,6 +684,38 @@ export default function App() {
   }, [activeFile]);
 
   useEffect(() => {
+    if (!gitAttributionEnabled || !activePath || !activeFile || activeFile.dirty) {
+      setGitAttribution(undefined);
+      setGitCommitPopover(undefined);
+      return;
+    }
+
+    let disposed = false;
+    const requestedPath = activePath;
+    getGitAttribution(requestedPath)
+      .then((attribution) => {
+        if (disposed || attribution.path !== requestedPath) return;
+        setGitAttribution(attribution);
+      })
+      .catch((reason) => {
+        if (!disposed) {
+          setGitAttribution(undefined);
+          setError(`Unable to load Git attribution: ${String(reason)}`);
+        }
+      });
+
+    return () => {
+      disposed = true;
+    };
+  }, [
+    activeFile,
+    activeFile?.dirty,
+    activeFile?.modifiedMs,
+    activePath,
+    gitAttributionEnabled,
+  ]);
+
+  useEffect(() => {
     let disposed = false;
 
     getWorkspaceDisplayContext(workspaceTitleMaxChars)
@@ -770,6 +834,10 @@ export default function App() {
         maxCommandPaletteResultLimit,
         defaultCommandPaletteResultLimit,
       ),
+    );
+    setDateTimeFormat(sanitizeDateTimeFormat(snapshot.view.dateTimeFormat));
+    setRecentRelativeThreshold(
+      sanitizeRecentRelativeThreshold(snapshot.view.recentRelativeThreshold),
     );
     setFeatureFlags(sanitizeFeatureFlagOverrides(snapshot.view.featureFlags));
     setExpandedFolders(new Set(snapshot.workspace.expandedFolders));
@@ -1312,6 +1380,8 @@ export default function App() {
           quickOpenResultLimit,
           backgroundIndexBatchEntries,
           commandPaletteResultLimit,
+          dateTimeFormat,
+          recentRelativeThreshold,
           featureFlags,
         },
         {
@@ -1345,6 +1415,8 @@ export default function App() {
     quickOpenResultLimit,
     backgroundIndexBatchEntries,
     commandPaletteResultLimit,
+    dateTimeFormat,
+    recentRelativeThreshold,
     featureFlags,
     uiStateLoaded,
     workspaceUiRestored,
@@ -3302,9 +3374,12 @@ export default function App() {
             <Suspense fallback={<div className="empty-state editor-loading-state">Loading editor</div>}>
               <EditorPane
                 contents={activeFile.contents}
+                dateTimeFormat={dateTimeFormat}
                 editorCommand={editorCommand}
+                gitAttribution={activeGitAttribution}
                 path={activeFile.path}
                 prefersDark={prefersDark}
+                recentRelativeThreshold={recentRelativeThreshold}
                 revealLine={
                   revealTarget?.path === activeFile.path ? revealTarget.lineNumber : undefined
                 }
@@ -3316,6 +3391,7 @@ export default function App() {
                 onChange={updateContents}
                 onCursor={setCursor}
                 onError={setError}
+                onGitCommitClick={setGitCommitPopover}
                 onNotice={setStatus}
                 onSelection={setSelection}
               />
@@ -3334,9 +3410,80 @@ export default function App() {
         <footer className="statusbar">
           <span>{status}</span>
           <span>{activePath ?? workspaceRoot}</span>
+          {activeGitFileCommit ? (
+            <button
+              className="statusbar__git-attribution"
+              onClick={() => setGitCommitPopover(activeGitFileCommit)}
+              title={gitStatusTitle}
+              type="button"
+            >
+              <span>Last commit</span>
+              <strong>{activeGitFileCommit.authorName}</strong>
+              <span>
+                {commitTimeLabel(
+                  activeGitFileCommit,
+                  dateTimeFormat,
+                  recentRelativeThreshold,
+                )}
+              </span>
+              <span>{activeGitFileCommit.summary}</span>
+            </button>
+          ) : null}
           <span>{cursorPosition}</span>
         </footer>
       </section>
+
+      {gitCommitPopover ? (
+        <div
+          aria-label="Git commit details"
+          className="git-commit-popover"
+          role="dialog"
+        >
+          <div className="git-commit-popover__header">
+            <span>{gitCommitPopover.shortSha}</span>
+            <button
+              aria-label="Close Git commit details"
+              className="icon-button"
+              onClick={() => setGitCommitPopover(undefined)}
+              type="button"
+            >
+              <X size={14} />
+            </button>
+          </div>
+          <strong>{gitCommitPopover.summary}</strong>
+          <dl>
+            <div>
+              <dt>Author</dt>
+              <dd>{gitCommitPopover.authorName}</dd>
+            </div>
+            <div>
+              <dt>Committed</dt>
+              <dd>
+                {commitDateLabel(
+                  gitCommitPopover,
+                  dateTimeFormat,
+                  recentRelativeThreshold,
+                )}
+              </dd>
+            </div>
+          </dl>
+          {gitCommitPopover.actions.length ? (
+            <div className="git-commit-popover__actions">
+              {gitCommitPopover.actions.map((action) => (
+                <button
+                  className="command-button"
+                  key={`${action.remoteName}:${action.url}`}
+                  onClick={() => window.open(action.url, "_blank", "noopener,noreferrer")}
+                  type="button"
+                >
+                  <ExternalLink size={14} />
+                  <span>{action.label}</span>
+                </button>
+              ))}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
 
       {quickOpenVisible ? (
         <div className="quick-open" role="dialog" aria-label="Quick open">
@@ -3789,6 +3936,44 @@ export default function App() {
                           }}
                         />
                         <span>Show diagnostics panel</span>
+                      </label>
+                      <label className="settings-row settings-row--stacked">
+                        <span>Date and time format</span>
+                        <select
+                          aria-label="Date and time format"
+                          value={dateTimeFormat}
+                          onChange={(event) => {
+                            const nextFormat = sanitizeDateTimeFormat(event.target.value);
+                            setDateTimeFormat(nextFormat);
+                            setStatus("Updated date and time format");
+                          }}
+                        >
+                          {dateTimeFormatOptions.map((option) => (
+                            <option key={option.id} value={option.id}>
+                              {option.label} - {option.sample}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label className="settings-row settings-row--stacked">
+                        <span>Show recent dates as relative</span>
+                        <select
+                          aria-label="Show recent dates as relative"
+                          value={recentRelativeThreshold}
+                          onChange={(event) => {
+                            const nextThreshold = sanitizeRecentRelativeThreshold(
+                              event.target.value,
+                            );
+                            setRecentRelativeThreshold(nextThreshold);
+                            setStatus("Updated recent date display");
+                          }}
+                        >
+                          {recentRelativeThresholdOptions.map((option) => (
+                            <option key={option.id} value={option.id}>
+                              {option.label}
+                            </option>
+                          ))}
+                        </select>
                       </label>
                     </section>
                   ) : null}
@@ -4796,6 +4981,53 @@ const intellijShortcuts: Record<ShortcutAction, { mac: ShortcutPattern; other: S
 
 function currentPlatformShortcut(shortcut: PlatformShortcut) {
   return isMacPlatform() ? shortcut.mac : shortcut.other;
+}
+
+function commitTimeLabel(
+  commit: GitCommitInfo,
+  dateTimeFormat: DateTimeFormatId,
+  recentRelativeThreshold: RecentRelativeThresholdId,
+) {
+  if (commit.authoredAtSeconds === undefined) return "";
+  return formatDateTime(
+    commit.authoredAtSeconds * 1000,
+    dateTimeFormat,
+    recentRelativeThreshold,
+  );
+}
+
+function commitDateLabel(
+  commit: GitCommitInfo,
+  dateTimeFormat: DateTimeFormatId,
+  recentRelativeThreshold: RecentRelativeThresholdId,
+) {
+  if (commit.authoredAtSeconds === undefined) return "Unknown";
+  return formatDateTime(
+    commit.authoredAtSeconds * 1000,
+    dateTimeFormat,
+    recentRelativeThreshold,
+  );
+}
+
+function fullCommitDescription(
+  commit: GitCommitInfo,
+  dateTimeFormat: DateTimeFormatId,
+  recentRelativeThreshold: RecentRelativeThresholdId,
+) {
+  const time = commitTimeLabel(commit, dateTimeFormat, recentRelativeThreshold);
+  const date = formatDateTimeAbsolute(
+    commit.authoredAtSeconds === undefined
+      ? undefined
+      : commit.authoredAtSeconds * 1000,
+  );
+  return [
+    `${commit.authorName}${time ? `, ${time}` : ""}`,
+    commit.shortSha,
+    date,
+    commit.summary,
+  ]
+    .filter(Boolean)
+    .join(" - ");
 }
 
 function isMacPlatform() {

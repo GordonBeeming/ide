@@ -85,6 +85,7 @@ const tauriMocks = vi.hoisted(() => ({
   getHttpEndpoint: vi.fn(),
   getClaudeBridgeStatus: vi.fn(),
   getCodexMcpStatus: vi.fn(),
+  getGitAttribution: vi.fn(),
 }));
 
 const appWindowMocks = vi.hoisted(() => ({
@@ -149,6 +150,7 @@ vi.mock("./tauri", async () => {
     getHttpEndpoint: tauriMocks.getHttpEndpoint,
     getClaudeBridgeStatus: tauriMocks.getClaudeBridgeStatus,
     getCodexMcpStatus: tauriMocks.getCodexMcpStatus,
+    getGitAttribution: tauriMocks.getGitAttribution,
   };
 });
 
@@ -169,17 +171,23 @@ vi.mock("./appWindow", () => ({
 vi.mock("./EditorPane", () => ({
   default: ({
     contents,
+    dateTimeFormat,
     editorCommand,
+    gitAttribution,
     onChange,
     onCursor,
+    onGitCommitClick,
     onSelection,
     path,
     revealLine,
   }: {
     contents: string;
+    dateTimeFormat?: import("./dateTimeFormat").DateTimeFormatId;
     editorCommand?: EditorCommandRequest;
+    gitAttribution?: import("./tauri").GitAttribution;
     onChange: (path: string, contents: string) => void;
     onCursor?: (cursor: EditorCursor | undefined) => void;
+    onGitCommitClick?: (commit: import("./tauri").GitCommitInfo) => void;
     onSelection: (selection: EditorSelection | undefined) => void;
     path: string;
     revealLine?: number;
@@ -201,6 +209,11 @@ vi.mock("./EditorPane", () => ({
           })
         }
       />
+      {gitAttribution?.lines[0] ? (
+        <button onClick={() => onGitCommitClick?.(gitAttribution.lines[0].commit)}>
+          {dateTimeFormat} - {gitAttribution.lines[0].commit.authorName} - {gitAttribution.lines[0].commit.summary}
+        </button>
+      ) : null}
       {editorCommand ? (
         <span data-testid="editor-command">
           {editorCommand.name}:{editorCommand.nonce}
@@ -317,6 +330,12 @@ describe("App shell interactions", () => {
     tauriMocks.getHttpEndpoint.mockResolvedValue("http://127.0.0.1:1420");
     tauriMocks.getClaudeBridgeStatus.mockResolvedValue(undefined);
     tauriMocks.getCodexMcpStatus.mockResolvedValue(undefined);
+    tauriMocks.getGitAttribution.mockResolvedValue({
+      path: "README.md",
+      status: "unsupported",
+      unsupportedReason: "File is not tracked by Git",
+      lines: [],
+    });
   });
 
   afterEach(() => {
@@ -862,12 +881,51 @@ describe("App shell interactions", () => {
     expect(screen.getByLabelText("Show dotfiles and dot folders")).toBeInTheDocument();
     expect(screen.getByLabelText("Show diagnostics panel")).toBeInTheDocument();
     expect(screen.queryByLabelText("Initial tree scan entries")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Date and time format")).toBeInTheDocument();
+    expect(screen.getByLabelText("Show recent dates as relative")).toBeInTheDocument();
 
     selectSettingsTab("Performance");
 
     expect(screen.getByLabelText("Initial tree scan entries")).toBeInTheDocument();
     expect(screen.queryByLabelText("Show dotfiles and dot folders")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Date and time format")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Show recent dates as relative")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Show diagnostics panel")).not.toBeInTheDocument();
+  });
+
+  it("persists the selected date and time display settings", async () => {
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    render(<App />);
+
+    expect(await treeButton("README.md")).toBeInTheDocument();
+    await openSettingsDialog();
+
+    fireEvent.change(screen.getByLabelText("Date and time format"), {
+      target: { value: "yyyyMmDdHhMm" },
+    });
+
+    await waitFor(() =>
+      expect(tauriMocks.updateUiState).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          dateTimeFormat: "yyyyMmDdHhMm",
+        }),
+        expect.anything(),
+      ),
+    );
+
+    fireEvent.change(screen.getByLabelText("Show recent dates as relative"), {
+      target: { value: "twoDays" },
+    });
+
+    await waitFor(() =>
+      expect(tauriMocks.updateUiState).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          dateTimeFormat: "yyyyMmDdHhMm",
+          recentRelativeThreshold: "twoDays",
+        }),
+        expect.anything(),
+      ),
+    );
   });
 
   it("shows preview feature flags and persists a toggle", async () => {
@@ -913,6 +971,76 @@ describe("App shell interactions", () => {
     selectSettingsTab("Preview Features");
 
     expect(await screen.findByLabelText("Git attribution")).toBeChecked();
+  });
+
+  it("does not request Git attribution while the preview flag is disabled", async () => {
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    render(<App />);
+
+    fireEvent.doubleClick(await treeButton("README.md"));
+
+    await screen.findByLabelText("Editor README.md");
+    expect(tauriMocks.getGitAttribution).not.toHaveBeenCalled();
+  });
+
+  it("shows last commit attribution in the status bar when enabled", async () => {
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    tauriMocks.getUiState.mockResolvedValueOnce({
+      view: {
+        showDotfiles: false,
+        showGeneratedInternal: false,
+        featureFlags: { gitAttribution: true },
+      },
+      workspace: {
+        expandedFolders: [],
+        openFiles: ["README.md"],
+        activeFile: "README.md",
+      },
+    });
+    tauriMocks.getGitAttribution.mockResolvedValueOnce({
+      path: "README.md",
+      status: "available",
+      file: {
+        sha: "abc123456789",
+        shortSha: "abc12345",
+        authorName: "Gordon Beeming",
+        authoredAtSeconds: Math.floor(Date.now() / 1000) - 3600,
+        summary: "Add readme",
+        actions: [
+          {
+            provider: "GitHub",
+            remoteName: "origin",
+            label: "Open in GitHub",
+            url: "https://github.com/GordonBeeming/ide/commit/abc123456789",
+          },
+        ],
+      },
+      lines: [
+        {
+          lineNumber: 1,
+          commit: {
+            sha: "abc123456789",
+            shortSha: "abc12345",
+            authorName: "Gordon Beeming",
+            authoredAtSeconds: Math.floor(Date.now() / 1000) - 3600,
+            summary: "Add readme",
+            actions: [],
+          },
+        },
+      ],
+    });
+
+    render(<App />);
+
+    expect(await screen.findByText("Last commit")).toBeInTheDocument();
+    expect(screen.getByText("Gordon Beeming")).toBeInTheDocument();
+    expect(screen.getByText("Add readme")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByText("Last commit"));
+
+    expect(await screen.findByRole("dialog", { name: "Git commit details" })).toBeInTheDocument();
+    expect(screen.getByText("abc12345")).toBeInTheDocument();
+    expect(screen.getByText("Open in GitHub")).toBeInTheDocument();
   });
 
   it("shows OS storage paths from Settings", async () => {
