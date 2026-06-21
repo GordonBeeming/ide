@@ -1,6 +1,7 @@
 import {
   type CSSProperties,
   type KeyboardEvent as ReactKeyboardEvent,
+  type PointerEvent as ReactPointerEvent,
   lazy,
   Suspense,
   useCallback,
@@ -298,6 +299,10 @@ const minAppZoomPercent = 80;
 const maxAppZoomPercent = 160;
 const defaultAppZoomPercent = 100;
 const appZoomStepPercent = 10;
+const minSidebarWidth = 180;
+const maxSidebarWidth = 520;
+const defaultSidebarWidth = 288;
+const sidebarWidthStep = 16;
 
 function sanitizeNumberLimit(
   value: number | undefined,
@@ -439,6 +444,7 @@ export default function App() {
   const [pendingDeletePath, setPendingDeletePath] = useState<string>();
   const [pendingReloadPath, setPendingReloadPath] = useState<string>();
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [sidebarWidth, setSidebarWidth] = useState(defaultSidebarWidth);
   const [pendingClosePath, setPendingClosePath] = useState<string>();
   const [pendingCloseAll, setPendingCloseAll] = useState(false);
   const [pendingAppClose, setPendingAppClose] = useState(false);
@@ -522,6 +528,9 @@ export default function App() {
   const skipNextUiStatePersistRef = useRef(false);
   const uiPersistTimerRef = useRef<number | undefined>(undefined);
   const editorCommandNonceRef = useRef(0);
+  const sidebarResizeRef = useRef<{ startX: number; startWidth: number } | undefined>(
+    undefined,
+  );
 
   const activeFile = openFiles.find((file) => file.path === activePath);
   const pendingCloseFile = openFiles.find((file) => file.path === pendingClosePath);
@@ -879,6 +888,14 @@ export default function App() {
     setFeatureFlags(sanitizeFeatureFlagOverrides(snapshot.view.featureFlags));
     setExpandedFolders(new Set(snapshot.workspace.expandedFolders));
     setSelectedPath(snapshot.workspace.selectedPath);
+    setSidebarWidth(
+      sanitizeNumberLimit(
+        snapshot.workspace.sidebarWidth,
+        minSidebarWidth,
+        maxSidebarWidth,
+        defaultSidebarWidth,
+      ),
+    );
   }, []);
 
   const loadPersistedUiState = useCallback(async () => {
@@ -1428,6 +1445,7 @@ export default function App() {
           openFiles: openFiles.map((file) => file.path),
           activeFile: activePath,
           selectedPath,
+          sidebarWidth,
         },
       ).catch((reason) => {
         setError(`Unable to save UI state: ${String(reason)}`);
@@ -1440,6 +1458,7 @@ export default function App() {
     expandedFolders,
     openFilePathSignature,
     selectedPath,
+    sidebarWidth,
     showDotfiles,
     showGeneratedInternal,
     showGitignoredFiles,
@@ -1599,6 +1618,58 @@ export default function App() {
       return next;
     });
   }, []);
+
+  const setBoundedSidebarWidth = useCallback((value: number) => {
+    setSidebarWidth(
+      sanitizeNumberLimit(
+        value,
+        minSidebarWidth,
+        maxSidebarWidth,
+        defaultSidebarWidth,
+      ),
+    );
+  }, []);
+
+  const beginSidebarResize = useCallback(
+    (event: ReactPointerEvent<HTMLButtonElement>) => {
+      if (sidebarCollapsed) return;
+      event.preventDefault();
+      sidebarResizeRef.current = {
+        startX: event.clientX,
+        startWidth: sidebarWidth,
+      };
+    },
+    [sidebarCollapsed, sidebarWidth],
+  );
+
+  const handleSidebarResizeKeyDown = useCallback(
+    (event: ReactKeyboardEvent<HTMLButtonElement>) => {
+      if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+      event.preventDefault();
+      const direction = event.key === "ArrowRight" ? 1 : -1;
+      setBoundedSidebarWidth(sidebarWidth + direction * sidebarWidthStep);
+    },
+    [setBoundedSidebarWidth, sidebarWidth],
+  );
+
+  useEffect(() => {
+    const handlePointerMove = (event: PointerEvent) => {
+      const resize = sidebarResizeRef.current;
+      if (!resize) return;
+      const appZoom = appZoomPercent / 100;
+      setBoundedSidebarWidth(resize.startWidth + (event.clientX - resize.startX) / appZoom);
+    };
+    const handlePointerUp = () => {
+      sidebarResizeRef.current = undefined;
+    };
+
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", handlePointerUp);
+    return () => {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", handlePointerUp);
+    };
+  }, [appZoomPercent, setBoundedSidebarWidth]);
 
   const openNewFileDialog = useCallback(() => {
     setError(undefined);
@@ -3108,6 +3179,8 @@ export default function App() {
   const SidebarIcon = sidebarCollapsed ? PanelLeftOpen : PanelLeftClose;
   const appShellStyle = {
     "--app-zoom": String(appZoomPercent / 100),
+    "--app-zoom-inverse": String(100 / appZoomPercent),
+    "--sidebar-width": `${sidebarWidth}px`,
   } as CSSProperties;
 
   return (
@@ -3350,6 +3423,18 @@ export default function App() {
           </div>
         ) : null}
 
+        <button
+          className="sidebar-resizer"
+          type="button"
+          aria-label="Resize sidebar"
+          aria-orientation="vertical"
+          aria-valuemin={minSidebarWidth}
+          aria-valuemax={maxSidebarWidth}
+          aria-valuenow={sidebarWidth}
+          disabled={sidebarCollapsed}
+          onKeyDown={handleSidebarResizeKeyDown}
+          onPointerDown={beginSidebarResize}
+        />
       </aside>
 
       <section className="workbench">

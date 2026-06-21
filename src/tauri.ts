@@ -171,6 +171,7 @@ export interface WorkspaceUiState {
   openFiles: string[];
   activeFile?: string;
   selectedPath?: string;
+  sidebarWidth?: number;
 }
 
 export interface PersistedUiSnapshot {

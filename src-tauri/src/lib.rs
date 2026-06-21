@@ -272,6 +272,8 @@ const MAX_EDITOR_FONT_SIZE: usize = 24;
 const MIN_APP_ZOOM_PERCENT: usize = 80;
 const DEFAULT_APP_ZOOM_PERCENT: usize = 100;
 const MAX_APP_ZOOM_PERCENT: usize = 160;
+const MIN_SIDEBAR_WIDTH: usize = 180;
+const MAX_SIDEBAR_WIDTH: usize = 520;
 const CODEX_MCP_TOKEN_FILE: &str = "codex-mcp-token";
 const DEFAULT_DATE_TIME_FORMAT: &str = "localMedium";
 const DEFAULT_RECENT_RELATIVE_THRESHOLD: &str = "oneWeek";
@@ -413,6 +415,8 @@ struct PersistedWorkspaceUiState {
     open_files: Vec<String>,
     active_file: Option<String>,
     selected_path: Option<String>,
+    #[serde(default)]
+    sidebar_width: Option<usize>,
     updated_at: u128,
 }
 
@@ -423,6 +427,7 @@ struct WorkspaceUiStatePayload {
     open_files: Vec<String>,
     active_file: Option<String>,
     selected_path: Option<String>,
+    sidebar_width: Option<usize>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -1162,6 +1167,7 @@ async fn update_ui_state(
         open_files: std::mem::take(&mut workspace.open_files),
         active_file: workspace.active_file.take(),
         selected_path: workspace.selected_path.take(),
+        sidebar_width: workspace.sidebar_width,
         updated_at: now_ms(),
     };
     ui_state
@@ -2258,6 +2264,7 @@ fn workspace_ui_snapshot_for_root(
             open_files: workspace.open_files.clone(),
             active_file: workspace.active_file.clone(),
             selected_path: workspace.selected_path.clone(),
+            sidebar_width: workspace.sidebar_width,
         })
         .unwrap_or_default();
     Ok(PersistedUiSnapshot { view, workspace })
@@ -2286,12 +2293,16 @@ fn sanitize_workspace_ui_state(state: WorkspaceUiStatePayload) -> WorkspaceUiSta
     let selected_path = state
         .selected_path
         .filter(|path| is_safe_relative_path(path));
+    let sidebar_width = state
+        .sidebar_width
+        .map(|width| width.clamp(MIN_SIDEBAR_WIDTH, MAX_SIDEBAR_WIDTH));
 
     WorkspaceUiStatePayload {
         expanded_folders,
         open_files,
         active_file,
         selected_path,
+        sidebar_width,
     }
 }
 
@@ -3030,6 +3041,7 @@ mod tests {
                     open_files: Vec::new(),
                     active_file: None,
                     selected_path: None,
+                    sidebar_width: None,
                     updated_at: 1,
                 },
                 PersistedWorkspaceUiState {
@@ -3038,6 +3050,7 @@ mod tests {
                     open_files: Vec::new(),
                     active_file: None,
                     selected_path: None,
+                    sidebar_width: None,
                     updated_at: 2,
                 },
             ],
@@ -3125,6 +3138,7 @@ mod tests {
             ],
             active_file: Some("src/App.tsx".to_string()),
             selected_path: Some("/tmp".to_string()),
+            sidebar_width: Some(999),
         });
 
         assert_eq!(workspace.expanded_folders, vec!["src".to_string()]);
@@ -3134,6 +3148,7 @@ mod tests {
         );
         assert_eq!(workspace.active_file, Some("src/App.tsx".to_string()));
         assert_eq!(workspace.selected_path, None);
+        assert_eq!(workspace.sidebar_width, Some(MAX_SIDEBAR_WIDTH));
 
         *state.ui_state.write().unwrap() = AppUiState {
             view: PersistedViewSettings {
@@ -3163,6 +3178,7 @@ mod tests {
                 open_files: workspace.open_files,
                 active_file: workspace.active_file,
                 selected_path: workspace.selected_path,
+                sidebar_width: workspace.sidebar_width,
                 updated_at: 123,
             }],
         };

@@ -120,9 +120,10 @@ button {
 
 .app-shell {
   display: grid;
-  grid-template-columns: 288px minmax(0, 1fr);
-  height: 100dvh;
-  max-height: 100dvh;
+  grid-template-columns: var(--sidebar-width, 288px) minmax(0, 1fr);
+  width: calc(100vw * var(--app-zoom-inverse, 1));
+  height: calc(100dvh * var(--app-zoom-inverse, 1));
+  max-height: calc(100dvh * var(--app-zoom-inverse, 1));
   overflow: hidden;
   background: var(--bg);
   color-scheme: inherit;
@@ -134,6 +135,7 @@ button {
 }
 
 .sidebar {
+  position: relative;
   display: flex;
   min-width: 0;
   min-height: 0;
@@ -142,6 +144,38 @@ button {
   flex-direction: column;
   border-right: 1px solid var(--border);
   background: var(--panel);
+}
+
+.sidebar-resizer {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 3;
+  width: 8px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: col-resize;
+}
+
+.sidebar-resizer::after {
+  position: absolute;
+  top: 0;
+  right: 3px;
+  bottom: 0;
+  width: 2px;
+  background: transparent;
+  content: "";
+}
+
+.sidebar-resizer:hover::after,
+.sidebar-resizer:focus-visible::after {
+  background: var(--accent);
+}
+
+.sidebar-resizer:disabled {
+  cursor: default;
 }
 
 .sidebar__header {

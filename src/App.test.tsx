@@ -1864,6 +1864,11 @@ describe("App shell interactions", () => {
     expect(
       (document.querySelector(".app-shell") as HTMLElement).style.getPropertyValue("--app-zoom"),
     ).toBe("1.1");
+    expect(
+      (document.querySelector(".app-shell") as HTMLElement).style.getPropertyValue(
+        "--app-zoom-inverse",
+      ),
+    ).toBe(String(100 / 110));
 
     await waitFor(() =>
       expect(tauriMocks.updateUiState).toHaveBeenCalledWith(
@@ -1872,6 +1877,26 @@ describe("App shell interactions", () => {
           appZoomPercent: 110,
         }),
         expect.any(Object),
+      ),
+    );
+  });
+
+  it("resizes the sidebar and persists the workspace width", async () => {
+    render(<App />);
+
+    expect(await treeButton("README.md")).toBeInTheDocument();
+    const shell = document.querySelector(".app-shell") as HTMLElement;
+    expect(shell.style.getPropertyValue("--sidebar-width")).toBe("288px");
+
+    fireEvent.keyDown(screen.getByRole("button", { name: "Resize sidebar" }), {
+      key: "ArrowRight",
+    });
+
+    expect(shell.style.getPropertyValue("--sidebar-width")).toBe("304px");
+    await waitFor(() =>
+      expect(tauriMocks.updateUiState).toHaveBeenCalledWith(
+        expect.any(Object),
+        expect.objectContaining({ sidebarWidth: 304 }),
       ),
     );
   });
