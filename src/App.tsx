@@ -423,7 +423,7 @@ export default function App() {
   const [settingsCategory, setSettingsCategory] = useState<SettingsCategory>("view");
   const [showDotfiles, setShowDotfiles] = useState(false);
   const [showGeneratedInternal, setShowGeneratedInternal] = useState(false);
-  const [showGitignoredFiles, setShowGitignoredFiles] = useState(true);
+  const [showGitignoredFiles, setShowGitignoredFiles] = useState(false);
   const [showDiagnosticsPanel, setShowDiagnosticsPanel] = useState(false);
   const [treeScanLimit, setTreeScanLimit] = useState(defaultTreeScanLimit);
   const [maxOpenFileKb, setMaxOpenFileKb] = useState(defaultMaxOpenFileKb);
@@ -704,7 +704,7 @@ export default function App() {
     setWorkspaceUiRestored(false);
     setShowDotfiles(snapshot.view.showDotfiles);
     setShowGeneratedInternal(snapshot.view.showGeneratedInternal);
-    setShowGitignoredFiles(snapshot.view.showGitignoredFiles ?? true);
+    setShowGitignoredFiles(snapshot.view.showGitignoredFiles ?? false);
     setShowDiagnosticsPanel(Boolean(snapshot.view.showDiagnosticsPanel));
     setTreeScanLimit(sanitizeTreeScanLimit(snapshot.view.treeScanLimit));
     setMaxOpenFileKb(
@@ -4800,7 +4800,9 @@ function currentPlatformShortcut(shortcut: PlatformShortcut) {
 
 function isMacPlatform() {
   if (typeof navigator === "undefined") return false;
-  return /mac|iphone|ipad|ipod/i.test(navigator.platform);
+  const platform = navigator.platform || "";
+  const userAgent = navigator.userAgent || "";
+  return /mac|iphone|ipad|ipod/i.test(platform) || /macintosh|mac os x/i.test(userAgent);
 }
 
 function isIntellijShortcut(event: KeyboardEvent, action: ShortcutAction) {
@@ -4812,9 +4814,16 @@ function matchesShortcut(event: KeyboardEvent, pattern: ShortcutPattern) {
   const keys = Array.isArray(pattern.key) ? pattern.key : [pattern.key];
   const eventKey = event.key.length === 1 ? event.key.toLowerCase() : event.key;
   const expectedKeys = keys.map((key) => (key.length === 1 ? key.toLowerCase() : key));
+  let keyMatches = expectedKeys.includes(eventKey);
+
+  if (!keyMatches && event.altKey && isMacPlatform()) {
+    keyMatches = keys.some(
+      (key) => /^[a-z]$/i.test(key) && event.code === `Key${key.toUpperCase()}`,
+    );
+  }
 
   return (
-    expectedKeys.includes(eventKey) &&
+    keyMatches &&
     event.metaKey === Boolean(pattern.meta) &&
     event.ctrlKey === Boolean(pattern.ctrl) &&
     event.altKey === Boolean(pattern.alt) &&

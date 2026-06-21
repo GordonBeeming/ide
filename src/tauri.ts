@@ -168,7 +168,7 @@ const defaultUiSnapshot: PersistedUiSnapshot = {
   view: {
     showDotfiles: false,
     showGeneratedInternal: false,
-    showGitignoredFiles: true,
+    showGitignoredFiles: false,
     showDiagnosticsPanel: false,
     treeScanLimit: 10000,
     maxOpenFileKb: 5120,
@@ -274,13 +274,13 @@ export function advanceWorkspaceIndex(
   entryLimit?: number,
   showDotfiles = false,
   showGeneratedInternal = false,
-  showGitignoredFiles = true,
+  showGitignoredFiles = false,
 ) {
   const params = new URLSearchParams();
   if (entryLimit !== undefined) params.set("entryLimit", String(entryLimit));
   if (showDotfiles) params.set("showDotfiles", "true");
   if (showGeneratedInternal) params.set("showGeneratedInternal", "true");
-  if (!showGitignoredFiles) params.set("showGitignoredFiles", "false");
+  if (showGitignoredFiles) params.set("showGitignoredFiles", "true");
   const path = params.toString()
     ? `/api/workspace-index/advance?${params.toString()}`
     : "/api/workspace-index/advance";
@@ -347,12 +347,12 @@ export function listFiles(
   showDotfiles = false,
   showGeneratedInternal = false,
   treeScanLimit?: number,
-  showGitignoredFiles = true,
+  showGitignoredFiles = false,
 ) {
   const params = new URLSearchParams();
   if (showDotfiles) params.set("showDotfiles", "true");
   if (showGeneratedInternal) params.set("showGeneratedInternal", "true");
-  if (!showGitignoredFiles) params.set("showGitignoredFiles", "false");
+  if (showGitignoredFiles) params.set("showGitignoredFiles", "true");
   if (treeScanLimit !== undefined) params.set("treeScanLimit", String(treeScanLimit));
   const query = params.toString();
   const path = query ? `/api/files?${query}` : "/api/files";
@@ -405,12 +405,12 @@ export function listDirectory(
   path: string,
   showDotfiles = false,
   showGeneratedInternal = false,
-  showGitignoredFiles = true,
+  showGitignoredFiles = false,
 ) {
   const params = new URLSearchParams({ path });
   if (showDotfiles) params.set("showDotfiles", "true");
   if (showGeneratedInternal) params.set("showGeneratedInternal", "true");
-  if (!showGitignoredFiles) params.set("showGitignoredFiles", "false");
+  if (showGitignoredFiles) params.set("showGitignoredFiles", "true");
   return callApi<unknown>("list_directory", `/api/directory?${params.toString()}`, {
     invokeArgs: { path, showDotfiles, showGeneratedInternal, showGitignoredFiles },
   }).then((entries) => {
@@ -555,7 +555,7 @@ export function searchIndexedFiles(
   limit?: number,
   showDotfiles = false,
   showGeneratedInternal = false,
-  showGitignoredFiles = true,
+  showGitignoredFiles = false,
 ) {
   const params = new URLSearchParams();
   const trimmedQuery = query.trim();
@@ -563,7 +563,7 @@ export function searchIndexedFiles(
   if (limit !== undefined) params.set("limit", String(limit));
   if (showDotfiles) params.set("showDotfiles", "true");
   if (showGeneratedInternal) params.set("showGeneratedInternal", "true");
-  if (!showGitignoredFiles) params.set("showGitignoredFiles", "false");
+  if (showGitignoredFiles) params.set("showGitignoredFiles", "true");
   const requestPath = params.toString()
     ? `/api/file-search?${params.toString()}`
     : "/api/file-search";

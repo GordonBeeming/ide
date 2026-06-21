@@ -435,7 +435,7 @@ describe("App shell interactions", () => {
           2000,
           false,
           false,
-          true,
+          false,
         ),
       { timeout: 1500 },
     );
@@ -653,7 +653,7 @@ describe("App shell interactions", () => {
 
     fireEvent.click(await treeButton("src"));
 
-    expect(tauriMocks.listDirectory).toHaveBeenCalledWith("src", false, false, true);
+    expect(tauriMocks.listDirectory).toHaveBeenCalledWith("src", false, false, false);
     expect(await treeButton("App.tsx")).toBeInTheDocument();
   });
 
@@ -745,7 +745,7 @@ describe("App shell interactions", () => {
     render(<App />);
 
     await waitFor(() =>
-      expect(tauriMocks.listFiles).toHaveBeenCalledWith(true, true, 12000, true),
+      expect(tauriMocks.listFiles).toHaveBeenCalledWith(true, true, 12000, false),
     );
     expect(await treeButton("App.tsx")).toHaveClass("tree-row--active");
     const tab = await findTab("src/App.tsx");
@@ -971,7 +971,7 @@ describe("App shell interactions", () => {
     fireEvent.click(await screen.findByLabelText("Show dotfiles and dot folders"));
 
     await waitFor(() =>
-      expect(tauriMocks.listFiles).toHaveBeenLastCalledWith(true, false, 10000, true),
+      expect(tauriMocks.listFiles).toHaveBeenLastCalledWith(true, false, 10000, false),
     );
     await waitFor(() =>
       expect(tauriMocks.updateUiState).toHaveBeenLastCalledWith(
@@ -1009,7 +1009,7 @@ describe("App shell interactions", () => {
     fireEvent.click(await screen.findByLabelText("Show generated and internal folders"));
 
     await waitFor(() =>
-      expect(tauriMocks.listFiles).toHaveBeenLastCalledWith(false, true, 10000, true),
+      expect(tauriMocks.listFiles).toHaveBeenLastCalledWith(false, true, 10000, false),
     );
     await waitFor(() =>
       expect(tauriMocks.updateUiState).toHaveBeenLastCalledWith(
@@ -1025,7 +1025,7 @@ describe("App shell interactions", () => {
     expect(await treeButton("node_modules")).toBeInTheDocument();
   });
 
-  it("reloads the tree when gitignored files are hidden from Settings", async () => {
+  it("reloads the tree when gitignored files are shown from Settings", async () => {
     (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
     const configFile = {
       path: "config.json",
@@ -1037,29 +1037,30 @@ describe("App shell interactions", () => {
       modifiedMs: 404,
     };
     tauriMocks.listFiles
-      .mockResolvedValueOnce([...files, configFile])
-      .mockResolvedValueOnce(files);
+      .mockResolvedValueOnce(files)
+      .mockResolvedValueOnce([...files, configFile]);
 
     render(<App />);
 
-    expect(await treeButton("config.json")).toBeInTheDocument();
+    expect(await treeButton("README.md")).toBeInTheDocument();
     await openSettingsDialog();
     fireEvent.click(await screen.findByLabelText("Show gitignored files"));
 
     await waitFor(() =>
-      expect(tauriMocks.listFiles).toHaveBeenLastCalledWith(false, false, 10000, false),
+      expect(tauriMocks.listFiles).toHaveBeenLastCalledWith(false, false, 10000, true),
     );
     await waitFor(() =>
       expect(tauriMocks.updateUiState).toHaveBeenLastCalledWith(
         expect.objectContaining({
           showDotfiles: false,
           showGeneratedInternal: false,
-          showGitignoredFiles: false,
+          showGitignoredFiles: true,
           treeScanLimit: 10000,
         }),
         expect.any(Object),
       ),
     );
+    expect(await treeButton("config.json")).toBeInTheDocument();
   });
 
   it("applies the tree scan limit from Settings", async () => {
@@ -1077,7 +1078,7 @@ describe("App shell interactions", () => {
     });
 
     await waitFor(() =>
-      expect(tauriMocks.listFiles).toHaveBeenLastCalledWith(false, false, 8000, true),
+      expect(tauriMocks.listFiles).toHaveBeenLastCalledWith(false, false, 8000, false),
     );
     await waitFor(() =>
       expect(tauriMocks.updateUiState).toHaveBeenLastCalledWith(
@@ -1553,7 +1554,7 @@ describe("App shell interactions", () => {
         12,
         false,
         false,
-        true,
+        false,
       ),
     );
     expect(await screen.findByText("deep/Nested.ts")).toBeInTheDocument();
@@ -1617,6 +1618,28 @@ describe("App shell interactions", () => {
 
     expect(screen.getByRole("dialog", { name: "New folder" })).toBeInTheDocument();
     expect(screen.queryByRole("dialog", { name: "New file" })).not.toBeInTheDocument();
+  });
+
+  it("matches macOS Option-key IntelliJ shortcuts by physical key code", async () => {
+    const macNavigator = Object.create(navigator) as Navigator;
+    Object.defineProperty(macNavigator, "platform", { value: "MacIntel" });
+    Object.defineProperty(macNavigator, "userAgent", {
+      value: "Mozilla/5.0 (Macintosh; Intel Mac OS X 15_0)",
+    });
+    vi.stubGlobal("navigator", macNavigator);
+
+    render(<App />);
+
+    expect(await treeButton("README.md")).toBeInTheDocument();
+
+    fireEvent.keyDown(window, {
+      key: "ø",
+      code: "KeyN",
+      ctrlKey: true,
+      altKey: true,
+    });
+
+    expect(screen.getByRole("dialog", { name: "New file" })).toBeInTheDocument();
   });
 
   it("keeps native picker toolbar actions disabled in hosted browser mode", async () => {

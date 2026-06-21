@@ -230,6 +230,81 @@ pub fn workspace_directory_entries(
     Ok(entries)
 }
 
+pub fn filter_visible_workspace_entries(
+    root: &Path,
+    entries: Vec<FileEntry>,
+    show_dotfiles: bool,
+    show_generated_internal: bool,
+    show_gitignored_files: bool,
+) -> Result<Vec<FileEntry>, WorkspaceError> {
+    let entries = entries
+        .into_iter()
+        .filter(|entry| entry_passes_name_filters(entry, show_dotfiles, show_generated_internal))
+        .collect::<Vec<_>>();
+
+    if show_gitignored_files || entries.is_empty() {
+        return Ok(entries);
+    }
+
+    let targets = entries
+        .iter()
+        .map(|entry| entry.path.clone())
+        .collect::<HashSet<_>>();
+    let max_depth = entries
+        .iter()
+        .map(|entry| Path::new(&entry.path).components().count())
+        .max()
+        .unwrap_or(1);
+    let canonical_root = root.canonicalize()?;
+    let mut visible_paths = HashSet::new();
+    let mut walker = workspace_walker(
+        &canonical_root,
+        show_dotfiles,
+        show_generated_internal,
+        true,
+    );
+    walker.max_depth(Some(max_depth));
+
+    for result in walker.build() {
+        let entry = result?;
+        let path = entry.path();
+        if path == canonical_root {
+            continue;
+        }
+        let relative = path
+            .strip_prefix(&canonical_root)
+            .map_err(|_| WorkspaceError::OutsideWorkspace)?;
+        let relative_path = normalize_path(relative);
+        if targets.contains(&relative_path) {
+            visible_paths.insert(relative_path);
+            if visible_paths.len() == targets.len() {
+                break;
+            }
+        }
+    }
+
+    Ok(entries
+        .into_iter()
+        .filter(|entry| visible_paths.contains(&entry.path))
+        .collect())
+}
+
+fn entry_passes_name_filters(
+    entry: &FileEntry,
+    show_dotfiles: bool,
+    show_generated_internal: bool,
+) -> bool {
+    Path::new(&entry.path).components().all(|component| {
+        let Component::Normal(name) = component else {
+            return false;
+        };
+        if is_generated_name(name) {
+            return show_generated_internal;
+        }
+        show_dotfiles || !is_dot_name(name)
+    })
+}
+
 fn push_scan_entry(
     root: &Path,
     entry: &DirEntry,
