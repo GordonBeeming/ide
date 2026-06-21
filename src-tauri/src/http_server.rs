@@ -549,9 +549,11 @@ async fn indexed_files(
         query.query.as_deref().unwrap_or(""),
         limit,
         expansion_limit,
-        query.show_dotfiles.unwrap_or(false),
-        query.show_generated_internal.unwrap_or(false),
-        query.show_gitignored_files.unwrap_or(false),
+        WorkspaceVisibility {
+            show_dotfiles: query.show_dotfiles.unwrap_or(false),
+            show_generated_internal: query.show_generated_internal.unwrap_or(false),
+            show_gitignored_files: query.show_gitignored_files.unwrap_or(false),
+        },
     )?))
 }
 
@@ -589,25 +591,22 @@ async fn advance_workspace_index_route(
     )?))
 }
 
+#[derive(Clone, Copy)]
+struct WorkspaceVisibility {
+    show_dotfiles: bool,
+    show_generated_internal: bool,
+    show_gitignored_files: bool,
+}
+
 fn search_indexed_files_with_expansion(
     index: &WorkspaceIndex,
     root: &Path,
     query: &str,
     limit: usize,
     expansion_limit: usize,
-    show_dotfiles: bool,
-    show_generated_internal: bool,
-    show_gitignored_files: bool,
+    visibility: WorkspaceVisibility,
 ) -> Result<Vec<FileEntry>, ApiError> {
-    let mut results = search_visible_indexed_files(
-        index,
-        root,
-        query,
-        limit,
-        show_dotfiles,
-        show_generated_internal,
-        show_gitignored_files,
-    )?;
+    let mut results = search_visible_indexed_files(index, root, query, limit, visibility)?;
     if query.trim().is_empty() || results.len() >= limit {
         return Ok(results);
     }
@@ -624,38 +623,22 @@ fn search_indexed_files_with_expansion(
         let entries = match workspace_directory_entries(
             root,
             &directory,
-            show_dotfiles,
-            show_generated_internal,
-            show_gitignored_files,
+            visibility.show_dotfiles,
+            visibility.show_generated_internal,
+            visibility.show_gitignored_files,
         ) {
             Ok(entries) => entries,
             Err(error) if !directory.is_empty() && stale_indexed_directory_error(&error) => {
                 index.remove_path(root, &directory)?;
                 remaining_entries = remaining_entries.saturating_sub(1);
-                results = search_visible_indexed_files(
-                    index,
-                    root,
-                    query,
-                    limit,
-                    show_dotfiles,
-                    show_generated_internal,
-                    show_gitignored_files,
-                )?;
+                results = search_visible_indexed_files(index, root, query, limit, visibility)?;
                 continue;
             }
             Err(error) => return Err(ApiError::from(error)),
         };
         remaining_entries = remaining_entries.saturating_sub(entries.len().max(1));
         index.replace_directory_entries(root, &directory, &entries)?;
-        results = search_visible_indexed_files(
-            index,
-            root,
-            query,
-            limit,
-            show_dotfiles,
-            show_generated_internal,
-            show_gitignored_files,
-        )?;
+        results = search_visible_indexed_files(index, root, query, limit, visibility)?;
     }
 
     Ok(results)
@@ -666,11 +649,12 @@ fn search_visible_indexed_files(
     root: &Path,
     query: &str,
     limit: usize,
-    show_dotfiles: bool,
-    show_generated_internal: bool,
-    show_gitignored_files: bool,
+    visibility: WorkspaceVisibility,
 ) -> Result<Vec<FileEntry>, ApiError> {
-    let search_limit = if show_dotfiles && show_generated_internal && show_gitignored_files {
+    let search_limit = if visibility.show_dotfiles
+        && visibility.show_generated_internal
+        && visibility.show_gitignored_files
+    {
         limit
     } else {
         limit.saturating_mul(20).max(limit)
@@ -678,9 +662,9 @@ fn search_visible_indexed_files(
     let mut results = filter_visible_workspace_entries(
         root,
         index.search_files(root, query, search_limit)?,
-        show_dotfiles,
-        show_generated_internal,
-        show_gitignored_files,
+        visibility.show_dotfiles,
+        visibility.show_generated_internal,
+        visibility.show_gitignored_files,
     )?;
     results.truncate(limit);
     Ok(results)
@@ -1580,9 +1564,11 @@ mod tests {
             "needle",
             10,
             20,
-            false,
-            false,
-            true,
+            WorkspaceVisibility {
+                show_dotfiles: false,
+                show_generated_internal: false,
+                show_gitignored_files: true,
+            },
         )
         .unwrap();
 
@@ -1614,9 +1600,11 @@ mod tests {
             "",
             10,
             20,
-            false,
-            false,
-            false,
+            WorkspaceVisibility {
+                show_dotfiles: false,
+                show_generated_internal: false,
+                show_gitignored_files: false,
+            },
         )
         .unwrap();
         let hidden_paths = hidden_results
@@ -1626,9 +1614,19 @@ mod tests {
 
         assert_eq!(hidden_paths, vec!["visible.txt"]);
 
-        let shown_results =
-            search_indexed_files_with_expansion(&index, dir.path(), "", 10, 20, false, false, true)
-                .unwrap();
+        let shown_results = search_indexed_files_with_expansion(
+            &index,
+            dir.path(),
+            "",
+            10,
+            20,
+            WorkspaceVisibility {
+                show_dotfiles: false,
+                show_generated_internal: false,
+                show_gitignored_files: true,
+            },
+        )
+        .unwrap();
         let shown_paths = shown_results
             .into_iter()
             .map(|entry| entry.path)
