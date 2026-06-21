@@ -1627,7 +1627,7 @@ export default function App() {
   }, []);
 
   const beginSidebarResize = useCallback(
-    (event: ReactPointerEvent<HTMLButtonElement>) => {
+    (event: ReactPointerEvent<HTMLElement>) => {
       if (sidebarCollapsed) return;
       event.preventDefault();
       sidebarResizeRef.current = {
@@ -1639,7 +1639,7 @@ export default function App() {
   );
 
   const handleSidebarResizeKeyDown = useCallback(
-    (event: ReactKeyboardEvent<HTMLButtonElement>) => {
+    (event: ReactKeyboardEvent<HTMLElement>) => {
       if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
       event.preventDefault();
       const direction = event.key === "ArrowRight" ? 1 : -1;
@@ -3420,15 +3420,16 @@ export default function App() {
           </div>
         ) : null}
 
-        <button
+        <div
           className="sidebar-resizer"
-          type="button"
+          role="separator"
+          tabIndex={sidebarCollapsed ? -1 : 0}
           aria-label="Resize sidebar"
           aria-orientation="vertical"
           aria-valuemin={minSidebarWidth}
           aria-valuemax={maxSidebarWidth}
           aria-valuenow={sidebarWidth}
-          disabled={sidebarCollapsed}
+          aria-disabled={sidebarCollapsed}
           onKeyDown={handleSidebarResizeKeyDown}
           onPointerDown={beginSidebarResize}
         />

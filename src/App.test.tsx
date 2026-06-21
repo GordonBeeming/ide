@@ -1886,7 +1886,7 @@ describe("App shell interactions", () => {
     const shell = document.querySelector(".app-shell") as HTMLElement;
     expect(shell.style.getPropertyValue("--sidebar-width")).toBe("288px");
 
-    fireEvent.keyDown(screen.getByRole("button", { name: "Resize sidebar" }), {
+    fireEvent.keyDown(screen.getByRole("separator", { name: "Resize sidebar" }), {
       key: "ArrowRight",
     });
 

@@ -174,7 +174,7 @@ button {
   background: var(--accent);
 }
 
-.sidebar-resizer:disabled {
+.sidebar-resizer[aria-disabled="true"] {
   cursor: default;
 }
 
