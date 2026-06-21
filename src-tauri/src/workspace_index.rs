@@ -366,6 +366,7 @@ pub fn advance_workspace_index(
     entry_budget: usize,
     show_dotfiles: bool,
     show_generated_internal: bool,
+    show_gitignored_files: bool,
 ) -> Result<WorkspaceIndexStats, WorkspaceIndexAdvanceError> {
     let mut remaining_entries = entry_budget.max(1);
 
@@ -383,6 +384,7 @@ pub fn advance_workspace_index(
             &directory,
             show_dotfiles,
             show_generated_internal,
+            show_gitignored_files,
         ) {
             Ok(entries) => entries,
             Err(error) if !directory.is_empty() && stale_indexed_directory_error(&error) => {

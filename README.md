@@ -27,7 +27,7 @@ Implemented:
 - Lightweight command palette for discoverable editor and workspace commands, including native file/folder open actions in the desktop app.
 - Keyboard quick-open palette for opening editor-supported files by path, including arrow-key result selection and SQLite-backed candidates from indexed workspace metadata with bounded on-demand folder expansion.
 - Settings Storage view that shows OS app-data paths plus live workspace-index coverage counts, so scan/cache limits are visible instead of hidden.
-- Keyboard file/folder creation, tab navigation, numbered tab selection, and close commands.
+- IntelliJ-style keyboard file creation, tab navigation, and close commands.
 - Native View menu Key Bindings dialog with searchable supported shortcuts.
 - Native Search menu with Go to File, Go to Line, Find in File, and Find in Files actions.
 - Native Navigate menu actions for LSP-backed Go to Definition and Find References.

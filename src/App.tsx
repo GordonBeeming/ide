@@ -134,7 +134,6 @@ import {
   adjacentTabPath,
   dirtyTabSummary,
   nextActivePathAfterClose,
-  numberedTabPath,
   pinTab,
   tabCloseRequiresConfirmation,
   updateTabContents,
@@ -203,42 +202,42 @@ type KeyBindingCategory = "File" | "Search" | "Navigate" | "View" | "Tabs" | "Tr
 interface KeyBindingInfo {
   category: KeyBindingCategory;
   command: string;
-  shortcut: string;
+  shortcut: PlatformShortcut;
   when?: string;
 }
 
+interface PlatformShortcut {
+  mac: string;
+  other: string;
+}
+
 const keyBindings: KeyBindingInfo[] = [
-  { category: "File", command: "New File", shortcut: "Cmd/Ctrl+N" },
-  { category: "File", command: "New Folder", shortcut: "Cmd/Ctrl+Shift+N" },
-  { category: "File", command: "Open File", shortcut: "Cmd/Ctrl+O" },
-  { category: "File", command: "Open Folder", shortcut: "Cmd/Ctrl+Shift+O" },
-  { category: "File", command: "Save", shortcut: "Cmd/Ctrl+S" },
-  { category: "File", command: "Save All", shortcut: "Cmd/Ctrl+Shift+S" },
-  { category: "File", command: "Reload from Disk", shortcut: "Cmd/Ctrl+R" },
-  { category: "File", command: "Rename Selected", shortcut: "F2" },
-  { category: "File", command: "Close Tab", shortcut: "Cmd/Ctrl+W" },
-  { category: "File", command: "Close All", shortcut: "Cmd/Ctrl+Shift+W" },
-  { category: "Search", command: "Command Palette", shortcut: "Cmd/Ctrl+Shift+P" },
-  { category: "Search", command: "Go to File", shortcut: "Cmd/Ctrl+P" },
-  { category: "Search", command: "Go to Line", shortcut: "Ctrl+G" },
-  { category: "Search", command: "Find in File", shortcut: "Cmd/Ctrl+F" },
-  { category: "Search", command: "Find in Files", shortcut: "Cmd/Ctrl+Shift+F" },
-  { category: "Navigate", command: "Go to Definition", shortcut: "F12" },
-  { category: "Navigate", command: "Find References", shortcut: "Shift+F12" },
-  { category: "View", command: "Collapse or expand sidebar", shortcut: "Cmd/Ctrl+B" },
-  { category: "View", command: "Settings", shortcut: "Cmd/Ctrl+," },
-  { category: "Tabs", command: "Activate tab 1-9", shortcut: "Cmd/Ctrl+1...9" },
-  { category: "Tabs", command: "Next tab", shortcut: "Ctrl+Tab" },
-  { category: "Tabs", command: "Previous tab", shortcut: "Ctrl+Shift+Tab" },
-  { category: "Tree", command: "Open selected file or toggle folder", shortcut: "Enter" },
-  { category: "Tree", command: "Toggle selected folder", shortcut: "Space" },
-  { category: "Tree", command: "Expand selected folder", shortcut: "ArrowRight" },
-  { category: "Tree", command: "Collapse selected folder", shortcut: "ArrowLeft" },
-  { category: "Dialogs", command: "Close active dialog or palette", shortcut: "Escape" },
-  { category: "Dialogs", command: "Move selection", shortcut: "ArrowUp / ArrowDown", when: "Quick open and command palette" },
-  { category: "Dialogs", command: "Run selected item", shortcut: "Enter", when: "Quick open and command palette" },
-  { category: "Dialogs", command: "Next find result", shortcut: "Enter", when: "Find in file" },
-  { category: "Dialogs", command: "Previous find result", shortcut: "Shift+Enter", when: "Find in file" },
+  { category: "File", command: "New File", shortcut: { mac: "Ctrl+Alt+N", other: "Ctrl+Alt+Insert" } },
+  { category: "File", command: "Save All", shortcut: { mac: "Cmd+S", other: "Ctrl+S" } },
+  { category: "File", command: "Synchronize from Disk", shortcut: { mac: "Cmd+Alt+Y", other: "Ctrl+Alt+Y" } },
+  { category: "File", command: "Rename Selected", shortcut: { mac: "Shift+F6", other: "Shift+F6" } },
+  { category: "File", command: "Close Tab", shortcut: { mac: "Cmd+W", other: "Ctrl+F4" } },
+  { category: "File", command: "Close All", shortcut: { mac: "Cmd+Shift+W", other: "Ctrl+Shift+F4" } },
+  { category: "Search", command: "Command Palette", shortcut: { mac: "Cmd+Shift+A", other: "Ctrl+Shift+A" } },
+  { category: "Search", command: "Go to File", shortcut: { mac: "Cmd+Shift+O", other: "Ctrl+Shift+N" } },
+  { category: "Search", command: "Go to Line", shortcut: { mac: "Cmd+L", other: "Ctrl+G" } },
+  { category: "Search", command: "Find in File", shortcut: { mac: "Cmd+F", other: "Ctrl+F" } },
+  { category: "Search", command: "Find in Files", shortcut: { mac: "Cmd+Shift+F", other: "Ctrl+Shift+F" } },
+  { category: "Navigate", command: "Go to Definition", shortcut: { mac: "Cmd+B", other: "Ctrl+B" } },
+  { category: "Navigate", command: "Find References", shortcut: { mac: "Alt+F7", other: "Alt+F7" } },
+  { category: "View", command: "Show Project", shortcut: { mac: "Cmd+1", other: "Alt+1" } },
+  { category: "View", command: "Settings", shortcut: { mac: "Cmd+,", other: "Ctrl+Alt+S" } },
+  { category: "Tabs", command: "Next tab", shortcut: { mac: "Cmd+Shift+]", other: "Alt+Right" } },
+  { category: "Tabs", command: "Previous tab", shortcut: { mac: "Cmd+Shift+[", other: "Alt+Left" } },
+  { category: "Tree", command: "Open selected file or toggle folder", shortcut: { mac: "Enter", other: "Enter" } },
+  { category: "Tree", command: "Toggle selected folder", shortcut: { mac: "Space", other: "Space" } },
+  { category: "Tree", command: "Expand selected folder", shortcut: { mac: "ArrowRight", other: "ArrowRight" } },
+  { category: "Tree", command: "Collapse selected folder", shortcut: { mac: "ArrowLeft", other: "ArrowLeft" } },
+  { category: "Dialogs", command: "Close active dialog or palette", shortcut: { mac: "Escape", other: "Escape" } },
+  { category: "Dialogs", command: "Move selection", shortcut: { mac: "ArrowUp / ArrowDown", other: "ArrowUp / ArrowDown" }, when: "Quick open and command palette" },
+  { category: "Dialogs", command: "Run selected item", shortcut: { mac: "Enter", other: "Enter" }, when: "Quick open and command palette" },
+  { category: "Dialogs", command: "Next find result", shortcut: { mac: "Enter", other: "Enter" }, when: "Find in file" },
+  { category: "Dialogs", command: "Previous find result", shortcut: { mac: "Shift+Enter", other: "Shift+Enter" }, when: "Find in file" },
 ];
 
 const minTreeScanLimit = 500;
@@ -424,6 +423,7 @@ export default function App() {
   const [settingsCategory, setSettingsCategory] = useState<SettingsCategory>("view");
   const [showDotfiles, setShowDotfiles] = useState(false);
   const [showGeneratedInternal, setShowGeneratedInternal] = useState(false);
+  const [showGitignoredFiles, setShowGitignoredFiles] = useState(true);
   const [showDiagnosticsPanel, setShowDiagnosticsPanel] = useState(false);
   const [treeScanLimit, setTreeScanLimit] = useState(defaultTreeScanLimit);
   const [maxOpenFileKb, setMaxOpenFileKb] = useState(defaultMaxOpenFileKb);
@@ -704,6 +704,7 @@ export default function App() {
     setWorkspaceUiRestored(false);
     setShowDotfiles(snapshot.view.showDotfiles);
     setShowGeneratedInternal(snapshot.view.showGeneratedInternal);
+    setShowGitignoredFiles(snapshot.view.showGitignoredFiles ?? true);
     setShowDiagnosticsPanel(Boolean(snapshot.view.showDiagnosticsPanel));
     setTreeScanLimit(sanitizeTreeScanLimit(snapshot.view.treeScanLimit));
     setMaxOpenFileKb(
@@ -797,7 +798,12 @@ export default function App() {
 
       loadingFoldersRef.current.add(path);
       try {
-        const entries = await listDirectory(path, showDotfiles, showGeneratedInternal);
+        const entries = await listDirectory(
+          path,
+          showDotfiles,
+          showGeneratedInternal,
+          showGitignoredFiles,
+        );
         setFiles((current) => mergeFileEntries(current, entries));
         setLoadedFolders((current) => new Set(current).add(path));
       } catch (reason) {
@@ -807,7 +813,13 @@ export default function App() {
         loadingFoldersRef.current.delete(path);
       }
     },
-    [loadedFolders, showDotfiles, showGeneratedInternal, singleFileMode],
+    [
+      loadedFolders,
+      showDotfiles,
+      showGeneratedInternal,
+      showGitignoredFiles,
+      singleFileMode,
+    ],
   );
 
   const toggleFolder = useCallback((path: string) => {
@@ -864,7 +876,12 @@ export default function App() {
       }
 
       const scan = normalizeFileListResult(
-        await listFiles(showDotfiles, showGeneratedInternal, treeScanLimit),
+        await listFiles(
+          showDotfiles,
+          showGeneratedInternal,
+          treeScanLimit,
+          showGitignoredFiles,
+        ),
       );
       if (!scan) {
         throw new Error("Workspace file list response was not valid JSON");
@@ -888,6 +905,7 @@ export default function App() {
     refreshIntegrationStatus,
     showDotfiles,
     showGeneratedInternal,
+    showGitignoredFiles,
     singleFileMode,
     singleFilePath,
     treeScanLimit,
@@ -1283,6 +1301,7 @@ export default function App() {
         {
           showDotfiles,
           showGeneratedInternal,
+          showGitignoredFiles,
           showDiagnosticsPanel,
           treeScanLimit,
           maxOpenFileKb,
@@ -1314,6 +1333,7 @@ export default function App() {
     selectedPath,
     showDotfiles,
     showGeneratedInternal,
+    showGitignoredFiles,
     showDiagnosticsPanel,
     singleFileMode,
     treeScanLimit,
@@ -1344,6 +1364,7 @@ export default function App() {
           backgroundIndexBatchEntries,
           showDotfiles,
           showGeneratedInternal,
+          showGitignoredFiles,
         );
         if (disposed) return;
 
@@ -1369,6 +1390,7 @@ export default function App() {
     files.length,
     showDotfiles,
     showGeneratedInternal,
+    showGitignoredFiles,
     singleFileMode,
     workspaceLoading,
     workspaceLoadFailed,
@@ -1398,6 +1420,7 @@ export default function App() {
         quickOpenResultLimit,
         showDotfiles,
         showGeneratedInternal,
+        showGitignoredFiles,
       )
         .then((entries) => {
           if (disposed) return;
@@ -1424,6 +1447,7 @@ export default function App() {
     quickOpenVisible,
     showDotfiles,
     showGeneratedInternal,
+    showGitignoredFiles,
     singleFileMode,
   ]);
 
@@ -2415,7 +2439,7 @@ export default function App() {
         id: "show_settings",
         title: "Settings",
         detail: "Adjust workspace view and scan limits",
-        keywords: ["preferences", "dotfiles", "generated folders", "limit"],
+        keywords: ["preferences", "dotfiles", "gitignored files", "generated folders", "limit"],
         enabled: true,
         run: () => setSettingsOpen(true),
       },
@@ -2790,98 +2814,54 @@ export default function App() {
         return;
       }
 
-      const numberedPath =
-        (event.metaKey || event.ctrlKey) && !event.shiftKey
-          ? numberedTabPath(openFiles, event.key)
-          : undefined;
-      if (
-        numberedPath
-      ) {
-        event.preventDefault();
-        setActivePath(numberedPath);
-      } else if (
-        (event.metaKey || event.ctrlKey) &&
-        event.shiftKey &&
-        event.key.toLowerCase() === "s"
-      ) {
+      if (isIntellijShortcut(event, "saveAll")) {
         event.preventDefault();
         saveAll();
-      } else if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "s") {
-        event.preventDefault();
-        saveActive();
-      } else if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "r") {
+      } else if (isIntellijShortcut(event, "synchronizeFromDisk")) {
         event.preventDefault();
         requestReloadActiveFile();
-      } else if (
-        (event.metaKey || event.ctrlKey) &&
-        event.shiftKey &&
-        event.key.toLowerCase() === "w"
-      ) {
+      } else if (isIntellijShortcut(event, "closeAll")) {
         event.preventDefault();
         requestCloseAllFiles();
-      } else if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "w") {
+      } else if (isIntellijShortcut(event, "closeTab")) {
         event.preventDefault();
         requestCloseActiveFile();
-      } else if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "b") {
+      } else if (isIntellijShortcut(event, "showProject")) {
         event.preventDefault();
         toggleSidebar();
-      } else if (
-        (event.metaKey || event.ctrlKey) &&
-        event.shiftKey &&
-        event.key.toLowerCase() === "n"
-      ) {
-        event.preventDefault();
-        openNewFolderDialog();
-      } else if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "n") {
+      } else if (isIntellijShortcut(event, "newFile")) {
         event.preventDefault();
         openNewFileDialog();
-      } else if (
-        nativePickerAvailable &&
-        (event.metaKey || event.ctrlKey) &&
-        event.shiftKey &&
-        event.key.toLowerCase() === "o"
-      ) {
-        event.preventDefault();
-        void openWorkspace();
-      } else if (
-        nativePickerAvailable &&
-        (event.metaKey || event.ctrlKey) &&
-        event.key.toLowerCase() === "o"
-      ) {
-        event.preventDefault();
-        void openFileFromDialog();
-      } else if (event.key === "F2") {
+      } else if (isIntellijShortcut(event, "rename")) {
         event.preventDefault();
         openRenameDialog();
-      } else if (event.ctrlKey && event.shiftKey && event.key === "Tab") {
+      } else if (isIntellijShortcut(event, "previousTab")) {
         event.preventDefault();
         activateAdjacentTab(-1);
-      } else if (event.ctrlKey && event.key === "Tab") {
+      } else if (isIntellijShortcut(event, "nextTab")) {
         event.preventDefault();
         activateAdjacentTab(1);
-      } else if (
-        (event.metaKey || event.ctrlKey) &&
-        event.shiftKey &&
-        event.key.toLowerCase() === "p"
-      ) {
+      } else if (isIntellijShortcut(event, "commandPalette")) {
         event.preventDefault();
         openCommandPalette();
-      } else if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "p") {
+      } else if (isIntellijShortcut(event, "goToFile")) {
         event.preventDefault();
         openQuickOpen();
-      } else if (event.ctrlKey && !event.metaKey && event.key.toLowerCase() === "g") {
+      } else if (isIntellijShortcut(event, "goToLine")) {
         event.preventDefault();
         openGoToLineDialog();
-      } else if (
-        (event.metaKey || event.ctrlKey) &&
-        event.shiftKey &&
-        event.key.toLowerCase() === "f"
-      ) {
+      } else if (isIntellijShortcut(event, "findInFiles")) {
         event.preventDefault();
         openWorkspaceSearch();
-      } else if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "f") {
+      } else if (isIntellijShortcut(event, "findInFile")) {
         event.preventDefault();
         openCurrentFileFind();
+      } else if (isIntellijShortcut(event, "goToDefinition")) {
+        event.preventDefault();
+        requestEditorCommand("goToDefinition");
+      } else if (isIntellijShortcut(event, "findReferences")) {
+        event.preventDefault();
+        requestEditorCommand("findReferences");
       }
     };
     window.addEventListener("keydown", handler);
@@ -2908,10 +2888,7 @@ export default function App() {
     nativePickerAvailable,
     commandPaletteVisible,
     openRenameDialog,
-    openNewFolderDialog,
     openNewFileDialog,
-    openFileFromDialog,
-    openWorkspace,
     openCommandPalette,
     openCurrentFileFind,
     openGoToLineDialog,
@@ -2927,8 +2904,8 @@ export default function App() {
     renameDialogOpen,
     requestCloseActiveFile,
     requestCloseAllFiles,
+    requestEditorCommand,
     requestReloadActiveFile,
-    saveActive,
     saveAll,
     toggleSidebar,
   ]);
@@ -3690,13 +3667,13 @@ export default function App() {
                 keyBindingResults.map((binding) => (
                   <div
                     className="keybinding-row"
-                    key={`${binding.category}:${binding.command}:${binding.shortcut}`}
+                    key={`${binding.category}:${binding.command}:${binding.shortcut.mac}:${binding.shortcut.other}`}
                   >
                     <span className="keybinding-row__command">
                       <span>{binding.command}</span>
                       <small>{binding.when ?? binding.category}</small>
                     </span>
-                    <kbd>{binding.shortcut}</kbd>
+                    <kbd>{currentPlatformShortcut(binding.shortcut)}</kbd>
                   </div>
                 ))
               )}
@@ -3782,6 +3759,21 @@ export default function App() {
                           }}
                         />
                         <span>Show generated and internal folders</span>
+                      </label>
+                      <label className="settings-row">
+                        <input
+                          type="checkbox"
+                          checked={showGitignoredFiles}
+                          onChange={(event) => {
+                            setShowGitignoredFiles(event.target.checked);
+                            setStatus(
+                              event.target.checked
+                                ? "Showing gitignored files"
+                                : "Hiding gitignored files",
+                            );
+                          }}
+                        />
+                        <span>Show gitignored files</span>
                       </label>
                       <label className="settings-row">
                         <input
@@ -4709,21 +4701,144 @@ function lastSegment(path: string) {
   return path.split(/[\\/]/).filter(Boolean).at(-1) ?? "";
 }
 
+type ShortcutAction =
+  | "commandPalette"
+  | "goToFile"
+  | "goToLine"
+  | "findInFile"
+  | "findInFiles"
+  | "goToDefinition"
+  | "findReferences"
+  | "saveAll"
+  | "synchronizeFromDisk"
+  | "newFile"
+  | "rename"
+  | "closeTab"
+  | "closeAll"
+  | "showProject"
+  | "nextTab"
+  | "previousTab";
+
+interface ShortcutPattern {
+  key: string | string[];
+  meta?: boolean;
+  ctrl?: boolean;
+  alt?: boolean;
+  shift?: boolean;
+}
+
+const intellijShortcuts: Record<ShortcutAction, { mac: ShortcutPattern; other: ShortcutPattern }> = {
+  commandPalette: {
+    mac: { key: "a", meta: true, shift: true },
+    other: { key: "a", ctrl: true, shift: true },
+  },
+  goToFile: {
+    mac: { key: "o", meta: true, shift: true },
+    other: { key: "n", ctrl: true, shift: true },
+  },
+  goToLine: {
+    mac: { key: "l", meta: true },
+    other: { key: "g", ctrl: true },
+  },
+  findInFile: {
+    mac: { key: "f", meta: true },
+    other: { key: "f", ctrl: true },
+  },
+  findInFiles: {
+    mac: { key: "f", meta: true, shift: true },
+    other: { key: "f", ctrl: true, shift: true },
+  },
+  goToDefinition: {
+    mac: { key: "b", meta: true },
+    other: { key: "b", ctrl: true },
+  },
+  findReferences: {
+    mac: { key: "F7", alt: true },
+    other: { key: "F7", alt: true },
+  },
+  saveAll: {
+    mac: { key: "s", meta: true },
+    other: { key: "s", ctrl: true },
+  },
+  synchronizeFromDisk: {
+    mac: { key: "y", meta: true, alt: true },
+    other: { key: "y", ctrl: true, alt: true },
+  },
+  newFile: {
+    mac: { key: "n", ctrl: true, alt: true },
+    other: { key: "Insert", ctrl: true, alt: true },
+  },
+  rename: {
+    mac: { key: "F6", shift: true },
+    other: { key: "F6", shift: true },
+  },
+  closeTab: {
+    mac: { key: "w", meta: true },
+    other: { key: "F4", ctrl: true },
+  },
+  closeAll: {
+    mac: { key: "w", meta: true, shift: true },
+    other: { key: "F4", ctrl: true, shift: true },
+  },
+  showProject: {
+    mac: { key: "1", meta: true },
+    other: { key: "1", alt: true },
+  },
+  nextTab: {
+    mac: { key: ["]", "}"], meta: true, shift: true },
+    other: { key: "ArrowRight", alt: true },
+  },
+  previousTab: {
+    mac: { key: ["[", "{"], meta: true, shift: true },
+    other: { key: "ArrowLeft", alt: true },
+  },
+};
+
+function currentPlatformShortcut(shortcut: PlatformShortcut) {
+  return isMacPlatform() ? shortcut.mac : shortcut.other;
+}
+
+function isMacPlatform() {
+  if (typeof navigator === "undefined") return false;
+  return /mac|iphone|ipad|ipod/i.test(navigator.platform);
+}
+
+function isIntellijShortcut(event: KeyboardEvent, action: ShortcutAction) {
+  const platformShortcut = intellijShortcuts[action];
+  return matchesShortcut(event, isMacPlatform() ? platformShortcut.mac : platformShortcut.other);
+}
+
+function matchesShortcut(event: KeyboardEvent, pattern: ShortcutPattern) {
+  const keys = Array.isArray(pattern.key) ? pattern.key : [pattern.key];
+  const eventKey = event.key.length === 1 ? event.key.toLowerCase() : event.key;
+  const expectedKeys = keys.map((key) => (key.length === 1 ? key.toLowerCase() : key));
+
+  return (
+    expectedKeys.includes(eventKey) &&
+    event.metaKey === Boolean(pattern.meta) &&
+    event.ctrlKey === Boolean(pattern.ctrl) &&
+    event.altKey === Boolean(pattern.alt) &&
+    event.shiftKey === Boolean(pattern.shift)
+  );
+}
+
 function isGlobalIdeShortcut(event: KeyboardEvent) {
-  const key = event.key.toLowerCase();
-  if (event.key === "F2") return true;
-  if (event.ctrlKey && event.key === "Tab") return true;
-  if (event.ctrlKey && !event.metaKey && key === "g") return true;
-  if (!(event.metaKey || event.ctrlKey)) return false;
-  if (!event.shiftKey && /^[1-9]$/.test(event.key)) return true;
-  return ["s", "r", "w", "b", "n", "o", "p", "f"].includes(key);
+  return (Object.keys(intellijShortcuts) as ShortcutAction[]).some((action) =>
+    isIntellijShortcut(event, action),
+  );
 }
 
 function filterKeyBindings(bindings: KeyBindingInfo[], query: string) {
   const normalized = query.trim().toLowerCase();
   if (!normalized) return bindings;
   return bindings.filter((binding) =>
-    [binding.category, binding.command, binding.shortcut, binding.when ?? ""]
+    [
+      binding.category,
+      binding.command,
+      binding.shortcut.mac,
+      binding.shortcut.other,
+      binding.when ?? "",
+    ]
       .join(" ")
       .toLowerCase()
       .includes(normalized),

@@ -107,6 +107,7 @@ export type OpenLaunchRequest =
 export interface PersistedViewSettings {
   showDotfiles: boolean;
   showGeneratedInternal: boolean;
+  showGitignoredFiles?: boolean;
   showDiagnosticsPanel?: boolean;
   treeScanLimit?: number;
   maxOpenFileKb?: number;
@@ -167,6 +168,7 @@ const defaultUiSnapshot: PersistedUiSnapshot = {
   view: {
     showDotfiles: false,
     showGeneratedInternal: false,
+    showGitignoredFiles: true,
     showDiagnosticsPanel: false,
     treeScanLimit: 10000,
     maxOpenFileKb: 5120,
@@ -272,11 +274,13 @@ export function advanceWorkspaceIndex(
   entryLimit?: number,
   showDotfiles = false,
   showGeneratedInternal = false,
+  showGitignoredFiles = true,
 ) {
   const params = new URLSearchParams();
   if (entryLimit !== undefined) params.set("entryLimit", String(entryLimit));
   if (showDotfiles) params.set("showDotfiles", "true");
   if (showGeneratedInternal) params.set("showGeneratedInternal", "true");
+  if (!showGitignoredFiles) params.set("showGitignoredFiles", "false");
   const path = params.toString()
     ? `/api/workspace-index/advance?${params.toString()}`
     : "/api/workspace-index/advance";
@@ -286,6 +290,7 @@ export function advanceWorkspaceIndex(
       ...(entryLimit === undefined ? {} : { entryLimit }),
       showDotfiles,
       showGeneratedInternal,
+      showGitignoredFiles,
     },
   }).then((value) => {
     const stats = normalizeWorkspaceIndexStats(value);
@@ -342,10 +347,12 @@ export function listFiles(
   showDotfiles = false,
   showGeneratedInternal = false,
   treeScanLimit?: number,
+  showGitignoredFiles = true,
 ) {
   const params = new URLSearchParams();
   if (showDotfiles) params.set("showDotfiles", "true");
   if (showGeneratedInternal) params.set("showGeneratedInternal", "true");
+  if (!showGitignoredFiles) params.set("showGitignoredFiles", "false");
   if (treeScanLimit !== undefined) params.set("treeScanLimit", String(treeScanLimit));
   const query = params.toString();
   const path = query ? `/api/files?${query}` : "/api/files";
@@ -353,6 +360,7 @@ export function listFiles(
     invokeArgs: {
       showDotfiles,
       showGeneratedInternal,
+      showGitignoredFiles,
       ...(treeScanLimit === undefined ? {} : { treeScanLimit }),
     },
   }).then((entries) => {
@@ -397,12 +405,14 @@ export function listDirectory(
   path: string,
   showDotfiles = false,
   showGeneratedInternal = false,
+  showGitignoredFiles = true,
 ) {
   const params = new URLSearchParams({ path });
   if (showDotfiles) params.set("showDotfiles", "true");
   if (showGeneratedInternal) params.set("showGeneratedInternal", "true");
+  if (!showGitignoredFiles) params.set("showGitignoredFiles", "false");
   return callApi<unknown>("list_directory", `/api/directory?${params.toString()}`, {
-    invokeArgs: { path, showDotfiles, showGeneratedInternal },
+    invokeArgs: { path, showDotfiles, showGeneratedInternal, showGitignoredFiles },
   }).then((entries) => {
     if (!Array.isArray(entries)) {
       throw new Error("Workspace directory response was not valid JSON");
@@ -545,6 +555,7 @@ export function searchIndexedFiles(
   limit?: number,
   showDotfiles = false,
   showGeneratedInternal = false,
+  showGitignoredFiles = true,
 ) {
   const params = new URLSearchParams();
   const trimmedQuery = query.trim();
@@ -552,6 +563,7 @@ export function searchIndexedFiles(
   if (limit !== undefined) params.set("limit", String(limit));
   if (showDotfiles) params.set("showDotfiles", "true");
   if (showGeneratedInternal) params.set("showGeneratedInternal", "true");
+  if (!showGitignoredFiles) params.set("showGitignoredFiles", "false");
   const requestPath = params.toString()
     ? `/api/file-search?${params.toString()}`
     : "/api/file-search";
@@ -562,6 +574,7 @@ export function searchIndexedFiles(
       ...(limit === undefined ? {} : { limit }),
       showDotfiles,
       showGeneratedInternal,
+      showGitignoredFiles,
     },
   }).then((entries) => {
     if (!Array.isArray(entries)) {

@@ -98,6 +98,7 @@ struct FileQuery {
     max_open_bytes: Option<u64>,
     show_dotfiles: Option<bool>,
     show_generated_internal: Option<bool>,
+    show_gitignored_files: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -105,6 +106,7 @@ struct FileQuery {
 struct FilesQuery {
     show_dotfiles: Option<bool>,
     show_generated_internal: Option<bool>,
+    show_gitignored_files: Option<bool>,
     tree_scan_limit: Option<usize>,
 }
 
@@ -121,6 +123,7 @@ struct IndexedFilesQuery {
     limit: Option<usize>,
     show_dotfiles: Option<bool>,
     show_generated_internal: Option<bool>,
+    show_gitignored_files: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -129,6 +132,7 @@ struct AdvanceWorkspaceIndexQuery {
     entry_limit: Option<usize>,
     show_dotfiles: Option<bool>,
     show_generated_internal: Option<bool>,
+    show_gitignored_files: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -506,6 +510,7 @@ async fn files(
         tree_scan_limit,
         query.show_dotfiles.unwrap_or(false),
         query.show_generated_internal.unwrap_or(false),
+        query.show_gitignored_files.unwrap_or(true),
     )?;
     state.workspace_index.reconcile_scanned_entries(
         &workspace_root,
@@ -545,6 +550,7 @@ async fn indexed_files(
         expansion_limit,
         query.show_dotfiles.unwrap_or(false),
         query.show_generated_internal.unwrap_or(false),
+        query.show_gitignored_files.unwrap_or(true),
     )?))
 }
 
@@ -578,6 +584,7 @@ async fn advance_workspace_index_route(
         entry_limit,
         query.show_dotfiles.unwrap_or(false),
         query.show_generated_internal.unwrap_or(false),
+        query.show_gitignored_files.unwrap_or(true),
     )?))
 }
 
@@ -589,6 +596,7 @@ fn search_indexed_files_with_expansion(
     expansion_limit: usize,
     show_dotfiles: bool,
     show_generated_internal: bool,
+    show_gitignored_files: bool,
 ) -> Result<Vec<FileEntry>, ApiError> {
     let mut results = index.search_files(root, query, limit)?;
     if query.trim().is_empty() || results.len() >= limit {
@@ -609,6 +617,7 @@ fn search_indexed_files_with_expansion(
             &directory,
             show_dotfiles,
             show_generated_internal,
+            show_gitignored_files,
         ) {
             Ok(entries) => entries,
             Err(error) if !directory.is_empty() && stale_indexed_directory_error(&error) => {
@@ -643,6 +652,7 @@ async fn directory(
         &query.path,
         query.show_dotfiles.unwrap_or(false),
         query.show_generated_internal.unwrap_or(false),
+        query.show_gitignored_files.unwrap_or(true),
     )?;
     state
         .workspace_index
@@ -1514,9 +1524,17 @@ mod tests {
             .replace_directory_entries(dir.path(), "", &[test_file_entry("missing", None, true)])
             .unwrap();
 
-        let results =
-            search_indexed_files_with_expansion(&index, dir.path(), "needle", 10, 20, false, false)
-                .unwrap();
+        let results = search_indexed_files_with_expansion(
+            &index,
+            dir.path(),
+            "needle",
+            10,
+            20,
+            false,
+            false,
+            true,
+        )
+        .unwrap();
 
         assert!(results.is_empty());
         assert!(index.entries_for_root(dir.path()).unwrap().is_empty());
@@ -1685,6 +1703,7 @@ mod tests {
                 entry_limit: Some(100),
                 show_dotfiles: Some(false),
                 show_generated_internal: Some(false),
+                show_gitignored_files: Some(true),
             }),
         )
         .await

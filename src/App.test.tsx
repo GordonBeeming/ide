@@ -435,6 +435,7 @@ describe("App shell interactions", () => {
           2000,
           false,
           false,
+          true,
         ),
       { timeout: 1500 },
     );
@@ -652,7 +653,7 @@ describe("App shell interactions", () => {
 
     fireEvent.click(await treeButton("src"));
 
-    expect(tauriMocks.listDirectory).toHaveBeenCalledWith("src", false, false);
+    expect(tauriMocks.listDirectory).toHaveBeenCalledWith("src", false, false, true);
     expect(await treeButton("App.tsx")).toBeInTheDocument();
   });
 
@@ -744,7 +745,7 @@ describe("App shell interactions", () => {
     render(<App />);
 
     await waitFor(() =>
-      expect(tauriMocks.listFiles).toHaveBeenCalledWith(true, true, 12000),
+      expect(tauriMocks.listFiles).toHaveBeenCalledWith(true, true, 12000, true),
     );
     expect(await treeButton("App.tsx")).toHaveClass("tree-row--active");
     const tab = await findTab("src/App.tsx");
@@ -970,7 +971,7 @@ describe("App shell interactions", () => {
     fireEvent.click(await screen.findByLabelText("Show dotfiles and dot folders"));
 
     await waitFor(() =>
-      expect(tauriMocks.listFiles).toHaveBeenLastCalledWith(true, false, 10000),
+      expect(tauriMocks.listFiles).toHaveBeenLastCalledWith(true, false, 10000, true),
     );
     await waitFor(() =>
       expect(tauriMocks.updateUiState).toHaveBeenLastCalledWith(
@@ -1008,7 +1009,7 @@ describe("App shell interactions", () => {
     fireEvent.click(await screen.findByLabelText("Show generated and internal folders"));
 
     await waitFor(() =>
-      expect(tauriMocks.listFiles).toHaveBeenLastCalledWith(false, true, 10000),
+      expect(tauriMocks.listFiles).toHaveBeenLastCalledWith(false, true, 10000, true),
     );
     await waitFor(() =>
       expect(tauriMocks.updateUiState).toHaveBeenLastCalledWith(
@@ -1022,6 +1023,43 @@ describe("App shell interactions", () => {
       ),
     );
     expect(await treeButton("node_modules")).toBeInTheDocument();
+  });
+
+  it("reloads the tree when gitignored files are hidden from Settings", async () => {
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    const configFile = {
+      path: "config.json",
+      name: "config.json",
+      parent: undefined,
+      isDir: false,
+      depth: 0,
+      size: 2,
+      modifiedMs: 404,
+    };
+    tauriMocks.listFiles
+      .mockResolvedValueOnce([...files, configFile])
+      .mockResolvedValueOnce(files);
+
+    render(<App />);
+
+    expect(await treeButton("config.json")).toBeInTheDocument();
+    await openSettingsDialog();
+    fireEvent.click(await screen.findByLabelText("Show gitignored files"));
+
+    await waitFor(() =>
+      expect(tauriMocks.listFiles).toHaveBeenLastCalledWith(false, false, 10000, false),
+    );
+    await waitFor(() =>
+      expect(tauriMocks.updateUiState).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          showDotfiles: false,
+          showGeneratedInternal: false,
+          showGitignoredFiles: false,
+          treeScanLimit: 10000,
+        }),
+        expect.any(Object),
+      ),
+    );
   });
 
   it("applies the tree scan limit from Settings", async () => {
@@ -1039,7 +1077,7 @@ describe("App shell interactions", () => {
     });
 
     await waitFor(() =>
-      expect(tauriMocks.listFiles).toHaveBeenLastCalledWith(false, false, 8000),
+      expect(tauriMocks.listFiles).toHaveBeenLastCalledWith(false, false, 8000, true),
     );
     await waitFor(() =>
       expect(tauriMocks.updateUiState).toHaveBeenLastCalledWith(
@@ -1359,14 +1397,14 @@ describe("App shell interactions", () => {
 
     expect(screen.getByRole("dialog", { name: "Key Bindings" })).toBeInTheDocument();
     expect(screen.getByText("Save All")).toBeInTheDocument();
-    expect(screen.getByText("Cmd/Ctrl+Shift+S")).toBeInTheDocument();
+    expect(screen.getByText("Ctrl+S")).toBeInTheDocument();
 
     fireEvent.change(screen.getByLabelText("Search key bindings"), {
       target: { value: "definition" },
     });
 
     expect(screen.getByText("Go to Definition")).toBeInTheDocument();
-    expect(screen.getByText("F12")).toBeInTheDocument();
+    expect(screen.getByText("Ctrl+B")).toBeInTheDocument();
     expect(screen.queryByText("Save All")).not.toBeInTheDocument();
   });
 
@@ -1505,12 +1543,18 @@ describe("App shell interactions", () => {
     render(<App />);
 
     expect(await treeButton("README.md")).toBeInTheDocument();
-    fireEvent.keyDown(window, { key: "p", metaKey: true });
+    fireEvent.keyDown(window, { key: "n", ctrlKey: true, shiftKey: true });
     const input = await screen.findByPlaceholderText("Open file");
     fireEvent.change(input, { target: { value: "nested" } });
 
     await waitFor(() =>
-      expect(tauriMocks.searchIndexedFiles).toHaveBeenCalledWith("nested", 12, false, false),
+      expect(tauriMocks.searchIndexedFiles).toHaveBeenCalledWith(
+        "nested",
+        12,
+        false,
+        false,
+        true,
+      ),
     );
     expect(await screen.findByText("deep/Nested.ts")).toBeInTheDocument();
     fireEvent.keyDown(input, { key: "Enter" });
@@ -1525,7 +1569,7 @@ describe("App shell interactions", () => {
     render(<App />);
 
     expect(await treeButton("README.md")).toBeInTheDocument();
-    fireEvent.keyDown(window, { key: "p", metaKey: true });
+    fireEvent.keyDown(window, { key: "n", ctrlKey: true, shiftKey: true });
     const input = await screen.findByPlaceholderText("Open file");
     fireEvent.change(input, { target: { value: "needle" } });
 
@@ -1554,22 +1598,22 @@ describe("App shell interactions", () => {
 
     expect(await treeButton("README.md")).toBeInTheDocument();
 
-    fireEvent.keyDown(window, { key: "f", metaKey: true, shiftKey: true });
+    fireEvent.keyDown(window, { key: "f", ctrlKey: true, shiftKey: true });
 
     expect(await screen.findByPlaceholderText("Search contents")).toHaveFocus();
   });
 
-  it("opens new file and new folder dialogs from keyboard shortcuts", async () => {
+  it("opens the new file dialog from the IntelliJ new shortcut", async () => {
     render(<App />);
 
     expect(await treeButton("README.md")).toBeInTheDocument();
 
-    fireEvent.keyDown(window, { key: "n", metaKey: true });
+    fireEvent.keyDown(window, { key: "Insert", ctrlKey: true, altKey: true });
 
     expect(screen.getByRole("dialog", { name: "New file" })).toBeInTheDocument();
     fireEvent.keyDown(window, { key: "Escape" });
 
-    fireEvent.keyDown(window, { key: "n", metaKey: true, shiftKey: true });
+    fireEvent.click(screen.getByTitle("New folder"));
 
     expect(screen.getByRole("dialog", { name: "New folder" })).toBeInTheDocument();
     expect(screen.queryByRole("dialog", { name: "New file" })).not.toBeInTheDocument();
@@ -1601,7 +1645,7 @@ describe("App shell interactions", () => {
     expect(tauriMocks.recordRecentFile).toHaveBeenCalledWith("notes.md", true);
   });
 
-  it("opens a native file picker result from the keyboard", async () => {
+  it("keeps the old file-picker shortcut unbound", async () => {
     (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
     mockPickedNotesFile();
 
@@ -1610,11 +1654,10 @@ describe("App shell interactions", () => {
     expect(await treeButton("README.md")).toBeInTheDocument();
     fireEvent.keyDown(window, { key: "o", metaKey: true });
 
-    expect(await screen.findByLabelText("Editor notes.md")).toHaveValue("# Notes");
-    expect(tauriMocks.pickOpenFile).toHaveBeenCalledTimes(1);
+    expect(tauriMocks.pickOpenFile).not.toHaveBeenCalled();
   });
 
-  it("opens a native workspace folder from the keyboard", async () => {
+  it("opens a native workspace folder from the toolbar", async () => {
     (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
     tauriMocks.getWorkspaceRoot.mockReset();
     tauriMocks.getWorkspaceRoot
@@ -1650,7 +1693,7 @@ describe("App shell interactions", () => {
     render(<App />);
 
     expect(await treeButton("README.md")).toBeInTheDocument();
-    fireEvent.keyDown(window, { key: "o", metaKey: true, shiftKey: true });
+    fireEvent.click(screen.getByTitle("Open folder"));
 
     expect(await treeButton("next.md")).toBeInTheDocument();
     await waitFor(() =>
@@ -1667,7 +1710,7 @@ describe("App shell interactions", () => {
 
     expect(await treeButton("README.md")).toBeInTheDocument();
 
-    fireEvent.keyDown(window, { key: "p", metaKey: true, shiftKey: true });
+    fireEvent.keyDown(window, { key: "a", ctrlKey: true, shiftKey: true });
 
     const palette = screen.getByRole("dialog", { name: "Command palette" });
     const input = within(palette).getByPlaceholderText("Run command");
@@ -1704,7 +1747,7 @@ describe("App shell interactions", () => {
     render(<App />);
 
     expect(await treeButton("README.md")).toBeInTheDocument();
-    fireEvent.keyDown(window, { key: "p", metaKey: true, shiftKey: true });
+    fireEvent.keyDown(window, { key: "a", ctrlKey: true, shiftKey: true });
 
     const palette = screen.getByRole("dialog", { name: "Command palette" });
     const input = within(palette).getByPlaceholderText("Run command");
@@ -1725,7 +1768,7 @@ describe("App shell interactions", () => {
     render(<App />);
 
     expect(await treeButton("README.md")).toBeInTheDocument();
-    fireEvent.keyDown(window, { key: "p", metaKey: true, shiftKey: true });
+    fireEvent.keyDown(window, { key: "a", ctrlKey: true, shiftKey: true });
 
     const palette = screen.getByRole("dialog", { name: "Command palette" });
     const input = within(palette).getByPlaceholderText("Run command");
@@ -1821,16 +1864,16 @@ describe("App shell interactions", () => {
     expect(screen.getByTitle("Save all")).toBeEnabled();
   });
 
-  it("does not write a clean active file when save is triggered from the keyboard", async () => {
+  it("does not write a clean active file when Save All is triggered from the keyboard", async () => {
     render(<App />);
 
     fireEvent.click(await treeButton("README.md"));
     await findTab("README.md");
 
-    fireEvent.keyDown(window, { key: "s", metaKey: true });
+    fireEvent.keyDown(window, { key: "s", ctrlKey: true });
 
     expect(tauriMocks.writeFile).not.toHaveBeenCalled();
-    expect(await screen.findByText("No unsaved changes")).toBeInTheDocument();
+    expect(await screen.findByText("No unsaved files")).toBeInTheDocument();
   });
 
   it("keeps preview tabs temporary until the file is edited", async () => {
@@ -1926,7 +1969,7 @@ describe("App shell interactions", () => {
     const dialog = await screen.findByRole("alertdialog", {
       name: "Close modified file?",
     });
-    fireEvent.keyDown(window, { key: "s", metaKey: true });
+    fireEvent.keyDown(window, { key: "s", ctrlKey: true });
 
     expect(tauriMocks.writeFile).not.toHaveBeenCalled();
     expect(dialog).toBeInTheDocument();
@@ -2285,7 +2328,7 @@ describe("App shell interactions", () => {
     expect(document.querySelectorAll(".dirty-dot")).toHaveLength(1);
   });
 
-  it("switches open tabs with numbered keyboard shortcuts", async () => {
+  it("switches open tabs with IntelliJ tab shortcuts", async () => {
     render(<App />);
 
     fireEvent.doubleClick(await treeButton("README.md"));
@@ -2297,12 +2340,12 @@ describe("App shell interactions", () => {
       "export function App() {}",
     );
 
-    fireEvent.keyDown(window, { key: "1", metaKey: true });
+    fireEvent.keyDown(window, { key: "ArrowLeft", altKey: true });
 
     expect(screen.getByLabelText("Editor README.md")).toHaveValue("readme");
     expect(tabButton("README.md")).toHaveClass("tab--active");
 
-    fireEvent.keyDown(window, { key: "9", metaKey: true });
+    fireEvent.keyDown(window, { key: "ArrowRight", altKey: true });
 
     expect(screen.getByLabelText("Editor src/App.tsx")).toHaveValue(
       "export function App() {}",
@@ -2412,7 +2455,7 @@ describe("App shell interactions", () => {
         modifiedMs: 304,
       },
     ]);
-    fireEvent.keyDown(window, { key: "r", metaKey: true });
+    fireEvent.keyDown(window, { key: "y", ctrlKey: true, altKey: true });
 
     await waitFor(() =>
       expect(screen.getByLabelText("Editor README.md")).toHaveValue(
@@ -2427,7 +2470,7 @@ describe("App shell interactions", () => {
 
     expect(await treeButton("README.md")).toBeInTheDocument();
 
-    fireEvent.keyDown(window, { key: "r", metaKey: true });
+    fireEvent.keyDown(window, { key: "y", ctrlKey: true, altKey: true });
 
     expect(screen.getByText("Reload from disk requires an open file")).toBeInTheDocument();
     expect(tauriMocks.readFile).not.toHaveBeenCalled();
