@@ -345,6 +345,8 @@ describe("hosted Tauri API transport", () => {
         backgroundIndexBatchEntries: 2000,
         workspaceTitleMaxChars: 50,
         commandPaletteResultLimit: 18,
+        dateTimeFormat: "localMedium",
+        recentRelativeThreshold: "oneWeek",
         featureFlags: {},
       },
       workspace: {
@@ -880,5 +882,95 @@ describe("hosted Tauri API transport", () => {
         selectedPath: "src/App.tsx",
       },
     });
+  });
+});
+
+describe("Git attribution response normalization", () => {
+  it("normalizes available attribution with commit actions", async () => {
+    const { normalizeGitAttribution } = await import("./tauri");
+
+    expect(
+      normalizeGitAttribution({
+        path: "README.md",
+        status: "available",
+        file: {
+          sha: "abc123456789",
+          shortSha: "abc12345",
+          authorName: "Gordon Beeming",
+          authorEmail: "gordon@example.com",
+          authoredAtSeconds: 1700000000,
+          summary: "Add readme",
+          actions: [
+            {
+              provider: "GitHub",
+              remoteName: "origin",
+              label: "Open in GitHub",
+              url: "https://github.com/GordonBeeming/ide/commit/abc123456789",
+            },
+          ],
+        },
+        lines: [
+          {
+            lineNumber: 1,
+            commit: {
+              sha: "abc123456789",
+              shortSha: "abc12345",
+              authorName: "Gordon Beeming",
+              authoredAtSeconds: 1700000000,
+              summary: "Add readme",
+              actions: [],
+            },
+          },
+        ],
+      }),
+    ).toEqual({
+      path: "README.md",
+      status: "available",
+      unsupportedReason: undefined,
+      file: {
+        sha: "abc123456789",
+        shortSha: "abc12345",
+        authorName: "Gordon Beeming",
+        authorEmail: "gordon@example.com",
+        authoredAtSeconds: 1700000000,
+        summary: "Add readme",
+        actions: [
+          {
+            provider: "GitHub",
+            remoteName: "origin",
+            label: "Open in GitHub",
+            url: "https://github.com/GordonBeeming/ide/commit/abc123456789",
+          },
+        ],
+      },
+      lines: [
+        {
+          lineNumber: 1,
+          commit: {
+            sha: "abc123456789",
+            shortSha: "abc12345",
+            authorName: "Gordon Beeming",
+            authorEmail: undefined,
+            authoredAtSeconds: 1700000000,
+            summary: "Add readme",
+            actions: [],
+          },
+        },
+      ],
+    });
+  });
+
+  it("rejects malformed attribution payloads", async () => {
+    const { normalizeGitAttribution } = await import("./tauri");
+
+    expect(normalizeGitAttribution({ path: "README.md", status: "available" })).toBeUndefined();
+    expect(
+      normalizeGitAttribution({
+        path: "README.md",
+        status: "available",
+        file: null,
+        lines: [{ lineNumber: 0, commit: {} }],
+      }),
+    ).toBeUndefined();
   });
 });

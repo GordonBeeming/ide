@@ -1,5 +1,5 @@
 import "@testing-library/jest-dom/vitest";
-import { render, waitFor } from "@testing-library/react";
+import { fireEvent, render, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import EditorPane from "./EditorPane";
 import { lspExtensionsForPath } from "./lsp";
@@ -109,6 +109,50 @@ describe("EditorPane", () => {
       ),
     );
     expect(onError).not.toHaveBeenCalled();
+  });
+
+  it("renders current-line Git attribution as ghost text", async () => {
+    const onGitCommitClick = vi.fn();
+    const commit = {
+      sha: "abc123456789",
+      shortSha: "abc12345",
+      authorName: "Gordon Beeming",
+      authoredAtSeconds: Math.floor(Date.now() / 1000) - 60,
+      summary: "Add editor attribution",
+      actions: [],
+    };
+    const { container } = render(
+      <EditorPane
+        contents={"first\nsecond"}
+        dateTimeFormat="yyyyMmDdHhMm"
+        recentRelativeThreshold="never"
+        gitAttribution={{
+          path: "src/App.tsx",
+          status: "available",
+          file: commit,
+          lines: [{ lineNumber: 1, commit }],
+        }}
+        onChange={vi.fn()}
+        onError={vi.fn()}
+        onGitCommitClick={onGitCommitClick}
+        onSelection={vi.fn()}
+        path="src/App.tsx"
+      />,
+    );
+
+    await waitFor(() => {
+      expect(container.querySelector(".git-attribution-ghost")).toHaveTextContent(
+        "Gordon Beeming",
+      );
+    });
+    expect(container.querySelector(".git-attribution-ghost")).toHaveTextContent(
+      /\d{4}-\d{2}-\d{2} \d{2}:\d{2}/,
+    );
+
+    fireEvent.click(container.querySelector(".git-attribution-ghost")!);
+
+    expect(onGitCommitClick).toHaveBeenCalledWith(commit);
+    expect(editorText(container)).toContain("first");
   });
 });
 

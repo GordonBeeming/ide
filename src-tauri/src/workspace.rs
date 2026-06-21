@@ -820,7 +820,7 @@ fn nearest_existing_ancestor(path: &Path) -> Result<PathBuf, WorkspaceError> {
     }
 }
 
-fn resolve_existing_workspace_file_path(
+pub(crate) fn resolve_existing_workspace_file_path(
     root: &Path,
     relative: &str,
 ) -> Result<PathBuf, WorkspaceError> {

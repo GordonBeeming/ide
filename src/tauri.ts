@@ -1,4 +1,10 @@
 import { invoke } from "@tauri-apps/api/core";
+import {
+  defaultDateTimeFormat,
+  defaultRecentRelativeThreshold,
+  type DateTimeFormatId,
+  type RecentRelativeThresholdId,
+} from "./dateTimeFormat";
 
 export interface FileEntry {
   path: string;
@@ -86,6 +92,38 @@ export interface SearchResult {
   skippedFiles?: number;
 }
 
+export type GitAttributionStatus = "available" | "unsupported";
+
+export interface GitCommitAction {
+  provider: string;
+  remoteName: string;
+  label: string;
+  url: string;
+}
+
+export interface GitCommitInfo {
+  sha: string;
+  shortSha: string;
+  authorName: string;
+  authorEmail?: string;
+  authoredAtSeconds?: number;
+  summary: string;
+  actions: GitCommitAction[];
+}
+
+export interface GitLineAttribution {
+  lineNumber: number;
+  commit: GitCommitInfo;
+}
+
+export interface GitAttribution {
+  path: string;
+  status: GitAttributionStatus;
+  unsupportedReason?: string;
+  file?: GitCommitInfo;
+  lines: GitLineAttribution[];
+}
+
 export interface OpenFileRequest {
   workspaceRoot: string;
   path: string;
@@ -119,6 +157,8 @@ export interface PersistedViewSettings {
   backgroundIndexBatchEntries?: number;
   workspaceTitleMaxChars?: number;
   commandPaletteResultLimit?: number;
+  dateTimeFormat?: DateTimeFormatId;
+  recentRelativeThreshold?: RecentRelativeThresholdId;
   // Persisted feature-flag overrides only; defaults live in src/featureFlags.ts.
   featureFlags?: Record<string, boolean>;
 }
@@ -180,6 +220,8 @@ const defaultUiSnapshot: PersistedUiSnapshot = {
     backgroundIndexBatchEntries: 2000,
     workspaceTitleMaxChars: 50,
     commandPaletteResultLimit: 18,
+    dateTimeFormat: defaultDateTimeFormat,
+    recentRelativeThreshold: defaultRecentRelativeThreshold,
     featureFlags: {},
   },
   workspace: {
@@ -446,12 +488,136 @@ export function statFile(path: string) {
   );
 }
 
+export function getGitAttribution(path: string) {
+  return callApi<unknown>(
+    "get_git_attribution",
+    `/api/git-attribution?path=${encodeURIComponent(path)}`,
+    {
+      method: "GET",
+      invokeArgs: { path },
+    },
+  ).then((value) => {
+    const normalized = normalizeGitAttribution(value);
+    if (!normalized) {
+      throw new Error("Git attribution response was not valid JSON");
+    }
+    return normalized;
+  });
+}
+
 export function writeFile(path: string, contents: string, expectedModifiedMs?: number) {
   return callApi<void>("write_file", "/api/file", {
     method: "PUT",
     body: { path, contents, expectedModifiedMs },
     invokeArgs: { path, contents, expectedModifiedMs },
   });
+}
+
+export function normalizeGitAttribution(value: unknown): GitAttribution | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const candidate = value as Record<string, unknown>;
+  if (typeof candidate.path !== "string") return undefined;
+  if (candidate.status !== "available" && candidate.status !== "unsupported") {
+    return undefined;
+  }
+  if (!Array.isArray(candidate.lines)) return undefined;
+
+  const lines = candidate.lines
+    .map(normalizeGitLineAttribution)
+    .filter((line): line is GitLineAttribution => Boolean(line));
+  if (lines.length !== candidate.lines.length) return undefined;
+
+  const file =
+    candidate.file === undefined || candidate.file === null
+      ? undefined
+      : normalizeGitCommitInfo(candidate.file);
+  if (candidate.file !== undefined && candidate.file !== null && !file) {
+    return undefined;
+  }
+
+  return {
+    path: candidate.path,
+    status: candidate.status,
+    unsupportedReason:
+      typeof candidate.unsupportedReason === "string"
+        ? candidate.unsupportedReason
+        : undefined,
+    file,
+    lines,
+  };
+}
+
+function normalizeGitLineAttribution(value: unknown): GitLineAttribution | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const candidate = value as Record<string, unknown>;
+  if (!Number.isInteger(candidate.lineNumber) || (candidate.lineNumber as number) < 1) {
+    return undefined;
+  }
+  const commit = normalizeGitCommitInfo(candidate.commit);
+  if (!commit) return undefined;
+  return {
+    lineNumber: candidate.lineNumber as number,
+    commit,
+  };
+}
+
+function normalizeGitCommitInfo(value: unknown): GitCommitInfo | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const candidate = value as Record<string, unknown>;
+  if (
+    typeof candidate.sha !== "string" ||
+    typeof candidate.shortSha !== "string" ||
+    typeof candidate.authorName !== "string" ||
+    typeof candidate.summary !== "string" ||
+    !Array.isArray(candidate.actions)
+  ) {
+    return undefined;
+  }
+  if (
+    candidate.authoredAtSeconds !== undefined &&
+    candidate.authoredAtSeconds !== null &&
+    typeof candidate.authoredAtSeconds !== "number"
+  ) {
+    return undefined;
+  }
+
+  const actions = candidate.actions
+    .map(normalizeGitCommitAction)
+    .filter((action): action is GitCommitAction => Boolean(action));
+  if (actions.length !== candidate.actions.length) return undefined;
+
+  return {
+    sha: candidate.sha,
+    shortSha: candidate.shortSha,
+    authorName: candidate.authorName,
+    authorEmail:
+      typeof candidate.authorEmail === "string" ? candidate.authorEmail : undefined,
+    authoredAtSeconds:
+      typeof candidate.authoredAtSeconds === "number"
+        ? candidate.authoredAtSeconds
+        : undefined,
+    summary: candidate.summary,
+    actions,
+  };
+}
+
+function normalizeGitCommitAction(value: unknown): GitCommitAction | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const candidate = value as Record<string, unknown>;
+  if (
+    typeof candidate.provider !== "string" ||
+    typeof candidate.remoteName !== "string" ||
+    typeof candidate.label !== "string" ||
+    typeof candidate.url !== "string"
+  ) {
+    return undefined;
+  }
+  return {
+    provider: candidate.provider,
+    remoteName: candidate.remoteName,
+    label: candidate.label,
+    url: candidate.url,
+  };
 }
 
 export function createFile(path: string) {

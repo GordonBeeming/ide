@@ -1,4 +1,5 @@
 mod claude_bridge;
+mod git_attribution;
 mod http_server;
 mod lsp;
 mod workspace;
@@ -185,6 +186,10 @@ struct PersistedViewSettings {
     workspace_title_max_chars: usize,
     #[serde(default = "default_command_palette_result_limit")]
     command_palette_result_limit: usize,
+    #[serde(default = "default_date_time_format")]
+    date_time_format: String,
+    #[serde(default = "default_recent_relative_threshold")]
+    recent_relative_threshold: String,
     // Persisted feature-flag overrides only. Defaults and metadata live in the
     // frontend registry (src/featureFlags.ts); unknown/retired ids are pruned by
     // sanitize_view_settings so the settings file stays tidy as flags retire.
@@ -209,6 +214,8 @@ impl Default for PersistedViewSettings {
             background_index_batch_entries: default_background_index_batch_entries(),
             workspace_title_max_chars: default_workspace_title_max_chars(),
             command_palette_result_limit: default_command_palette_result_limit(),
+            date_time_format: default_date_time_format(),
+            recent_relative_threshold: default_recent_relative_threshold(),
             feature_flags: BTreeMap::new(),
         }
     }
@@ -254,6 +261,22 @@ const MIN_COMMAND_PALETTE_RESULT_LIMIT: usize = 5;
 const DEFAULT_COMMAND_PALETTE_RESULT_LIMIT: usize = 18;
 const MAX_COMMAND_PALETTE_RESULT_LIMIT: usize = 100;
 const CODEX_MCP_TOKEN_FILE: &str = "codex-mcp-token";
+const DEFAULT_DATE_TIME_FORMAT: &str = "localMedium";
+const DEFAULT_RECENT_RELATIVE_THRESHOLD: &str = "oneWeek";
+const KNOWN_DATE_TIME_FORMATS: &[&str] = &[
+    "localShort",
+    "localMedium",
+    "localLong",
+    "isoDateTime",
+    "yyyyMmDdHhMm",
+    "ddMmYyyyHhMm",
+    "mmDdYyyyHhMm",
+    "dateOnly",
+    "timeOnly",
+];
+const KNOWN_RECENT_RELATIVE_THRESHOLDS: &[&str] = &[
+    "never", "oneDay", "twoDays", "oneWeek", "twoWeeks", "oneMonth",
+];
 
 fn default_tree_scan_limit() -> usize {
     DEFAULT_TREE_SCAN_LIMIT
@@ -295,6 +318,14 @@ fn default_command_palette_result_limit() -> usize {
     DEFAULT_COMMAND_PALETTE_RESULT_LIMIT
 }
 
+fn default_date_time_format() -> String {
+    DEFAULT_DATE_TIME_FORMAT.to_string()
+}
+
+fn default_recent_relative_threshold() -> String {
+    DEFAULT_RECENT_RELATIVE_THRESHOLD.to_string()
+}
+
 fn sanitize_view_settings(mut settings: PersistedViewSettings) -> PersistedViewSettings {
     settings.tree_scan_limit = settings
         .tree_scan_limit
@@ -332,6 +363,12 @@ fn sanitize_view_settings(mut settings: PersistedViewSettings) -> PersistedViewS
         MIN_COMMAND_PALETTE_RESULT_LIMIT,
         MAX_COMMAND_PALETTE_RESULT_LIMIT,
     );
+    if !KNOWN_DATE_TIME_FORMATS.contains(&settings.date_time_format.as_str()) {
+        settings.date_time_format = default_date_time_format();
+    }
+    if !KNOWN_RECENT_RELATIVE_THRESHOLDS.contains(&settings.recent_relative_threshold.as_str()) {
+        settings.recent_relative_threshold = default_recent_relative_threshold();
+    }
     settings
         .feature_flags
         .retain(|id, _| KNOWN_FEATURE_FLAGS.contains(&id.as_str()));
@@ -787,6 +824,16 @@ async fn stat_file(
 ) -> Result<workspace::FileEntry, CommandError> {
     let workspace_root = workspace_root_for_window(&state, &window).await;
     workspace_file_entry(&workspace_root, &path).map_err(CommandError::from)
+}
+
+#[tauri::command]
+async fn get_git_attribution(
+    window: tauri::Window,
+    state: State<'_, AppState>,
+    path: String,
+) -> Result<git_attribution::GitAttribution, CommandError> {
+    let workspace_root = workspace_root_for_window(&state, &window).await;
+    Ok(git_attribution::attribution_for_file(&workspace_root, &path).await)
 }
 
 #[tauri::command]
@@ -1696,6 +1743,7 @@ pub fn run() {
             search_indexed_files,
             read_file,
             stat_file,
+            get_git_attribution,
             write_file,
             create_file,
             create_folder,
@@ -3077,6 +3125,8 @@ mod tests {
                 background_index_batch_entries: 3_000,
                 workspace_title_max_chars: 50,
                 command_palette_result_limit: 32,
+                date_time_format: "yyyyMmDdHhMm".to_string(),
+                recent_relative_threshold: "twoDays".to_string(),
                 feature_flags: BTreeMap::new(),
             },
             workspaces: vec![PersistedWorkspaceUiState {
@@ -3102,6 +3152,8 @@ mod tests {
         assert_eq!(loaded.view.current_file_result_preview_limit, 16);
         assert_eq!(loaded.view.quick_open_result_limit, 24);
         assert_eq!(loaded.view.command_palette_result_limit, 32);
+        assert_eq!(loaded.view.date_time_format, "yyyyMmDdHhMm");
+        assert_eq!(loaded.view.recent_relative_threshold, "twoDays");
         assert_eq!(loaded.workspaces.len(), 1);
 
         *state.ui_state.write().unwrap() = loaded;
@@ -3155,12 +3207,17 @@ mod tests {
 
         std::fs::write(
             &ui_state_path,
-            r#"{"view":{"showDotfiles":false,"showGeneratedInternal":false,"featureFlags":{"gitAttribution":false,"ghostFlag":true}},"workspaces":[]}"#,
+            r#"{"view":{"showDotfiles":false,"showGeneratedInternal":false,"dateTimeFormat":"relative","recentRelativeThreshold":"bogus","featureFlags":{"gitAttribution":false,"ghostFlag":true}},"workspaces":[]}"#,
         )
         .unwrap();
 
         let loaded = load_ui_state(&ui_state_path).unwrap();
         assert!(!loaded.view.show_gitignored_files);
+        assert_eq!(loaded.view.date_time_format, DEFAULT_DATE_TIME_FORMAT);
+        assert_eq!(
+            loaded.view.recent_relative_threshold,
+            DEFAULT_RECENT_RELATIVE_THRESHOLD
+        );
         assert_eq!(
             loaded.view.feature_flags.get("gitAttribution"),
             Some(&false)

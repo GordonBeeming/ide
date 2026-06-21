@@ -2,9 +2,11 @@ import { useEffect, useRef } from "react";
 import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
 import { bracketMatching, defaultHighlightStyle, foldGutter, syntaxHighlighting } from "@codemirror/language";
 import { highlightSelectionMatches, searchKeymap } from "@codemirror/search";
-import { EditorState } from "@codemirror/state";
+import { Compartment, EditorState } from "@codemirror/state";
 import {
   crosshairCursor,
+  Decoration,
+  type DecorationSet,
   drawSelection,
   dropCursor,
   EditorView,
@@ -14,11 +16,22 @@ import {
   keymap,
   lineNumbers,
   rectangularSelection,
+  ViewPlugin,
+  type ViewUpdate,
+  WidgetType,
 } from "@codemirror/view";
 import { findReferences, jumpToDefinition } from "@codemirror/lsp-client";
+import {
+  defaultDateTimeFormat,
+  defaultRecentRelativeThreshold,
+  formatDateTime,
+  formatDateTimeAbsolute,
+  type DateTimeFormatId,
+  type RecentRelativeThresholdId,
+} from "./dateTimeFormat";
 import { languageForPath } from "./language";
 import { lspExtensionsForPath } from "./lsp";
-import type { EditorSelection } from "./tauri";
+import type { EditorSelection, GitAttribution, GitCommitInfo } from "./tauri";
 import { clampLineNumber } from "./editorNavigation";
 import { editorThemeExtensions } from "./editorTheme";
 import {
@@ -30,12 +43,16 @@ import type { EditorCursor } from "./editorCursor";
 interface EditorPaneProps {
   path: string;
   contents: string;
+  dateTimeFormat?: DateTimeFormatId;
+  recentRelativeThreshold?: RecentRelativeThresholdId;
   prefersDark?: boolean;
   revealLine?: number;
   focusOnReveal?: boolean;
   editorCommand?: EditorCommandRequest;
+  gitAttribution?: GitAttribution;
   onChange: (path: string, contents: string) => void;
   onError: (message: string) => void;
+  onGitCommitClick?: (commit: GitCommitInfo) => void;
   onNotice?: (message: string) => void;
   onCursor?: (cursor: EditorCursor | undefined) => void;
   onSelection: (selection: EditorSelection | undefined) => void;
@@ -44,18 +61,23 @@ interface EditorPaneProps {
 export default function EditorPane({
   path,
   contents,
+  dateTimeFormat = defaultDateTimeFormat,
+  recentRelativeThreshold = defaultRecentRelativeThreshold,
   editorCommand,
+  gitAttribution,
   focusOnReveal = true,
   prefersDark = false,
   revealLine,
   onChange,
   onError,
+  onGitCommitClick,
   onCursor,
   onNotice,
   onSelection,
 }: EditorPaneProps) {
   const host = useRef<HTMLDivElement | null>(null);
   const viewRef = useRef<EditorView | null>(null);
+  const gitAttributionCompartmentRef = useRef(new Compartment());
   const suppressNextChangeRef = useRef(false);
 
   useEffect(() => {
@@ -95,6 +117,14 @@ export default function EditorPane({
             ...languageExtensions,
             ...lspExtensions,
             EditorView.lineWrapping,
+            gitAttributionCompartmentRef.current.of(
+              gitAttributionExtension(
+                gitAttribution,
+                dateTimeFormat,
+                recentRelativeThreshold,
+                onGitCommitClick,
+              ),
+            ),
             EditorView.updateListener.of((update) => {
               if (update.docChanged) {
                 if (suppressNextChangeRef.current) {
@@ -128,6 +158,21 @@ export default function EditorPane({
       viewRef.current = null;
     };
   }, [path, prefersDark]);
+
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view) return;
+    view.dispatch({
+      effects: gitAttributionCompartmentRef.current.reconfigure(
+        gitAttributionExtension(
+          gitAttribution,
+          dateTimeFormat,
+          recentRelativeThreshold,
+          onGitCommitClick,
+        ),
+      ),
+    });
+  }, [dateTimeFormat, gitAttribution, onGitCommitClick, recentRelativeThreshold]);
 
   useEffect(() => {
     const view = viewRef.current;
@@ -219,4 +264,156 @@ function revealLineInView(
     effects: EditorView.scrollIntoView(position, { y: "center" }),
   });
   if (focus) view.focus();
+}
+
+function gitAttributionExtension(
+  attribution: GitAttribution | undefined,
+  dateTimeFormat: DateTimeFormatId,
+  recentRelativeThreshold: RecentRelativeThresholdId,
+  onGitCommitClick: ((commit: GitCommitInfo) => void) | undefined,
+) {
+  if (!attribution || attribution.status !== "available" || attribution.lines.length === 0) {
+    return [];
+  }
+
+  const byLine = new Map(
+    attribution.lines.map((line) => [line.lineNumber, line.commit] as const),
+  );
+
+  return ViewPlugin.fromClass(
+    class {
+      decorations: DecorationSet;
+
+      constructor(view: EditorView) {
+        this.decorations = buildGitAttributionDecorations(
+          view,
+          byLine,
+          dateTimeFormat,
+          recentRelativeThreshold,
+          onGitCommitClick,
+        );
+      }
+
+      update(update: ViewUpdate) {
+        if (update.selectionSet || update.docChanged || update.viewportChanged) {
+          this.decorations = buildGitAttributionDecorations(
+            update.view,
+            byLine,
+            dateTimeFormat,
+            recentRelativeThreshold,
+            onGitCommitClick,
+          );
+        }
+      }
+    },
+    {
+      decorations: (plugin) => plugin.decorations,
+    },
+  );
+}
+
+function buildGitAttributionDecorations(
+  view: EditorView,
+  byLine: Map<number, GitCommitInfo>,
+  dateTimeFormat: DateTimeFormatId,
+  recentRelativeThreshold: RecentRelativeThresholdId,
+  onGitCommitClick: ((commit: GitCommitInfo) => void) | undefined,
+) {
+  const line = view.state.doc.lineAt(view.state.selection.main.head);
+  const commit = byLine.get(line.number);
+  if (!commit) return Decoration.none;
+
+  return Decoration.set([
+    Decoration.widget({
+      widget: new GitAttributionWidget(
+        commit,
+        dateTimeFormat,
+        recentRelativeThreshold,
+        onGitCommitClick,
+      ),
+      side: 1,
+    }).range(line.to),
+  ]);
+}
+
+class GitAttributionWidget extends WidgetType {
+  constructor(
+    private readonly commit: GitCommitInfo,
+    private readonly dateTimeFormat: DateTimeFormatId,
+    private readonly recentRelativeThreshold: RecentRelativeThresholdId,
+    private readonly onGitCommitClick: ((commit: GitCommitInfo) => void) | undefined,
+  ) {
+    super();
+  }
+
+  eq(other: GitAttributionWidget) {
+    return (
+      other.commit.sha === this.commit.sha &&
+      other.commit.summary === this.commit.summary &&
+      other.dateTimeFormat === this.dateTimeFormat &&
+      other.recentRelativeThreshold === this.recentRelativeThreshold
+    );
+  }
+
+  toDOM() {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "git-attribution-ghost";
+    button.title = fullCommitDescription(
+      this.commit,
+      this.dateTimeFormat,
+      this.recentRelativeThreshold,
+    );
+    button.textContent = [
+      this.commit.authorName,
+      commitTimeLabel(this.commit, this.dateTimeFormat, this.recentRelativeThreshold),
+      this.commit.summary,
+    ]
+      .filter(Boolean)
+      .join(" - ");
+    button.onclick = (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      this.onGitCommitClick?.(this.commit);
+    };
+    return button;
+  }
+
+  ignoreEvent() {
+    return false;
+  }
+}
+
+function commitTimeLabel(
+  commit: GitCommitInfo,
+  dateTimeFormat: DateTimeFormatId,
+  recentRelativeThreshold: RecentRelativeThresholdId,
+) {
+  if (commit.authoredAtSeconds === undefined) return "";
+  return formatDateTime(
+    commit.authoredAtSeconds * 1000,
+    dateTimeFormat,
+    recentRelativeThreshold,
+  );
+}
+
+function fullCommitDescription(
+  commit: GitCommitInfo,
+  dateTimeFormat: DateTimeFormatId,
+  recentRelativeThreshold: RecentRelativeThresholdId,
+) {
+  const date = formatDateTimeAbsolute(
+    commit.authoredAtSeconds === undefined
+      ? undefined
+      : commit.authoredAtSeconds * 1000,
+  );
+  return [
+    commit.authorName,
+    commitTimeLabel(commit, dateTimeFormat, recentRelativeThreshold),
+    commit.shortSha,
+    date,
+    commit.summary,
+  ]
+    .filter(Boolean)
+    .join(" - ");
 }
