@@ -1,4 +1,8 @@
-use std::collections::HashSet;
+// This shell-backed module is a compatibility fallback, not the preferred Git
+// integration path. Prefer gitoxide/gix for Git operations as APIs are adopted
+// in this app, and keep direct `git` command usage limited to behavior that is
+// not yet covered well enough by the embedded library path.
+use std::collections::{HashMap, HashSet};
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::process::ExitStatus;
@@ -66,7 +70,7 @@ struct RemoteTemplate {
     base_url: String,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Default)]
 struct BlameLine {
     line_number: usize,
     sha: String,
@@ -229,14 +233,16 @@ fn parse_commit_record(record: &str, remotes: &[RemoteTemplate]) -> Option<GitCo
 
 fn parse_blame_porcelain(output: &str, remotes: &[RemoteTemplate]) -> Vec<GitLineAttribution> {
     let mut lines = Vec::new();
+    let mut metadata_by_sha = HashMap::<String, BlameLine>::new();
     let mut current = BlameLine::default();
 
     for raw_line in output.lines() {
         if let Some(content) = raw_line.strip_prefix('\t') {
-            let summary = if is_zero_sha(&current.sha) && current.summary.is_empty() {
+            let metadata = blame_metadata(&mut metadata_by_sha, &current);
+            let summary = if is_zero_sha(&current.sha) && metadata.summary.is_empty() {
                 "Uncommitted change".to_string()
             } else {
-                current.summary.clone()
+                metadata.summary.clone()
             };
             let short_sha = if is_zero_sha(&current.sha) {
                 "working tree".to_string()
@@ -246,13 +252,13 @@ fn parse_blame_porcelain(output: &str, remotes: &[RemoteTemplate]) -> Vec<GitLin
             let commit = commit_info(
                 current.sha.clone(),
                 short_sha,
-                if current.author_name.is_empty() {
+                if metadata.author_name.is_empty() {
                     "Not committed yet".to_string()
                 } else {
-                    current.author_name.clone()
+                    metadata.author_name.clone()
                 },
-                current.author_email.clone(),
-                current.authored_at_seconds,
+                metadata.author_email,
+                metadata.authored_at_seconds,
                 if summary.is_empty() {
                     content.trim().to_string()
                 } else {
@@ -292,6 +298,30 @@ fn parse_blame_porcelain(output: &str, remotes: &[RemoteTemplate]) -> Vec<GitLin
     }
 
     lines
+}
+
+fn blame_metadata(
+    metadata_by_sha: &mut HashMap<String, BlameLine>,
+    current: &BlameLine,
+) -> BlameLine {
+    if current.sha.is_empty() {
+        return current.clone();
+    }
+
+    let cached = metadata_by_sha.entry(current.sha.clone()).or_default();
+    if !current.author_name.is_empty() {
+        cached.author_name = current.author_name.clone();
+    }
+    if current.author_email.is_some() {
+        cached.author_email = current.author_email.clone();
+    }
+    if current.authored_at_seconds.is_some() {
+        cached.authored_at_seconds = current.authored_at_seconds;
+    }
+    if !current.summary.is_empty() {
+        cached.summary = current.summary.clone();
+    }
+    cached.clone()
 }
 
 fn commit_info(
@@ -507,6 +537,33 @@ summary
         assert_eq!(lines[1].line_number, 2);
         assert_eq!(lines[1].commit.short_sha, "working tree");
         assert!(lines[1].commit.actions.is_empty());
+    }
+
+    #[test]
+    fn reuses_cached_blame_metadata_for_repeated_commits() {
+        let remotes = Vec::new();
+        let output = "\
+abc123456789abcdef123456789abcdef1234567 1 1 1
+author Gordon Beeming
+author-mail <gordon@example.com>
+author-time 1700000000
+summary Add app shell
+\tfirst line
+abc123456789abcdef123456789abcdef1234567 2 2 1
+\tsecond line
+";
+
+        let lines = parse_blame_porcelain(output, &remotes);
+
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[1].line_number, 2);
+        assert_eq!(lines[1].commit.author_name, "Gordon Beeming");
+        assert_eq!(
+            lines[1].commit.author_email.as_deref(),
+            Some("gordon@example.com")
+        );
+        assert_eq!(lines[1].commit.authored_at_seconds, Some(1_700_000_000));
+        assert_eq!(lines[1].commit.summary, "Add app shell");
     }
 
     #[tokio::test]
