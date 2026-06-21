@@ -513,6 +513,7 @@ summary
     async fn returns_local_file_and_line_attribution() {
         let dir = tempdir().unwrap();
         run_git(dir.path(), ["init"]);
+        run_git(dir.path(), ["symbolic-ref", "HEAD", "refs/heads/main"]);
         run_git(
             dir.path(),
             [
