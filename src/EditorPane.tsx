@@ -178,7 +178,7 @@ export default function EditorPane({
                 emitCursorAndSelection(update.view, path, onCursor, onSelection);
               }
             }),
-            ...editorThemeExtensions(prefersDark, editorFontSize),
+            ...editorThemeExtensions(prefersDark),
           ],
         }),
       });
@@ -197,7 +197,7 @@ export default function EditorPane({
       viewRef.current?.destroy();
       viewRef.current = null;
     };
-  }, [editorFontSize, path, prefersDark]);
+  }, [path, prefersDark]);
 
   useEffect(() => {
     const view = viewRef.current;

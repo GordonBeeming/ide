@@ -173,7 +173,6 @@ vi.mock("./EditorPane", () => ({
     contents,
     dateTimeFormat,
     editorCommand,
-    editorFontSize,
     gitAttribution,
     onChange,
     onCursor,
@@ -185,7 +184,6 @@ vi.mock("./EditorPane", () => ({
     contents: string;
     dateTimeFormat?: import("./dateTimeFormat").DateTimeFormatId;
     editorCommand?: EditorCommandRequest;
-    editorFontSize?: number;
     gitAttribution?: import("./tauri").GitAttribution;
     onChange: (path: string, contents: string) => void;
     onCursor?: (cursor: EditorCursor | undefined) => void;
@@ -221,7 +219,6 @@ vi.mock("./EditorPane", () => ({
           {editorCommand.name}:{editorCommand.nonce}
         </span>
       ) : null}
-      <span data-testid="editor-font-size">{editorFontSize}</span>
       {revealLine ? <span>Reveal line {revealLine}</span> : null}
     </div>
   ),
@@ -1853,11 +1850,12 @@ describe("App shell interactions", () => {
 
     fireEvent.click(await treeButton("README.md"));
     await findTab("README.md");
-    expect(screen.getByTestId("editor-font-size")).toHaveTextContent("13");
+    const shell = document.querySelector(".app-shell") as HTMLElement;
+    expect(shell.style.getPropertyValue("--editor-font-size")).toBe("13px");
 
     fireEvent.keyDown(window, { key: "=", ctrlKey: true });
     expect(await screen.findByText("Editor font size 14px")).toBeInTheDocument();
-    expect(screen.getByTestId("editor-font-size")).toHaveTextContent("14");
+    expect(shell.style.getPropertyValue("--editor-font-size")).toBe("14px");
 
     fireEvent.keyDown(window, { key: "+", ctrlKey: true, shiftKey: true });
     expect(await screen.findByText("App zoom 110%")).toBeInTheDocument();

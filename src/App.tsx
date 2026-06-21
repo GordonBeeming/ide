@@ -1594,30 +1594,26 @@ export default function App() {
   }, []);
 
   const zoomEditor = useCallback((direction: 1 | -1) => {
-    setEditorFontSize((current) => {
-      const next = sanitizeNumberLimit(
-        current + direction * editorFontSizeStep,
-        minEditorFontSize,
-        maxEditorFontSize,
-        defaultEditorFontSize,
-      );
-      setStatus(`Editor font size ${next}px`);
-      return next;
-    });
-  }, []);
+    const next = sanitizeNumberLimit(
+      editorFontSize + direction * editorFontSizeStep,
+      minEditorFontSize,
+      maxEditorFontSize,
+      defaultEditorFontSize,
+    );
+    setEditorFontSize(next);
+    setStatus(`Editor font size ${next}px`);
+  }, [editorFontSize]);
 
   const zoomApp = useCallback((direction: 1 | -1) => {
-    setAppZoomPercent((current) => {
-      const next = sanitizeNumberLimit(
-        current + direction * appZoomStepPercent,
-        minAppZoomPercent,
-        maxAppZoomPercent,
-        defaultAppZoomPercent,
-      );
-      setStatus(`App zoom ${next}%`);
-      return next;
-    });
-  }, []);
+    const next = sanitizeNumberLimit(
+      appZoomPercent + direction * appZoomStepPercent,
+      minAppZoomPercent,
+      maxAppZoomPercent,
+      defaultAppZoomPercent,
+    );
+    setAppZoomPercent(next);
+    setStatus(`App zoom ${next}%`);
+  }, [appZoomPercent]);
 
   const setBoundedSidebarWidth = useCallback((value: number) => {
     setSidebarWidth(
@@ -3180,6 +3176,7 @@ export default function App() {
   const appShellStyle = {
     "--app-zoom": String(appZoomPercent / 100),
     "--app-zoom-inverse": String(100 / appZoomPercent),
+    "--editor-font-size": `${editorFontSize}px`,
     "--sidebar-width": `${sidebarWidth}px`,
   } as CSSProperties;
 
@@ -3588,7 +3585,6 @@ export default function App() {
                 contents={activeFile.contents}
                 dateTimeFormat={dateTimeFormat}
                 editorCommand={editorCommand}
-                editorFontSize={editorFontSize}
                 gitAttribution={activeGitAttribution}
                 isDirty={activeFile.dirty}
                 path={activeFile.path}
