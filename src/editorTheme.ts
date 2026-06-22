@@ -9,7 +9,7 @@ export function editorThemeExtensions(prefersDark: boolean): Extension[] {
 const highContrastTheme = EditorView.theme({
   "&": {
     height: "100%",
-    fontSize: "13px",
+    fontSize: "var(--editor-font-size, 13px)",
     backgroundColor: "var(--editor-bg)",
     color: "var(--editor-text)",
   },

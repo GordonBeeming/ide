@@ -1845,6 +1845,60 @@ describe("App shell interactions", () => {
     expect(await screen.findByPlaceholderText("Search contents")).toHaveFocus();
   });
 
+  it("zooms the editor and app from keyboard shortcuts", async () => {
+    render(<App />);
+
+    fireEvent.click(await treeButton("README.md"));
+    await findTab("README.md");
+    const shell = document.querySelector(".app-shell") as HTMLElement;
+    expect(shell.style.getPropertyValue("--editor-font-size")).toBe("13px");
+
+    fireEvent.keyDown(window, { key: "=", ctrlKey: true });
+    expect(await screen.findByText("Editor font size 14px")).toBeInTheDocument();
+    expect(shell.style.getPropertyValue("--editor-font-size")).toBe("14px");
+
+    fireEvent.keyDown(window, { key: "+", ctrlKey: true, shiftKey: true });
+    expect(await screen.findByText("App zoom 110%")).toBeInTheDocument();
+    expect(
+      (document.querySelector(".app-shell") as HTMLElement).style.getPropertyValue("--app-zoom"),
+    ).toBe("1.1");
+    expect(
+      (document.querySelector(".app-shell") as HTMLElement).style.getPropertyValue(
+        "--app-zoom-inverse",
+      ),
+    ).toBe(String(100 / 110));
+
+    await waitFor(() =>
+      expect(tauriMocks.updateUiState).toHaveBeenCalledWith(
+        expect.objectContaining({
+          editorFontSize: 14,
+          appZoomPercent: 110,
+        }),
+        expect.any(Object),
+      ),
+    );
+  });
+
+  it("resizes the sidebar and persists the workspace width", async () => {
+    render(<App />);
+
+    expect(await treeButton("README.md")).toBeInTheDocument();
+    const shell = document.querySelector(".app-shell") as HTMLElement;
+    expect(shell.style.getPropertyValue("--sidebar-width")).toBe("288px");
+
+    fireEvent.keyDown(screen.getByRole("separator", { name: "Resize sidebar" }), {
+      key: "ArrowRight",
+    });
+
+    expect(shell.style.getPropertyValue("--sidebar-width")).toBe("304px");
+    await waitFor(() =>
+      expect(tauriMocks.updateUiState).toHaveBeenCalledWith(
+        expect.any(Object),
+        expect.objectContaining({ sidebarWidth: 304 }),
+      ),
+    );
+  });
+
   it("opens the new file dialog from the IntelliJ new shortcut", async () => {
     render(<App />);
 

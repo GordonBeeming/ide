@@ -265,6 +265,10 @@ Supported keyboard commands:
 - `Shift+F6`: rename the selected file or folder.
 - `Cmd+B` / `Ctrl+B`: go to definition.
 - `Alt+F7`: find references.
+- `Cmd+=` / `Ctrl+=`: increase the editor font size for all files.
+- `Cmd+-` / `Ctrl+-`: decrease the editor font size for all files.
+- `Cmd+Shift+=` / `Ctrl+Shift+=`: increase the whole app zoom.
+- `Cmd+Shift+-` / `Ctrl+Shift+-`: decrease the whole app zoom.
 - `Cmd+Shift+]` / `Alt+Right`: move to the next tab.
 - `Cmd+Shift+[` / `Alt+Left`: move to the previous tab.
 

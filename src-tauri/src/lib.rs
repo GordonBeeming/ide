@@ -186,6 +186,10 @@ struct PersistedViewSettings {
     workspace_title_max_chars: usize,
     #[serde(default = "default_command_palette_result_limit")]
     command_palette_result_limit: usize,
+    #[serde(default = "default_editor_font_size")]
+    editor_font_size: usize,
+    #[serde(default = "default_app_zoom_percent")]
+    app_zoom_percent: usize,
     #[serde(default = "default_date_time_format")]
     date_time_format: String,
     #[serde(default = "default_recent_relative_threshold")]
@@ -214,6 +218,8 @@ impl Default for PersistedViewSettings {
             background_index_batch_entries: default_background_index_batch_entries(),
             workspace_title_max_chars: default_workspace_title_max_chars(),
             command_palette_result_limit: default_command_palette_result_limit(),
+            editor_font_size: default_editor_font_size(),
+            app_zoom_percent: default_app_zoom_percent(),
             date_time_format: default_date_time_format(),
             recent_relative_threshold: default_recent_relative_threshold(),
             feature_flags: BTreeMap::new(),
@@ -260,6 +266,14 @@ const MAX_WORKSPACE_TITLE_MAX_CHARS: usize = 120;
 const MIN_COMMAND_PALETTE_RESULT_LIMIT: usize = 5;
 const DEFAULT_COMMAND_PALETTE_RESULT_LIMIT: usize = 18;
 const MAX_COMMAND_PALETTE_RESULT_LIMIT: usize = 100;
+const MIN_EDITOR_FONT_SIZE: usize = 10;
+const DEFAULT_EDITOR_FONT_SIZE: usize = 13;
+const MAX_EDITOR_FONT_SIZE: usize = 24;
+const MIN_APP_ZOOM_PERCENT: usize = 80;
+const DEFAULT_APP_ZOOM_PERCENT: usize = 100;
+const MAX_APP_ZOOM_PERCENT: usize = 160;
+const MIN_SIDEBAR_WIDTH: usize = 180;
+const MAX_SIDEBAR_WIDTH: usize = 520;
 const CODEX_MCP_TOKEN_FILE: &str = "codex-mcp-token";
 const DEFAULT_DATE_TIME_FORMAT: &str = "localMedium";
 const DEFAULT_RECENT_RELATIVE_THRESHOLD: &str = "oneWeek";
@@ -318,6 +332,14 @@ fn default_command_palette_result_limit() -> usize {
     DEFAULT_COMMAND_PALETTE_RESULT_LIMIT
 }
 
+fn default_editor_font_size() -> usize {
+    DEFAULT_EDITOR_FONT_SIZE
+}
+
+fn default_app_zoom_percent() -> usize {
+    DEFAULT_APP_ZOOM_PERCENT
+}
+
 fn default_date_time_format() -> String {
     DEFAULT_DATE_TIME_FORMAT.to_string()
 }
@@ -363,6 +385,12 @@ fn sanitize_view_settings(mut settings: PersistedViewSettings) -> PersistedViewS
         MIN_COMMAND_PALETTE_RESULT_LIMIT,
         MAX_COMMAND_PALETTE_RESULT_LIMIT,
     );
+    settings.editor_font_size = settings
+        .editor_font_size
+        .clamp(MIN_EDITOR_FONT_SIZE, MAX_EDITOR_FONT_SIZE);
+    settings.app_zoom_percent = settings
+        .app_zoom_percent
+        .clamp(MIN_APP_ZOOM_PERCENT, MAX_APP_ZOOM_PERCENT);
     if !KNOWN_DATE_TIME_FORMATS.contains(&settings.date_time_format.as_str()) {
         settings.date_time_format = default_date_time_format();
     }
@@ -387,6 +415,8 @@ struct PersistedWorkspaceUiState {
     open_files: Vec<String>,
     active_file: Option<String>,
     selected_path: Option<String>,
+    #[serde(default)]
+    sidebar_width: Option<usize>,
     updated_at: u128,
 }
 
@@ -397,6 +427,7 @@ struct WorkspaceUiStatePayload {
     open_files: Vec<String>,
     active_file: Option<String>,
     selected_path: Option<String>,
+    sidebar_width: Option<usize>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -1136,6 +1167,7 @@ async fn update_ui_state(
         open_files: std::mem::take(&mut workspace.open_files),
         active_file: workspace.active_file.take(),
         selected_path: workspace.selected_path.take(),
+        sidebar_width: workspace.sidebar_width,
         updated_at: now_ms(),
     };
     ui_state
@@ -2232,6 +2264,7 @@ fn workspace_ui_snapshot_for_root(
             open_files: workspace.open_files.clone(),
             active_file: workspace.active_file.clone(),
             selected_path: workspace.selected_path.clone(),
+            sidebar_width: workspace.sidebar_width,
         })
         .unwrap_or_default();
     Ok(PersistedUiSnapshot { view, workspace })
@@ -2260,12 +2293,16 @@ fn sanitize_workspace_ui_state(state: WorkspaceUiStatePayload) -> WorkspaceUiSta
     let selected_path = state
         .selected_path
         .filter(|path| is_safe_relative_path(path));
+    let sidebar_width = state
+        .sidebar_width
+        .map(|width| width.clamp(MIN_SIDEBAR_WIDTH, MAX_SIDEBAR_WIDTH));
 
     WorkspaceUiStatePayload {
         expanded_folders,
         open_files,
         active_file,
         selected_path,
+        sidebar_width,
     }
 }
 
@@ -3004,6 +3041,7 @@ mod tests {
                     open_files: Vec::new(),
                     active_file: None,
                     selected_path: None,
+                    sidebar_width: None,
                     updated_at: 1,
                 },
                 PersistedWorkspaceUiState {
@@ -3012,6 +3050,7 @@ mod tests {
                     open_files: Vec::new(),
                     active_file: None,
                     selected_path: None,
+                    sidebar_width: None,
                     updated_at: 2,
                 },
             ],
@@ -3099,6 +3138,7 @@ mod tests {
             ],
             active_file: Some("src/App.tsx".to_string()),
             selected_path: Some("/tmp".to_string()),
+            sidebar_width: Some(999),
         });
 
         assert_eq!(workspace.expanded_folders, vec!["src".to_string()]);
@@ -3108,6 +3148,7 @@ mod tests {
         );
         assert_eq!(workspace.active_file, Some("src/App.tsx".to_string()));
         assert_eq!(workspace.selected_path, None);
+        assert_eq!(workspace.sidebar_width, Some(MAX_SIDEBAR_WIDTH));
 
         *state.ui_state.write().unwrap() = AppUiState {
             view: PersistedViewSettings {
@@ -3125,6 +3166,8 @@ mod tests {
                 background_index_batch_entries: 3_000,
                 workspace_title_max_chars: 50,
                 command_palette_result_limit: 32,
+                editor_font_size: 14,
+                app_zoom_percent: 110,
                 date_time_format: "yyyyMmDdHhMm".to_string(),
                 recent_relative_threshold: "twoDays".to_string(),
                 feature_flags: BTreeMap::new(),
@@ -3135,6 +3178,7 @@ mod tests {
                 open_files: workspace.open_files,
                 active_file: workspace.active_file,
                 selected_path: workspace.selected_path,
+                sidebar_width: workspace.sidebar_width,
                 updated_at: 123,
             }],
         };

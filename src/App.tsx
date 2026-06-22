@@ -1,5 +1,7 @@
 import {
+  type CSSProperties,
   type KeyboardEvent as ReactKeyboardEvent,
+  type PointerEvent as ReactPointerEvent,
   lazy,
   Suspense,
   useCallback,
@@ -242,6 +244,10 @@ const keyBindings: KeyBindingInfo[] = [
   { category: "Navigate", command: "Find References", shortcut: { mac: "Alt+F7", other: "Alt+F7" } },
   { category: "View", command: "Show Project", shortcut: { mac: "Cmd+1", other: "Alt+1" } },
   { category: "View", command: "Settings", shortcut: { mac: "Cmd+,", other: "Ctrl+Alt+S" } },
+  { category: "View", command: "Zoom Editor In", shortcut: { mac: "Cmd+=", other: "Ctrl+=" } },
+  { category: "View", command: "Zoom Editor Out", shortcut: { mac: "Cmd+-", other: "Ctrl+-" } },
+  { category: "View", command: "Zoom App In", shortcut: { mac: "Cmd+Shift+=", other: "Ctrl+Shift+=" } },
+  { category: "View", command: "Zoom App Out", shortcut: { mac: "Cmd+Shift+-", other: "Ctrl+Shift+-" } },
   { category: "Tabs", command: "Next tab", shortcut: { mac: "Cmd+Shift+]", other: "Alt+Right" } },
   { category: "Tabs", command: "Previous tab", shortcut: { mac: "Cmd+Shift+[", other: "Alt+Left" } },
   { category: "Tree", command: "Open selected file or toggle folder", shortcut: { mac: "Enter", other: "Enter" } },
@@ -285,6 +291,18 @@ const defaultWorkspaceTitleMaxChars = 50;
 const minCommandPaletteResultLimit = 5;
 const maxCommandPaletteResultLimit = 100;
 const defaultCommandPaletteResultLimit = 18;
+const minEditorFontSize = 10;
+const maxEditorFontSize = 24;
+const defaultEditorFontSize = 13;
+const editorFontSizeStep = 1;
+const minAppZoomPercent = 80;
+const maxAppZoomPercent = 160;
+const defaultAppZoomPercent = 100;
+const appZoomStepPercent = 10;
+const minSidebarWidth = 180;
+const maxSidebarWidth = 520;
+const defaultSidebarWidth = 288;
+const sidebarWidthStep = 16;
 
 function sanitizeNumberLimit(
   value: number | undefined,
@@ -426,6 +444,7 @@ export default function App() {
   const [pendingDeletePath, setPendingDeletePath] = useState<string>();
   const [pendingReloadPath, setPendingReloadPath] = useState<string>();
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [sidebarWidth, setSidebarWidth] = useState(defaultSidebarWidth);
   const [pendingClosePath, setPendingClosePath] = useState<string>();
   const [pendingCloseAll, setPendingCloseAll] = useState(false);
   const [pendingAppClose, setPendingAppClose] = useState(false);
@@ -468,6 +487,8 @@ export default function App() {
   const [commandPaletteResultLimit, setCommandPaletteResultLimit] = useState(
     defaultCommandPaletteResultLimit,
   );
+  const [editorFontSize, setEditorFontSize] = useState(defaultEditorFontSize);
+  const [appZoomPercent, setAppZoomPercent] = useState(defaultAppZoomPercent);
   const [dateTimeFormat, setDateTimeFormat] =
     useState<DateTimeFormatId>(defaultDateTimeFormat);
   const [recentRelativeThreshold, setRecentRelativeThreshold] =
@@ -507,6 +528,9 @@ export default function App() {
   const skipNextUiStatePersistRef = useRef(false);
   const uiPersistTimerRef = useRef<number | undefined>(undefined);
   const editorCommandNonceRef = useRef(0);
+  const sidebarResizeRef = useRef<{ startX: number; startWidth: number } | undefined>(
+    undefined,
+  );
 
   const activeFile = openFiles.find((file) => file.path === activePath);
   const pendingCloseFile = openFiles.find((file) => file.path === pendingClosePath);
@@ -841,6 +865,22 @@ export default function App() {
         defaultCommandPaletteResultLimit,
       ),
     );
+    setEditorFontSize(
+      sanitizeNumberLimit(
+        snapshot.view.editorFontSize,
+        minEditorFontSize,
+        maxEditorFontSize,
+        defaultEditorFontSize,
+      ),
+    );
+    setAppZoomPercent(
+      sanitizeNumberLimit(
+        snapshot.view.appZoomPercent,
+        minAppZoomPercent,
+        maxAppZoomPercent,
+        defaultAppZoomPercent,
+      ),
+    );
     setDateTimeFormat(sanitizeDateTimeFormat(snapshot.view.dateTimeFormat));
     setRecentRelativeThreshold(
       sanitizeRecentRelativeThreshold(snapshot.view.recentRelativeThreshold),
@@ -848,6 +888,14 @@ export default function App() {
     setFeatureFlags(sanitizeFeatureFlagOverrides(snapshot.view.featureFlags));
     setExpandedFolders(new Set(snapshot.workspace.expandedFolders));
     setSelectedPath(snapshot.workspace.selectedPath);
+    setSidebarWidth(
+      sanitizeNumberLimit(
+        snapshot.workspace.sidebarWidth,
+        minSidebarWidth,
+        maxSidebarWidth,
+        defaultSidebarWidth,
+      ),
+    );
   }, []);
 
   const loadPersistedUiState = useCallback(async () => {
@@ -1386,6 +1434,8 @@ export default function App() {
           quickOpenResultLimit,
           backgroundIndexBatchEntries,
           commandPaletteResultLimit,
+          editorFontSize,
+          appZoomPercent,
           dateTimeFormat,
           recentRelativeThreshold,
           featureFlags,
@@ -1395,6 +1445,7 @@ export default function App() {
           openFiles: openFiles.map((file) => file.path),
           activeFile: activePath,
           selectedPath,
+          sidebarWidth,
         },
       ).catch((reason) => {
         setError(`Unable to save UI state: ${String(reason)}`);
@@ -1407,6 +1458,7 @@ export default function App() {
     expandedFolders,
     openFilePathSignature,
     selectedPath,
+    sidebarWidth,
     showDotfiles,
     showGeneratedInternal,
     showGitignoredFiles,
@@ -1421,6 +1473,8 @@ export default function App() {
     quickOpenResultLimit,
     backgroundIndexBatchEntries,
     commandPaletteResultLimit,
+    editorFontSize,
+    appZoomPercent,
     dateTimeFormat,
     recentRelativeThreshold,
     featureFlags,
@@ -1538,6 +1592,80 @@ export default function App() {
   const toggleSidebar = useCallback(() => {
     setSidebarCollapsed((current) => !current);
   }, []);
+
+  const zoomEditor = useCallback((direction: 1 | -1) => {
+    const next = sanitizeNumberLimit(
+      editorFontSize + direction * editorFontSizeStep,
+      minEditorFontSize,
+      maxEditorFontSize,
+      defaultEditorFontSize,
+    );
+    setEditorFontSize(next);
+    setStatus(`Editor font size ${next}px`);
+  }, [editorFontSize]);
+
+  const zoomApp = useCallback((direction: 1 | -1) => {
+    const next = sanitizeNumberLimit(
+      appZoomPercent + direction * appZoomStepPercent,
+      minAppZoomPercent,
+      maxAppZoomPercent,
+      defaultAppZoomPercent,
+    );
+    setAppZoomPercent(next);
+    setStatus(`App zoom ${next}%`);
+  }, [appZoomPercent]);
+
+  const setBoundedSidebarWidth = useCallback((value: number) => {
+    setSidebarWidth(
+      sanitizeNumberLimit(
+        value,
+        minSidebarWidth,
+        maxSidebarWidth,
+        defaultSidebarWidth,
+      ),
+    );
+  }, []);
+
+  const beginSidebarResize = useCallback(
+    (event: ReactPointerEvent<HTMLElement>) => {
+      if (sidebarCollapsed) return;
+      event.preventDefault();
+      sidebarResizeRef.current = {
+        startX: event.clientX,
+        startWidth: sidebarWidth,
+      };
+    },
+    [sidebarCollapsed, sidebarWidth],
+  );
+
+  const handleSidebarResizeKeyDown = useCallback(
+    (event: ReactKeyboardEvent<HTMLElement>) => {
+      if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+      event.preventDefault();
+      const direction = event.key === "ArrowRight" ? 1 : -1;
+      setBoundedSidebarWidth(sidebarWidth + direction * sidebarWidthStep);
+    },
+    [setBoundedSidebarWidth, sidebarWidth],
+  );
+
+  useEffect(() => {
+    const handlePointerMove = (event: PointerEvent) => {
+      const resize = sidebarResizeRef.current;
+      if (!resize) return;
+      const appZoom = appZoomPercent / 100;
+      setBoundedSidebarWidth(resize.startWidth + (event.clientX - resize.startX) / appZoom);
+    };
+    const handlePointerUp = () => {
+      sidebarResizeRef.current = undefined;
+    };
+
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", handlePointerUp);
+    return () => {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", handlePointerUp);
+    };
+  }, [appZoomPercent, setBoundedSidebarWidth]);
 
   const openNewFileDialog = useCallback(() => {
     setError(undefined);
@@ -2490,6 +2618,38 @@ export default function App() {
         run: toggleSidebar,
       },
       {
+        id: "zoom_editor_in",
+        title: "Zoom Editor In",
+        detail: `Set editor font size to ${Math.min(maxEditorFontSize, editorFontSize + editorFontSizeStep)}px`,
+        keywords: ["font", "code", "increase"],
+        enabled: true,
+        run: () => zoomEditor(1),
+      },
+      {
+        id: "zoom_editor_out",
+        title: "Zoom Editor Out",
+        detail: `Set editor font size to ${Math.max(minEditorFontSize, editorFontSize - editorFontSizeStep)}px`,
+        keywords: ["font", "code", "decrease"],
+        enabled: true,
+        run: () => zoomEditor(-1),
+      },
+      {
+        id: "zoom_app_in",
+        title: "Zoom App In",
+        detail: `Set app zoom to ${Math.min(maxAppZoomPercent, appZoomPercent + appZoomStepPercent)}%`,
+        keywords: ["view", "ui", "increase"],
+        enabled: true,
+        run: () => zoomApp(1),
+      },
+      {
+        id: "zoom_app_out",
+        title: "Zoom App Out",
+        detail: `Set app zoom to ${Math.max(minAppZoomPercent, appZoomPercent - appZoomStepPercent)}%`,
+        keywords: ["view", "ui", "decrease"],
+        enabled: true,
+        run: () => zoomApp(-1),
+      },
+      {
         id: "show_integrations",
         title: "Show Integrations",
         detail: "Show browser, Claude, Codex, and LSP integration details",
@@ -2545,6 +2705,10 @@ export default function App() {
       selectedEntry,
       sidebarCollapsed,
       toggleSidebar,
+      editorFontSize,
+      appZoomPercent,
+      zoomEditor,
+      zoomApp,
     ],
   );
   const commandPaletteResults = useMemo(
@@ -2912,6 +3076,18 @@ export default function App() {
       } else if (isIntellijShortcut(event, "showProject")) {
         event.preventDefault();
         toggleSidebar();
+      } else if (isIntellijShortcut(event, "zoomEditorIn")) {
+        event.preventDefault();
+        zoomEditor(1);
+      } else if (isIntellijShortcut(event, "zoomEditorOut")) {
+        event.preventDefault();
+        zoomEditor(-1);
+      } else if (isIntellijShortcut(event, "zoomAppIn")) {
+        event.preventDefault();
+        zoomApp(1);
+      } else if (isIntellijShortcut(event, "zoomAppOut")) {
+        event.preventDefault();
+        zoomApp(-1);
       } else if (isIntellijShortcut(event, "newFile")) {
         event.preventDefault();
         openNewFileDialog();
@@ -2992,14 +3168,23 @@ export default function App() {
     requestReloadActiveFile,
     saveAll,
     toggleSidebar,
+    zoomEditor,
+    zoomApp,
   ]);
 
   const SidebarIcon = sidebarCollapsed ? PanelLeftOpen : PanelLeftClose;
+  const appShellStyle = {
+    "--app-zoom": String(appZoomPercent / 100),
+    "--app-zoom-inverse": String(100 / appZoomPercent),
+    "--editor-font-size": `${editorFontSize}px`,
+    "--sidebar-width": `${sidebarWidth}px`,
+  } as CSSProperties;
 
   return (
     <main
       className={appShellClass(sidebarCollapsed)}
       data-ide-theme={prefersDark ? "dark" : "light"}
+      style={appShellStyle}
     >
       <aside className="sidebar" aria-hidden={sidebarCollapsed}>
         <div className="sidebar__header" title={appTitle}>
@@ -3235,6 +3420,19 @@ export default function App() {
           </div>
         ) : null}
 
+        <div
+          className="sidebar-resizer"
+          role="separator"
+          tabIndex={sidebarCollapsed ? -1 : 0}
+          aria-label="Resize sidebar"
+          aria-orientation="vertical"
+          aria-valuemin={minSidebarWidth}
+          aria-valuemax={maxSidebarWidth}
+          aria-valuenow={sidebarWidth}
+          aria-disabled={sidebarCollapsed}
+          onKeyDown={handleSidebarResizeKeyDown}
+          onPointerDown={beginSidebarResize}
+        />
       </aside>
 
       <section className="workbench">
@@ -4917,6 +5115,10 @@ type ShortcutAction =
   | "closeTab"
   | "closeAll"
   | "showProject"
+  | "zoomEditorIn"
+  | "zoomEditorOut"
+  | "zoomAppIn"
+  | "zoomAppOut"
   | "nextTab"
   | "previousTab";
 
@@ -4984,6 +5186,22 @@ const intellijShortcuts: Record<ShortcutAction, { mac: ShortcutPattern; other: S
   showProject: {
     mac: { key: "1", meta: true },
     other: { key: "1", alt: true },
+  },
+  zoomEditorIn: {
+    mac: { key: "=", meta: true },
+    other: { key: "=", ctrl: true },
+  },
+  zoomEditorOut: {
+    mac: { key: "-", meta: true },
+    other: { key: "-", ctrl: true },
+  },
+  zoomAppIn: {
+    mac: { key: ["=", "+"], meta: true, shift: true },
+    other: { key: ["=", "+"], ctrl: true, shift: true },
+  },
+  zoomAppOut: {
+    mac: { key: ["-", "_"], meta: true, shift: true },
+    other: { key: ["-", "_"], ctrl: true, shift: true },
   },
   nextTab: {
     mac: { key: ["]", "}"], meta: true, shift: true },

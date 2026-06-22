@@ -158,6 +158,8 @@ export interface PersistedViewSettings {
   backgroundIndexBatchEntries?: number;
   workspaceTitleMaxChars?: number;
   commandPaletteResultLimit?: number;
+  editorFontSize?: number;
+  appZoomPercent?: number;
   dateTimeFormat?: DateTimeFormatId;
   recentRelativeThreshold?: RecentRelativeThresholdId;
   // Persisted feature-flag overrides only; defaults live in src/featureFlags.ts.
@@ -169,6 +171,7 @@ export interface WorkspaceUiState {
   openFiles: string[];
   activeFile?: string;
   selectedPath?: string;
+  sidebarWidth?: number;
 }
 
 export interface PersistedUiSnapshot {
@@ -221,6 +224,8 @@ const defaultUiSnapshot: PersistedUiSnapshot = {
     backgroundIndexBatchEntries: 2000,
     workspaceTitleMaxChars: 50,
     commandPaletteResultLimit: 18,
+    editorFontSize: 13,
+    appZoomPercent: 100,
     dateTimeFormat: defaultDateTimeFormat,
     recentRelativeThreshold: defaultRecentRelativeThreshold,
     featureFlags: {},
