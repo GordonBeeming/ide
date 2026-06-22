@@ -44,7 +44,6 @@ interface EditorPaneProps {
   path: string;
   contents: string;
   dateTimeFormat?: DateTimeFormatId;
-  editorFontSize?: number;
   recentRelativeThreshold?: RecentRelativeThresholdId;
   prefersDark?: boolean;
   isDirty?: boolean;
@@ -64,7 +63,6 @@ export default function EditorPane({
   path,
   contents,
   dateTimeFormat = defaultDateTimeFormat,
-  editorFontSize = 13,
   recentRelativeThreshold = defaultRecentRelativeThreshold,
   editorCommand,
   gitAttribution,
