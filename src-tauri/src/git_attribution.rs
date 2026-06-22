@@ -1,7 +1,6 @@
 // Git attribution should use embedded gitoxide/gix APIs. Keep direct `git`
 // commands out of this service unless gix does not cover the required behavior.
 use std::collections::{HashMap, HashSet};
-use std::fs;
 use std::path::Path;
 
 use gix::bstr::{BStr, BString, ByteSlice};
@@ -72,6 +71,8 @@ pub(crate) async fn attribution_for_file(workspace_root: &Path, relative: &str) 
         return unsupported(relative, "File has no parent directory");
     };
 
+    let current_contents = tokio::fs::read(&file_path).await.ok();
+
     let repo = match gix::discover(file_parent) {
         Ok(repo) => repo,
         Err(_) => return unsupported(relative, "File is not inside a Git repository"),
@@ -108,19 +109,31 @@ pub(crate) async fn attribution_for_file(workspace_root: &Path, relative: &str) 
         Err(_) => return unsupported(relative, "Git line attribution failed"),
     };
 
-    let lines = match blame_lines(&repo, &blame, &remote_templates) {
+    let mut lines = match blame_lines(&repo, &blame, &remote_templates) {
         Ok(lines) => lines,
         Err(_) => return unsupported(relative, "Git line attribution failed"),
     };
-    let uncommitted_lines =
-        uncommitted_line_numbers(&repo, &head_commit, &file_path, &repo_relative_path);
-
-    let latest_commit = match latest_file_commit(&lines) {
-        Some(commit) => commit,
-        None => match commit_info_from_commit(&head_commit, &remote_templates) {
-            Ok(commit) => commit,
-            Err(_) => return unsupported(relative, "Git commit history failed"),
-        },
+    let latest_commit =
+        match latest_file_commit(&repo, &head_commit, &repo_relative_path, &remote_templates) {
+            Some(commit) => commit,
+            None => match commit_info_from_commit(&head_commit, &remote_templates) {
+                Ok(commit) => commit,
+                Err(_) => return unsupported(relative, "Git commit history failed"),
+            },
+        };
+    let uncommitted_lines = match (
+        head_file_contents(&head_commit, &repo_relative_path),
+        current_contents,
+    ) {
+        (Ok(head_contents), Some(current_contents)) => {
+            let (line_map, uncommitted_lines) =
+                current_line_map_and_uncommitted_lines(&head_contents, &current_contents);
+            if let Some(line_map) = line_map.as_ref() {
+                lines = map_lines_to_current_worktree(&lines, line_map);
+            }
+            uncommitted_lines
+        }
+        _ => Vec::new(),
     };
 
     GitAttribution {
@@ -152,15 +165,15 @@ fn blame_lines(
     let mut lines = Vec::new();
 
     for entry in &blame.entries {
-        let commit = if let Some(commit) = commits_by_id.get(&entry.commit_id) {
-            commit.clone()
-        } else {
-            let commit = repo
-                .find_commit(entry.commit_id)
-                .map_err(|_| ())
-                .and_then(|commit| commit_info_from_commit(&commit, remotes))?;
-            commits_by_id.insert(entry.commit_id, commit.clone());
-            commit
+        let commit = match commits_by_id.entry(entry.commit_id) {
+            std::collections::hash_map::Entry::Occupied(entry) => entry.into_mut(),
+            std::collections::hash_map::Entry::Vacant(vacant) => {
+                let commit = repo
+                    .find_commit(entry.commit_id)
+                    .map_err(|_| ())
+                    .and_then(|commit| commit_info_from_commit(&commit, remotes))?;
+                vacant.insert(commit)
+            }
         };
 
         for line_number in entry.range_in_blamed_file() {
@@ -175,42 +188,66 @@ fn blame_lines(
     Ok(lines)
 }
 
-fn latest_file_commit(lines: &[GitLineAttribution]) -> Option<GitCommitInfo> {
-    lines
-        .iter()
-        .map(|line| line.commit.clone())
-        .max_by_key(|commit| commit.authored_at_seconds.unwrap_or(i64::MIN))
-}
-
-fn uncommitted_line_numbers(
+fn latest_file_commit(
     repo: &gix::Repository,
     head_commit: &gix::Commit<'_>,
-    file_path: &Path,
     repo_relative_path: &str,
-) -> Vec<usize> {
-    let Ok(head_contents) = head_file_contents(repo, head_commit, repo_relative_path) else {
-        return Vec::new();
-    };
-    let Ok(current_contents) = fs::read(file_path) else {
-        return Vec::new();
-    };
-    if head_contents == current_contents {
-        return Vec::new();
+    remotes: &[RemoteTemplate],
+) -> Option<GitCommitInfo> {
+    let mut walk = head_commit.ancestors().all().ok()?;
+    while let Some(Ok(info)) = walk.next() {
+        let commit = repo.find_commit(info.id).ok()?;
+        let current_blob = blob_id_for_path(&commit, repo_relative_path).ok()?;
+        if current_blob.is_none() {
+            continue;
+        }
+
+        let changed_from_parent = if info.parent_ids.is_empty() {
+            true
+        } else {
+            info.parent_ids.iter().any(|parent_id| {
+                repo.find_commit(parent_id.to_owned())
+                    .ok()
+                    .and_then(|parent| blob_id_for_path(&parent, repo_relative_path).ok().flatten())
+                    != current_blob
+            })
+        };
+        if changed_from_parent {
+            return commit_info_from_commit(&commit, remotes).ok();
+        }
     }
 
-    let head_text = String::from_utf8_lossy(&head_contents);
-    let current_text = String::from_utf8_lossy(&current_contents);
-    let head_lines = document_lines(&head_text);
-    let current_lines = document_lines(&current_text);
-    let mapped_lines = current_to_original_line_map(&head_lines, &current_lines);
+    None
+}
 
-    (1..=current_lines.len())
+fn blob_id_for_path(
+    commit: &gix::Commit<'_>,
+    repo_relative_path: &str,
+) -> Result<Option<gix::ObjectId>, ()> {
+    let tree = commit.tree().map_err(|_| ())?;
+    tree.lookup_entry_by_path(repo_relative_path)
+        .map_err(|_| ())
+        .map(|entry| entry.map(|entry| entry.object_id()))
+}
+
+fn current_line_map_and_uncommitted_lines(
+    head_contents: &[u8],
+    current_contents: &[u8],
+) -> (Option<HashMap<usize, usize>>, Vec<usize>) {
+    let head_lines = document_lines(head_contents);
+    let current_lines = document_lines(current_contents);
+    if head_lines == current_lines {
+        return (None, Vec::new());
+    }
+
+    let mapped_lines = current_to_original_line_map(&head_lines, &current_lines);
+    let uncommitted_lines = (1..=current_lines.len())
         .filter(|line_number| !mapped_lines.contains_key(line_number))
-        .collect()
+        .collect();
+    (Some(mapped_lines), uncommitted_lines)
 }
 
 fn head_file_contents(
-    _repo: &gix::Repository,
     head_commit: &gix::Commit<'_>,
     repo_relative_path: &str,
 ) -> Result<Vec<u8>, ()> {
@@ -227,13 +264,40 @@ fn head_file_contents(
     Ok(blob.data.clone())
 }
 
-fn document_lines(contents: &str) -> Vec<&str> {
-    contents.split('\n').collect()
+fn map_lines_to_current_worktree(
+    lines: &[GitLineAttribution],
+    current_to_original_line_map: &HashMap<usize, usize>,
+) -> Vec<GitLineAttribution> {
+    let original_to_current_line = current_to_original_line_map
+        .iter()
+        .map(|(current, original)| (*original, *current))
+        .collect::<HashMap<_, _>>();
+
+    lines
+        .iter()
+        .filter_map(|line| {
+            original_to_current_line
+                .get(&line.line_number)
+                .map(|current_line_number| GitLineAttribution {
+                    line_number: *current_line_number,
+                    commit: line.commit.clone(),
+                })
+        })
+        .collect()
+}
+
+fn document_lines(contents: &[u8]) -> Vec<String> {
+    String::from_utf8_lossy(contents)
+        .replace("\r\n", "\n")
+        .replace('\r', "\n")
+        .split('\n')
+        .map(ToString::to_string)
+        .collect()
 }
 
 fn current_to_original_line_map(
-    original_lines: &[&str],
-    current_lines: &[&str],
+    original_lines: &[String],
+    current_lines: &[String],
 ) -> HashMap<usize, usize> {
     let mut line_map = HashMap::new();
     let mut prefix_length = 0;
@@ -275,15 +339,16 @@ fn current_to_original_line_map(
         return line_map;
     }
 
-    let mut lengths = vec![vec![0usize; current_middle.len() + 1]; original_middle.len() + 1];
+    let width = current_middle.len() + 1;
+    let mut lengths = vec![0usize; (original_middle.len() + 1) * width];
     for original_index in (0..original_middle.len()).rev() {
         for current_index in (0..current_middle.len()).rev() {
-            lengths[original_index][current_index] =
+            lengths[original_index * width + current_index] =
                 if original_middle[original_index] == current_middle[current_index] {
-                    lengths[original_index + 1][current_index + 1] + 1
+                    lengths[(original_index + 1) * width + current_index + 1] + 1
                 } else {
-                    lengths[original_index + 1][current_index]
-                        .max(lengths[original_index][current_index + 1])
+                    lengths[(original_index + 1) * width + current_index]
+                        .max(lengths[original_index * width + current_index + 1])
                 };
         }
     }
@@ -298,8 +363,8 @@ fn current_to_original_line_map(
             );
             original_index += 1;
             current_index += 1;
-        } else if lengths[original_index + 1][current_index]
-            >= lengths[original_index][current_index + 1]
+        } else if lengths[(original_index + 1) * width + current_index]
+            >= lengths[original_index * width + current_index + 1]
         {
             original_index += 1;
         } else {
@@ -550,6 +615,42 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn returns_newest_path_commit_when_no_line_is_blamed_to_it() {
+        let dir = tempdir().unwrap();
+        init_repo(dir.path());
+        fs::write(dir.path().join("README.md"), "first\nsecond\n").unwrap();
+        commit_all(dir.path(), "Add readme", "1700000000 +0000");
+        fs::write(dir.path().join("README.md"), "first\n").unwrap();
+        commit_all(dir.path(), "Delete second line", "1700000100 +0000");
+
+        let attribution = attribution_for_file(dir.path(), "README.md").await;
+
+        assert_eq!(attribution.status, GitAttributionStatus::Available);
+        assert_eq!(
+            attribution.file.as_ref().unwrap().summary,
+            "Delete second line"
+        );
+        assert_eq!(attribution.lines[0].commit.summary, "Add readme");
+    }
+
+    #[tokio::test]
+    async fn returns_path_commit_for_empty_tracked_file() {
+        let dir = tempdir().unwrap();
+        init_repo(dir.path());
+        fs::write(dir.path().join("README.md"), "").unwrap();
+        commit_all(dir.path(), "Add empty readme", "1700000000 +0000");
+
+        let attribution = attribution_for_file(dir.path(), "README.md").await;
+
+        assert_eq!(attribution.status, GitAttributionStatus::Available);
+        assert_eq!(
+            attribution.file.as_ref().unwrap().summary,
+            "Add empty readme"
+        );
+        assert!(attribution.lines.is_empty());
+    }
+
+    #[tokio::test]
     async fn marks_saved_modified_lines_as_uncommitted() {
         let dir = tempdir().unwrap();
         init_repo(dir.path());
@@ -564,6 +665,20 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn ignores_line_ending_checkout_differences_for_uncommitted_lines() {
+        let dir = tempdir().unwrap();
+        init_repo(dir.path());
+        fs::write(dir.path().join("README.md"), "first\nsecond\n").unwrap();
+        commit_all(dir.path(), "Add readme", "1700000000 +0000");
+        fs::write(dir.path().join("README.md"), "first\r\nsecond\r\n").unwrap();
+
+        let attribution = attribution_for_file(dir.path(), "README.md").await;
+
+        assert_eq!(attribution.status, GitAttributionStatus::Available);
+        assert!(attribution.uncommitted_lines.is_empty());
+    }
+
+    #[tokio::test]
     async fn marks_saved_inserted_lines_as_uncommitted() {
         let dir = tempdir().unwrap();
         init_repo(dir.path());
@@ -575,6 +690,14 @@ mod tests {
 
         assert_eq!(attribution.status, GitAttributionStatus::Available);
         assert_eq!(attribution.uncommitted_lines, vec![2]);
+        assert_eq!(
+            attribution
+                .lines
+                .iter()
+                .map(|line| line.line_number)
+                .collect::<Vec<_>>(),
+            vec![1, 3],
+        );
     }
 
     #[tokio::test]
