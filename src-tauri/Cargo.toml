@@ -10,23 +10,30 @@ name = "ide_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
-tauri-build = { version = "2.6.2", features = [] }
+tauri-build = { version = "=2.6.2", features = [] }
 
 [dependencies]
-axum = "0.8.9"
-futures-util = "0.3.32"
-ignore = "0.4.25"
+axum = "=0.8.9"
+futures-util = "=0.3.32"
+gix = { version = "=0.84.0", default-features = false, features = [
+  "blame",
+  "sha1",
+] }
+ignore = "=0.4.25"
+# gix-date allows newer jiff 0.2.x releases, but 0.2.25+ records optional
+# defmt/proc-macro-error2 packages in Cargo.lock and trips cargo-audit.
+jiff = "=0.2.24"
 rusqlite = { version = "=0.39.0", default-features = false, features = ["bundled"] }
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0.150"
-tauri = { version = "2.11.2", features = [] }
-tauri-plugin-dialog = "2.7.1"
-tauri-plugin-single-instance = "2"
-thiserror = "2.0.17"
-tokio = { version = "1.48.0", features = ["fs", "io-util", "net", "process", "sync"] }
-tokio-tungstenite = "0.29.0"
-tower = { version = "0.5", features = ["util"] }
-uuid = { version = "1.23.2", features = ["v4"] }
+serde = { version = "=1.0.228", features = ["derive"] }
+serde_json = "=1.0.150"
+tauri = { version = "=2.11.2", features = [] }
+tauri-plugin-dialog = "=2.7.1"
+tauri-plugin-single-instance = "=2.4.2"
+thiserror = "=2.0.18"
+tokio = { version = "=1.52.3", features = ["fs", "io-util", "net", "process", "sync"] }
+tokio-tungstenite = "=0.29.0"
+tower = { version = "=0.5.3", features = ["util"] }
+uuid = { version = "=1.23.2", features = ["v4"] }
 
 [dev-dependencies]
-tempfile = "3.23.0"
+tempfile = "=3.27.0"

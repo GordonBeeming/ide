@@ -1,6 +1,6 @@
 import "@testing-library/jest-dom/vitest";
 import { fireEvent, render, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import EditorPane from "./EditorPane";
 import { lspExtensionsForPath } from "./lsp";
 
@@ -13,6 +13,17 @@ vi.mock("./lsp", () => ({
 }));
 
 describe("EditorPane", () => {
+  beforeAll(() => {
+    Object.defineProperty(Range.prototype, "getClientRects", {
+      configurable: true,
+      value: () => [],
+    });
+    Object.defineProperty(Range.prototype, "getBoundingClientRect", {
+      configurable: true,
+      value: () => new DOMRect(0, 0, 0, 0),
+    });
+  });
+
   beforeEach(() => {
     vi.mocked(lspExtensionsForPath).mockResolvedValue([]);
   });
@@ -153,6 +164,186 @@ describe("EditorPane", () => {
 
     expect(onGitCommitClick).toHaveBeenCalledWith(commit);
     expect(editorText(container)).toContain("first");
+  });
+
+  it("keeps commit attribution while dirty and marks inserted lines as local edits", async () => {
+    const firstCommit = {
+      sha: "abc123456789",
+      shortSha: "abc12345",
+      authorName: "Gordon Beeming",
+      authoredAtSeconds: Math.floor(Date.now() / 1000) - 600,
+      summary: "Add first line",
+      actions: [],
+    };
+    const secondCommit = {
+      sha: "def123456789",
+      shortSha: "def12345",
+      authorName: "Alex Example",
+      authoredAtSeconds: Math.floor(Date.now() / 1000) - 300,
+      summary: "Add second line",
+      actions: [],
+    };
+    const attribution = {
+      path: "src/App.tsx",
+      status: "available" as const,
+      file: secondCommit,
+      lines: [
+        { lineNumber: 1, commit: firstCommit },
+        { lineNumber: 2, commit: secondCommit },
+      ],
+    };
+    const props = {
+      dateTimeFormat: "yyyyMmDdHhMm" as const,
+      gitAttribution: attribution,
+      onChange: vi.fn(),
+      onError: vi.fn(),
+      onGitCommitClick: vi.fn(),
+      onSelection: vi.fn(),
+      path: "src/App.tsx",
+      recentRelativeThreshold: "never" as const,
+    };
+    const { container, rerender } = render(
+      <EditorPane contents={"first\nsecond"} isDirty={false} revealLine={1} {...props} />,
+    );
+
+    await waitFor(() => {
+      expect(container.querySelector(".git-attribution-ghost")).toHaveTextContent(
+        "Gordon Beeming",
+      );
+    });
+
+    rerender(
+      <EditorPane contents={"first\n\nsecond"} isDirty revealLine={2} {...props} />,
+    );
+
+    await waitFor(() => {
+      expect(container.querySelector(".git-attribution-ghost--dirty")).toHaveTextContent(
+        "You",
+      );
+    });
+    expect(container.querySelector(".git-attribution-ghost--dirty")).toHaveTextContent(
+      "Unsaved changes",
+    );
+    expect(container.querySelector(".git-attribution-ghost--dirty")).not.toHaveTextContent(
+      "Add second line",
+    );
+
+    rerender(
+      <EditorPane contents={"first\n\nsecond"} isDirty revealLine={3} {...props} />,
+    );
+
+    await waitFor(() => {
+      expect(container.querySelector(".git-attribution-ghost")).toHaveTextContent(
+        "Alex Example",
+      );
+    });
+    expect(container.querySelector(".git-attribution-ghost")).toHaveTextContent(
+      "Add second line",
+    );
+    expect(container.querySelector(".git-attribution-ghost--dirty")).toBeNull();
+  });
+
+  it("marks saved uncommitted lines as local attribution", async () => {
+    const commit = {
+      sha: "abc123456789",
+      shortSha: "abc12345",
+      authorName: "Gordon Beeming",
+      authoredAtSeconds: Math.floor(Date.now() / 1000) - 600,
+      summary: "Add original line",
+      actions: [],
+    };
+    const { container } = render(
+      <EditorPane
+        contents={"first\nchanged"}
+        dateTimeFormat="yyyyMmDdHhMm"
+        gitAttribution={{
+          path: "src/App.tsx",
+          status: "available",
+          file: commit,
+          lines: [
+            { lineNumber: 1, commit },
+            { lineNumber: 2, commit },
+          ],
+          uncommittedLines: [2],
+        }}
+        isDirty={false}
+        onChange={vi.fn()}
+        onError={vi.fn()}
+        onGitCommitClick={vi.fn()}
+        onSelection={vi.fn()}
+        path="src/App.tsx"
+        recentRelativeThreshold="never"
+        revealLine={2}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(container.querySelector(".git-attribution-ghost--dirty")).toHaveTextContent(
+        "You - Uncommitted changes",
+      );
+    });
+    expect(container.querySelector(".git-attribution-ghost--dirty")).not.toHaveTextContent(
+      "Add original line",
+    );
+  });
+
+  it("keeps saved uncommitted insertion mapping aligned to current lines", async () => {
+    const firstCommit = {
+      sha: "abc123456789",
+      shortSha: "abc12345",
+      authorName: "Gordon Beeming",
+      authoredAtSeconds: Math.floor(Date.now() / 1000) - 600,
+      summary: "Add first line",
+      actions: [],
+    };
+    const secondCommit = {
+      sha: "def123456789",
+      shortSha: "def12345",
+      authorName: "Alex Example",
+      authoredAtSeconds: Math.floor(Date.now() / 1000) - 300,
+      summary: "Add second line",
+      actions: [],
+    };
+    const props = {
+      contents: "first\n\nsecond",
+      dateTimeFormat: "yyyyMmDdHhMm" as const,
+      gitAttribution: {
+        path: "src/App.tsx",
+        status: "available" as const,
+        file: secondCommit,
+        lines: [
+          { lineNumber: 1, commit: firstCommit },
+          { lineNumber: 3, commit: secondCommit },
+        ],
+        uncommittedLines: [2],
+      },
+      isDirty: false,
+      onChange: vi.fn(),
+      onError: vi.fn(),
+      onGitCommitClick: vi.fn(),
+      onSelection: vi.fn(),
+      path: "src/App.tsx",
+      recentRelativeThreshold: "never" as const,
+    };
+    const { container, rerender } = render(<EditorPane revealLine={2} {...props} />);
+
+    await waitFor(() => {
+      expect(container.querySelector(".git-attribution-ghost--dirty")).toHaveTextContent(
+        "You - Uncommitted changes",
+      );
+    });
+
+    rerender(<EditorPane revealLine={3} {...props} />);
+
+    await waitFor(() => {
+      expect(container.querySelector(".git-attribution-ghost")).toHaveTextContent(
+        "Alex Example",
+      );
+    });
+    expect(container.querySelector(".git-attribution-ghost")).toHaveTextContent(
+      "Add second line",
+    );
+    expect(container.querySelector(".git-attribution-ghost--dirty")).toBeNull();
   });
 });
 

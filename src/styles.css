@@ -837,7 +837,7 @@ button {
 }
 
 .statusbar {
-  justify-content: space-between;
+  min-width: 0;
   gap: 16px;
   padding: 0 10px;
   border-top: 1px solid var(--border);
@@ -846,16 +846,33 @@ button {
   font-size: 12px;
 }
 
-.statusbar span {
+.statusbar__state,
+.statusbar__path,
+.statusbar__cursor {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
+.statusbar__state {
+  flex: 0 1 auto;
+  max-width: 18%;
+}
+
+.statusbar__path {
+  flex: 1 3 16ch;
+  max-width: 32%;
+}
+
+.statusbar__cursor {
+  flex: 0 0 auto;
+}
+
 .statusbar__git-attribution {
   display: flex;
   min-width: 0;
-  max-width: min(44vw, 620px);
+  flex: 3 1 auto;
   align-items: center;
   gap: 6px;
   padding: 2px 0;
@@ -880,9 +897,19 @@ button {
 .statusbar__git-attribution strong,
 .statusbar__git-attribution span {
   min-width: 0;
+  white-space: nowrap;
+}
+
+.statusbar__git-attribution strong,
+.statusbar__git-label,
+.statusbar__git-date {
+  flex: 0 0 auto;
+}
+
+.statusbar__git-summary {
+  flex: 1 1 auto;
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .statusbar__git-attribution strong {
@@ -907,6 +934,16 @@ button {
 .git-attribution-ghost:focus-visible {
   color: var(--text);
   opacity: 0.9;
+}
+
+.git-attribution-ghost--dirty {
+  cursor: default;
+  font-style: italic;
+}
+
+.git-attribution-ghost--dirty:hover {
+  color: var(--muted);
+  opacity: 0.58;
 }
 
 .git-attribution-ghost:focus-visible {

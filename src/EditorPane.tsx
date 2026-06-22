@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
 import { bracketMatching, defaultHighlightStyle, foldGutter, syntaxHighlighting } from "@codemirror/language";
 import { highlightSelectionMatches, searchKeymap } from "@codemirror/search";
@@ -46,6 +46,7 @@ interface EditorPaneProps {
   dateTimeFormat?: DateTimeFormatId;
   recentRelativeThreshold?: RecentRelativeThresholdId;
   prefersDark?: boolean;
+  isDirty?: boolean;
   revealLine?: number;
   focusOnReveal?: boolean;
   editorCommand?: EditorCommandRequest;
@@ -65,6 +66,7 @@ export default function EditorPane({
   recentRelativeThreshold = defaultRecentRelativeThreshold,
   editorCommand,
   gitAttribution,
+  isDirty = false,
   focusOnReveal = true,
   prefersDark = false,
   revealLine,
@@ -79,6 +81,35 @@ export default function EditorPane({
   const viewRef = useRef<EditorView | null>(null);
   const gitAttributionCompartmentRef = useRef(new Compartment());
   const suppressNextChangeRef = useRef(false);
+  const cleanContentsRef = useRef(contents);
+  const localEditStartedAtMsRef = useRef<number | undefined>(undefined);
+  const [localEditStartedAtMs, setLocalEditStartedAtMs] = useState<number | undefined>(
+    undefined,
+  );
+  const cleanContentsPathRef = useRef(path);
+
+  useEffect(() => {
+    if (cleanContentsPathRef.current !== path) {
+      cleanContentsPathRef.current = path;
+      cleanContentsRef.current = contents;
+      localEditStartedAtMsRef.current = isDirty ? Date.now() : undefined;
+      setLocalEditStartedAtMs(localEditStartedAtMsRef.current);
+      return;
+    }
+
+    if (isDirty) {
+      if (localEditStartedAtMsRef.current === undefined) {
+        const timestamp = Date.now();
+        localEditStartedAtMsRef.current = timestamp;
+        setLocalEditStartedAtMs(timestamp);
+      }
+      return;
+    }
+
+    cleanContentsRef.current = contents;
+    localEditStartedAtMsRef.current = undefined;
+    setLocalEditStartedAtMs(undefined);
+  }, [contents, isDirty, path]);
 
   useEffect(() => {
     if (!host.current) return;
@@ -120,6 +151,8 @@ export default function EditorPane({
             gitAttributionCompartmentRef.current.of(
               gitAttributionExtension(
                 gitAttribution,
+                cleanContentsRef.current,
+                localEditStartedAtMs,
                 dateTimeFormat,
                 recentRelativeThreshold,
                 onGitCommitClick,
@@ -130,6 +163,11 @@ export default function EditorPane({
                 if (suppressNextChangeRef.current) {
                   suppressNextChangeRef.current = false;
                 } else {
+                  if (localEditStartedAtMsRef.current === undefined) {
+                    const timestamp = Date.now();
+                    localEditStartedAtMsRef.current = timestamp;
+                    setLocalEditStartedAtMs(timestamp);
+                  }
                   onChange(path, update.state.doc.toString());
                 }
               }
@@ -166,13 +204,23 @@ export default function EditorPane({
       effects: gitAttributionCompartmentRef.current.reconfigure(
         gitAttributionExtension(
           gitAttribution,
+          cleanContentsRef.current,
+          localEditStartedAtMs,
           dateTimeFormat,
           recentRelativeThreshold,
           onGitCommitClick,
         ),
       ),
     });
-  }, [dateTimeFormat, gitAttribution, onGitCommitClick, recentRelativeThreshold]);
+  }, [
+    contents,
+    dateTimeFormat,
+    gitAttribution,
+    isDirty,
+    localEditStartedAtMs,
+    onGitCommitClick,
+    recentRelativeThreshold,
+  ]);
 
   useEffect(() => {
     const view = viewRef.current;
@@ -268,6 +316,8 @@ function revealLineInView(
 
 function gitAttributionExtension(
   attribution: GitAttribution | undefined,
+  cleanContents: string,
+  localEditStartedAtMs: number | undefined,
   dateTimeFormat: DateTimeFormatId,
   recentRelativeThreshold: RecentRelativeThresholdId,
   onGitCommitClick: ((commit: GitCommitInfo) => void) | undefined,
@@ -275,19 +325,26 @@ function gitAttributionExtension(
   if (!attribution || attribution.status !== "available" || attribution.lines.length === 0) {
     return [];
   }
-
-  const byLine = new Map(
-    attribution.lines.map((line) => [line.lineNumber, line.commit] as const),
-  );
+  const availableAttribution = attribution;
+  const lineLookup = gitAttributionLineLookup(availableAttribution);
 
   return ViewPlugin.fromClass(
     class {
       decorations: DecorationSet;
+      private currentContents: string;
+      private currentToCleanLineMap: Map<number, number> | undefined;
 
       constructor(view: EditorView) {
+        this.currentContents = view.state.doc.toString();
+        this.currentToCleanLineMap = currentToOriginalLineMapForContents(
+          cleanContents,
+          this.currentContents,
+        );
         this.decorations = buildGitAttributionDecorations(
           view,
-          byLine,
+          lineLookup,
+          this.currentToCleanLineMap,
+          localEditStartedAtMs,
           dateTimeFormat,
           recentRelativeThreshold,
           onGitCommitClick,
@@ -295,10 +352,20 @@ function gitAttributionExtension(
       }
 
       update(update: ViewUpdate) {
+        if (update.docChanged) {
+          this.currentContents = update.view.state.doc.toString();
+          this.currentToCleanLineMap = currentToOriginalLineMapForContents(
+            cleanContents,
+            this.currentContents,
+          );
+        }
+
         if (update.selectionSet || update.docChanged || update.viewportChanged) {
           this.decorations = buildGitAttributionDecorations(
             update.view,
-            byLine,
+            lineLookup,
+            this.currentToCleanLineMap,
+            localEditStartedAtMs,
             dateTimeFormat,
             recentRelativeThreshold,
             onGitCommitClick,
@@ -314,26 +381,184 @@ function gitAttributionExtension(
 
 function buildGitAttributionDecorations(
   view: EditorView,
-  byLine: Map<number, GitCommitInfo>,
+  lineLookup: GitAttributionLineLookup,
+  currentToCleanLineMap: Map<number, number> | undefined,
+  localEditStartedAtMs: number | undefined,
   dateTimeFormat: DateTimeFormatId,
   recentRelativeThreshold: RecentRelativeThresholdId,
   onGitCommitClick: ((commit: GitCommitInfo) => void) | undefined,
 ) {
   const line = view.state.doc.lineAt(view.state.selection.main.head);
-  const commit = byLine.get(line.number);
-  if (!commit) return Decoration.none;
+  const lineState = attributionLineState(
+    lineLookup,
+    currentToCleanLineMap,
+    line.number,
+    localEditStartedAtMs,
+  );
+  if (!lineState) return Decoration.none;
+
+  const widget =
+    lineState.kind === "local"
+      ? new LocalGitAttributionWidget(lineState.state, lineState.editedAtMs, dateTimeFormat)
+      : new GitAttributionWidget(
+          lineState.commit,
+          dateTimeFormat,
+          recentRelativeThreshold,
+          onGitCommitClick,
+        );
 
   return Decoration.set([
     Decoration.widget({
-      widget: new GitAttributionWidget(
-        commit,
-        dateTimeFormat,
-        recentRelativeThreshold,
-        onGitCommitClick,
-      ),
+      widget,
       side: 1,
     }).range(line.to),
   ]);
+}
+
+type AttributionLineState =
+  | { kind: "commit"; commit: GitCommitInfo }
+  | { kind: "local"; state: "unsaved"; editedAtMs: number }
+  | { kind: "local"; state: "uncommitted"; editedAtMs?: undefined };
+
+interface GitAttributionLineLookup {
+  commitsByLine: Map<number, GitCommitInfo>;
+  uncommittedLines: Set<number>;
+}
+
+function gitAttributionLineLookup(attribution: GitAttribution): GitAttributionLineLookup {
+  return {
+    commitsByLine: new Map(
+      attribution.lines.map((line) => [line.lineNumber, line.commit] as const),
+    ),
+    uncommittedLines: new Set(attribution.uncommittedLines ?? []),
+  };
+}
+
+function currentToOriginalLineMapForContents(
+  cleanContents: string,
+  currentContents: string,
+) {
+  if (cleanContents === currentContents) return undefined;
+  return currentToOriginalLineMap(
+    documentLines(cleanContents),
+    documentLines(currentContents),
+  );
+}
+
+function attributionLineState(
+  lineLookup: GitAttributionLineLookup,
+  currentToCleanLineMap: Map<number, number> | undefined,
+  currentLineNumber: number,
+  localEditStartedAtMs: number | undefined,
+): AttributionLineState | undefined {
+  const cleanLineNumber =
+    currentToCleanLineMap === undefined
+      ? currentLineNumber
+      : currentToCleanLineMap.get(currentLineNumber);
+
+  if (cleanLineNumber !== undefined) {
+    if (lineLookup.uncommittedLines.has(cleanLineNumber)) {
+      return { kind: "local", state: "uncommitted" };
+    }
+    const commit = lineLookup.commitsByLine.get(cleanLineNumber);
+    if (commit) return { kind: "commit", commit };
+  }
+
+  if (localEditStartedAtMs === undefined) return undefined;
+  return { kind: "local", state: "unsaved", editedAtMs: localEditStartedAtMs };
+}
+
+function documentLines(contents: string) {
+  return contents.split("\n");
+}
+
+function currentToOriginalLineMap(originalLines: string[], currentLines: string[]) {
+  const lineMap = new Map<number, number>();
+  let prefixLength = 0;
+  while (
+    prefixLength < originalLines.length &&
+    prefixLength < currentLines.length &&
+    originalLines[prefixLength] === currentLines[prefixLength]
+  ) {
+    lineMap.set(prefixLength + 1, prefixLength + 1);
+    prefixLength += 1;
+  }
+
+  let suffixLength = 0;
+  while (
+    suffixLength < originalLines.length - prefixLength &&
+    suffixLength < currentLines.length - prefixLength &&
+    originalLines[originalLines.length - 1 - suffixLength] ===
+      currentLines[currentLines.length - 1 - suffixLength]
+  ) {
+    lineMap.set(
+      currentLines.length - suffixLength,
+      originalLines.length - suffixLength,
+    );
+    suffixLength += 1;
+  }
+
+  const originalStart = prefixLength;
+  const originalEnd = originalLines.length - suffixLength;
+  const currentStart = prefixLength;
+  const currentEnd = currentLines.length - suffixLength;
+  const originalMiddle = originalLines.slice(originalStart, originalEnd);
+  const currentMiddle = currentLines.slice(currentStart, currentEnd);
+
+  const matrixSize = (originalMiddle.length + 1) * (currentMiddle.length + 1);
+  if (matrixSize > 250_000) {
+    for (
+      let index = 0;
+      index < Math.min(originalMiddle.length, currentMiddle.length);
+      index += 1
+    ) {
+      if (originalMiddle[index] === currentMiddle[index]) {
+        lineMap.set(currentStart + index + 1, originalStart + index + 1);
+      }
+    }
+    return lineMap;
+  }
+
+  const width = currentMiddle.length + 1;
+  const lengths = new Uint32Array((originalMiddle.length + 1) * width);
+  for (
+    let originalIndex = originalMiddle.length - 1;
+    originalIndex >= 0;
+    originalIndex -= 1
+  ) {
+    for (
+      let currentIndex = currentMiddle.length - 1;
+      currentIndex >= 0;
+      currentIndex -= 1
+    ) {
+      lengths[originalIndex * width + currentIndex] =
+        originalMiddle[originalIndex] === currentMiddle[currentIndex]
+          ? lengths[(originalIndex + 1) * width + currentIndex + 1] + 1
+          : Math.max(
+              lengths[(originalIndex + 1) * width + currentIndex],
+              lengths[originalIndex * width + currentIndex + 1],
+            );
+    }
+  }
+
+  let originalIndex = 0;
+  let currentIndex = 0;
+  while (originalIndex < originalMiddle.length && currentIndex < currentMiddle.length) {
+    if (originalMiddle[originalIndex] === currentMiddle[currentIndex]) {
+      lineMap.set(currentStart + currentIndex + 1, originalStart + originalIndex + 1);
+      originalIndex += 1;
+      currentIndex += 1;
+    } else if (
+      lengths[(originalIndex + 1) * width + currentIndex] >=
+      lengths[originalIndex * width + currentIndex + 1]
+    ) {
+      originalIndex += 1;
+    } else {
+      currentIndex += 1;
+    }
+  }
+
+  return lineMap;
 }
 
 class GitAttributionWidget extends WidgetType {
@@ -381,6 +606,44 @@ class GitAttributionWidget extends WidgetType {
 
   ignoreEvent() {
     return false;
+  }
+}
+
+class LocalGitAttributionWidget extends WidgetType {
+  constructor(
+    private readonly state: "unsaved" | "uncommitted",
+    private readonly editedAtMs: number | undefined,
+    private readonly dateTimeFormat: DateTimeFormatId,
+  ) {
+    super();
+  }
+
+  eq(other: LocalGitAttributionWidget) {
+    return (
+      other.state === this.state &&
+      other.editedAtMs === this.editedAtMs &&
+      other.dateTimeFormat === this.dateTimeFormat
+    );
+  }
+
+  toDOM() {
+    const span = document.createElement("span");
+    span.className = "git-attribution-ghost git-attribution-ghost--dirty";
+    span.title =
+      this.state === "unsaved"
+        ? "Unsaved local changes"
+        : "Saved changes that have not been committed";
+    span.textContent =
+      this.state === "unsaved"
+        ? [
+            "You",
+            formatDateTime(this.editedAtMs, this.dateTimeFormat, "oneMonth"),
+            "Unsaved changes",
+          ]
+            .filter(Boolean)
+            .join(" - ")
+        : "You - Uncommitted changes";
+    return span;
   }
 }
 
