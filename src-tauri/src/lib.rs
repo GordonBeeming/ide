@@ -166,6 +166,8 @@ struct PersistedViewSettings {
     show_gitignored_files: bool,
     #[serde(default)]
     show_diagnostics_panel: bool,
+    #[serde(default = "default_track_active_file")]
+    track_active_file: bool,
     #[serde(default = "default_tree_scan_limit")]
     tree_scan_limit: usize,
     #[serde(default = "default_max_open_file_kb")]
@@ -208,6 +210,7 @@ impl Default for PersistedViewSettings {
             show_generated_internal: false,
             show_gitignored_files: default_show_gitignored_files(),
             show_diagnostics_panel: false,
+            track_active_file: default_track_active_file(),
             tree_scan_limit: default_tree_scan_limit(),
             max_open_file_kb: default_max_open_file_kb(),
             workspace_search_result_limit: default_workspace_search_result_limit(),
@@ -266,14 +269,12 @@ const MAX_WORKSPACE_TITLE_MAX_CHARS: usize = 120;
 const MIN_COMMAND_PALETTE_RESULT_LIMIT: usize = 5;
 const DEFAULT_COMMAND_PALETTE_RESULT_LIMIT: usize = 18;
 const MAX_COMMAND_PALETTE_RESULT_LIMIT: usize = 100;
-const MIN_EDITOR_FONT_SIZE: usize = 10;
+const MIN_EDITOR_FONT_SIZE: usize = 1;
 const DEFAULT_EDITOR_FONT_SIZE: usize = 13;
-const MAX_EDITOR_FONT_SIZE: usize = 24;
-const MIN_APP_ZOOM_PERCENT: usize = 80;
+const MIN_APP_ZOOM_PERCENT: usize = 10;
 const DEFAULT_APP_ZOOM_PERCENT: usize = 100;
-const MAX_APP_ZOOM_PERCENT: usize = 160;
 const MIN_SIDEBAR_WIDTH: usize = 180;
-const MAX_SIDEBAR_WIDTH: usize = 520;
+const MAX_SIDEBAR_WIDTH: usize = 1040;
 const CODEX_MCP_TOKEN_FILE: &str = "codex-mcp-token";
 const DEFAULT_DATE_TIME_FORMAT: &str = "localMedium";
 const DEFAULT_RECENT_RELATIVE_THRESHOLD: &str = "oneWeek";
@@ -340,6 +341,10 @@ fn default_app_zoom_percent() -> usize {
     DEFAULT_APP_ZOOM_PERCENT
 }
 
+fn default_track_active_file() -> bool {
+    true
+}
+
 fn default_date_time_format() -> String {
     DEFAULT_DATE_TIME_FORMAT.to_string()
 }
@@ -385,12 +390,8 @@ fn sanitize_view_settings(mut settings: PersistedViewSettings) -> PersistedViewS
         MIN_COMMAND_PALETTE_RESULT_LIMIT,
         MAX_COMMAND_PALETTE_RESULT_LIMIT,
     );
-    settings.editor_font_size = settings
-        .editor_font_size
-        .clamp(MIN_EDITOR_FONT_SIZE, MAX_EDITOR_FONT_SIZE);
-    settings.app_zoom_percent = settings
-        .app_zoom_percent
-        .clamp(MIN_APP_ZOOM_PERCENT, MAX_APP_ZOOM_PERCENT);
+    settings.editor_font_size = settings.editor_font_size.max(MIN_EDITOR_FONT_SIZE);
+    settings.app_zoom_percent = settings.app_zoom_percent.max(MIN_APP_ZOOM_PERCENT);
     if !KNOWN_DATE_TIME_FORMATS.contains(&settings.date_time_format.as_str()) {
         settings.date_time_format = default_date_time_format();
     }
@@ -3138,7 +3139,7 @@ mod tests {
             ],
             active_file: Some("src/App.tsx".to_string()),
             selected_path: Some("/tmp".to_string()),
-            sidebar_width: Some(999),
+            sidebar_width: Some(9_999),
         });
 
         assert_eq!(workspace.expanded_folders, vec!["src".to_string()]);
@@ -3156,6 +3157,7 @@ mod tests {
                 show_generated_internal: true,
                 show_gitignored_files: false,
                 show_diagnostics_panel: true,
+                track_active_file: false,
                 tree_scan_limit: 12_000,
                 max_open_file_kb: 8_192,
                 workspace_search_result_limit: 750,
@@ -3166,8 +3168,8 @@ mod tests {
                 background_index_batch_entries: 3_000,
                 workspace_title_max_chars: 50,
                 command_palette_result_limit: 32,
-                editor_font_size: 14,
-                app_zoom_percent: 110,
+                editor_font_size: 44,
+                app_zoom_percent: 350,
                 date_time_format: "yyyyMmDdHhMm".to_string(),
                 recent_relative_threshold: "twoDays".to_string(),
                 feature_flags: BTreeMap::new(),
@@ -3189,6 +3191,7 @@ mod tests {
         assert!(loaded.view.show_generated_internal);
         assert!(!loaded.view.show_gitignored_files);
         assert!(loaded.view.show_diagnostics_panel);
+        assert!(!loaded.view.track_active_file);
         assert_eq!(loaded.view.max_open_file_kb, 8_192);
         assert_eq!(loaded.view.workspace_search_result_limit, 750);
         assert_eq!(loaded.view.workspace_search_max_file_kb, 2_048);
@@ -3196,6 +3199,8 @@ mod tests {
         assert_eq!(loaded.view.current_file_result_preview_limit, 16);
         assert_eq!(loaded.view.quick_open_result_limit, 24);
         assert_eq!(loaded.view.command_palette_result_limit, 32);
+        assert_eq!(loaded.view.editor_font_size, 44);
+        assert_eq!(loaded.view.app_zoom_percent, 350);
         assert_eq!(loaded.view.date_time_format, "yyyyMmDdHhMm");
         assert_eq!(loaded.view.recent_relative_threshold, "twoDays");
         assert_eq!(loaded.workspaces.len(), 1);

@@ -1728,6 +1728,48 @@ describe("App shell interactions", () => {
     );
   });
 
+  it("keeps file filtering and content search as separate sidebar modes", async () => {
+    tauriMocks.searchFiles.mockResolvedValueOnce([
+      {
+        path: "src/App.tsx",
+        lineNumber: 4,
+        lineText: "const needle = true;",
+        matchStart: 6,
+        matchEnd: 12,
+      },
+    ]);
+    render(<App />);
+
+    expect(await treeButton("README.md")).toBeInTheDocument();
+    fireEvent.click(screen.getByTitle("Filter files"));
+    const filterInput = await screen.findByPlaceholderText("Filter files");
+    fireEvent.change(filterInput, { target: { value: "App" } });
+    expect(await treeButton("App.tsx")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTitle("Search contents"));
+    expect(screen.queryByPlaceholderText("Filter files")).not.toBeInTheDocument();
+    const contentInput = await screen.findByPlaceholderText("Search contents");
+    fireEvent.change(contentInput, { target: { value: "needle" } });
+    expect(await screen.findByText("src/App.tsx:4")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Workspace files")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByTitle("Search contents"));
+    await waitFor(() =>
+      expect(screen.queryByPlaceholderText("Search contents")).not.toBeInTheDocument(),
+    );
+    expect(await screen.findByLabelText("Workspace files")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTitle("Search contents"));
+    expect(await screen.findByPlaceholderText("Search contents")).toHaveValue("needle");
+    expect(screen.queryByPlaceholderText("Filter files")).not.toBeInTheDocument();
+    expect(await screen.findByText("src/App.tsx:4")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTitle("Filter files"));
+    expect(await screen.findByPlaceholderText("Filter files")).toHaveValue("App");
+    expect(screen.queryByPlaceholderText("Search contents")).not.toBeInTheDocument();
+    expect(await screen.findByLabelText("Workspace files")).toBeInTheDocument();
+  });
+
   it("opens quick open and search fields from the native Search menu", async () => {
     (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
     render(<App />);
@@ -1748,7 +1790,9 @@ describe("App shell interactions", () => {
       eventMocks.listeners.get("menu://find-in-files")?.({ payload: undefined });
     });
     expect(await screen.findByPlaceholderText("Search contents")).toHaveFocus();
+    expect(screen.queryByLabelText("Workspace files")).not.toBeInTheDocument();
 
+    fireEvent.keyDown(screen.getByPlaceholderText("Search contents"), { key: "Escape" });
     fireEvent.click(await treeButton("README.md"));
     await findTab("README.md");
     await waitFor(() => expect(eventMocks.listeners.has("menu://find-in-file")).toBe(true));
@@ -1868,11 +1912,24 @@ describe("App shell interactions", () => {
       ),
     ).toBe(String(100 / 110));
 
+    for (let index = 0; index < 10; index += 1) {
+      fireEvent.keyDown(window, { key: "-", ctrlKey: true, shiftKey: true });
+    }
+    expect(await screen.findByText("App zoom 10%")).toBeInTheDocument();
+    expect(shell.style.getPropertyValue("--app-zoom")).toBe("0.1");
+    expect(shell.style.getPropertyValue("--app-zoom-inverse")).toBe(String(100 / 10));
+
+    for (let index = 0; index < 20; index += 1) {
+      fireEvent.keyDown(window, { key: "=", ctrlKey: true });
+    }
+    expect(await screen.findByText("Editor font size 34px")).toBeInTheDocument();
+    expect(shell.style.getPropertyValue("--editor-font-size")).toBe("34px");
+
     await waitFor(() =>
       expect(tauriMocks.updateUiState).toHaveBeenCalledWith(
         expect.objectContaining({
-          editorFontSize: 14,
-          appZoomPercent: 110,
+          editorFontSize: 34,
+          appZoomPercent: 10,
         }),
         expect.any(Object),
       ),
@@ -1886,7 +1943,10 @@ describe("App shell interactions", () => {
     const shell = document.querySelector(".app-shell") as HTMLElement;
     expect(shell.style.getPropertyValue("--sidebar-width")).toBe("288px");
 
-    fireEvent.keyDown(screen.getByRole("separator", { name: "Resize sidebar" }), {
+    const resizer = screen.getByRole("separator", { name: "Resize sidebar" });
+    expect(resizer).toHaveAttribute("aria-valuemax", "1040");
+
+    fireEvent.keyDown(resizer, {
       key: "ArrowRight",
     });
 
@@ -2126,7 +2186,7 @@ describe("App shell interactions", () => {
 
     expect(screen.queryByRole("dialog", { name: "Go to line" }))
       .not.toBeInTheDocument();
-    expect(screen.getByText("Reveal line 4")).toBeInTheDocument();
+    expect(await screen.findByText("Reveal line 4")).toBeInTheDocument();
     expect(screen.getByText("Moved to README.md:4")).toBeInTheDocument();
     expect(screen.getByText("4:1")).toBeInTheDocument();
   });
@@ -3038,10 +3098,58 @@ describe("App shell interactions", () => {
     expect(screen.getByLabelText("Content search results")).toHaveTextContent(
       "Results1src/App.tsx:4const needle = true;",
     );
+    expect(screen.queryByLabelText("Workspace files")).not.toBeInTheDocument();
     fireEvent.click(resultPath.closest("button")!);
 
     await findTab("src/App.tsx");
-    expect(screen.getByText("Reveal line 4")).toBeInTheDocument();
+    expect(await screen.findByText("Reveal line 4")).toBeInTheDocument();
+    fireEvent.click(screen.getByTitle("Search contents"));
+    const tree = await screen.findByLabelText("Workspace files");
+    expect(await within(tree).findByRole("treeitem", { name: "src" })).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
+    expect(await within(tree).findByRole("treeitem", { name: "App.tsx" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+  });
+
+  it("does not reveal content search result opens in the tree when active-file tracking is off", async () => {
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    tauriMocks.searchFiles.mockResolvedValueOnce([
+      {
+        path: "src/App.tsx",
+        lineNumber: 4,
+        lineText: "const needle = true;",
+        matchStart: 6,
+        matchEnd: 12,
+      },
+    ]);
+    render(<App />);
+
+    expect(await treeButton("README.md")).toBeInTheDocument();
+    await openSettingsDialog();
+    fireEvent.click(screen.getByLabelText("Track active file"));
+    fireEvent.keyDown(window, { key: "Escape" });
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "Settings" })).not.toBeInTheDocument(),
+    );
+
+    fireEvent.change(await openContentSearch(), {
+      target: { value: "needle" },
+    });
+    const resultPath = await screen.findByText("src/App.tsx:4");
+    fireEvent.click(resultPath.closest("button")!);
+    await findTab("src/App.tsx");
+
+    fireEvent.click(screen.getByTitle("Search contents"));
+    const tree = await screen.findByLabelText("Workspace files");
+    expect(await within(tree).findByRole("treeitem", { name: "src" })).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
+    expect(within(tree).queryByRole("treeitem", { name: "App.tsx" })).not.toBeInTheDocument();
   });
 
   it("clears stale content search results while a new query is searching", async () => {

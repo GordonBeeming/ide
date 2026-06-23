@@ -405,98 +405,74 @@ pub fn search_workspace_with_metadata(
 
     let normalized_query = query.to_lowercase();
     let mut matches = Vec::new();
-    let mut seen_paths = HashSet::new();
     let mut searched_files = 0;
     let mut skipped_files = 0;
     let collection_limit = max_results.saturating_add(1);
-    let mut max_depth = 1;
 
-    loop {
-        let previous_seen_count = seen_paths.len();
-        let mut walker = workspace_walker(root, show_dotfiles, false, true);
-        walker.max_depth(Some(max_depth));
-
-        for result in walker.build() {
-            if matches.len() >= collection_limit {
-                let truncated = matches.len() > max_results;
-                matches.truncate(max_results);
-                return Ok(WorkspaceSearch {
-                    matches,
-                    truncated,
-                    limit: max_results,
-                    searched_files,
-                    skipped_files,
-                });
-            }
-
-            let entry = result?;
-            let path = entry.path();
-            if path == root {
-                continue;
-            }
-
-            let relative = path
-                .strip_prefix(root)
-                .map_err(|_| WorkspaceError::OutsideWorkspace)?;
-            let relative_path = normalize_path(relative);
-            if !seen_paths.insert(relative_path.clone()) {
-                continue;
-            }
-
-            let metadata = fs::symlink_metadata(path)?;
-            if metadata.file_type().is_symlink() {
-                skipped_files += 1;
-                continue;
-            }
-            if metadata.is_dir() {
-                continue;
-            }
-            if metadata.len() > max_file_bytes || is_known_binary_path(path) {
-                skipped_files += 1;
-                continue;
-            }
-
-            let bytes = fs::read(path)?;
-            if bytes.contains(&0) {
-                skipped_files += 1;
-                continue;
-            }
-
-            let Ok(contents) = std::str::from_utf8(&bytes) else {
-                skipped_files += 1;
-                continue;
-            };
-            searched_files += 1;
-            'line_matches: for (index, line) in contents.lines().enumerate() {
-                if matches.len() >= collection_limit {
-                    break;
-                }
-
-                let line_text = line.trim_end().to_string();
-
-                for (match_start, match_end) in
-                    case_insensitive_match_byte_ranges(line, &normalized_query)
-                {
-                    if matches.len() >= collection_limit {
-                        break 'line_matches;
-                    }
-
-                    matches.push(SearchMatch {
-                        path: relative_path.clone(),
-                        line_number: index + 1,
-                        line_text: line_text.clone(),
-                        match_start: utf16_offset_for_byte_index(line, match_start),
-                        match_end: utf16_offset_for_byte_index(line, match_end),
-                    });
-                }
-            }
-        }
-
-        if seen_paths.len() == previous_seen_count {
+    let walker = workspace_walker(root, show_dotfiles, false, true);
+    for result in walker.build() {
+        if matches.len() >= collection_limit {
             break;
         }
 
-        max_depth += 1;
+        let entry = result?;
+        let path = entry.path();
+        if path == root {
+            continue;
+        }
+
+        let metadata = fs::symlink_metadata(path)?;
+        if metadata.file_type().is_symlink() {
+            skipped_files += 1;
+            continue;
+        }
+        if metadata.is_dir() {
+            continue;
+        }
+        if metadata.len() > max_file_bytes || is_known_binary_path(path) {
+            skipped_files += 1;
+            continue;
+        }
+
+        let bytes = fs::read(path)?;
+        if bytes.contains(&0) {
+            skipped_files += 1;
+            continue;
+        }
+
+        let Ok(contents) = std::str::from_utf8(&bytes) else {
+            skipped_files += 1;
+            continue;
+        };
+        let relative = path
+            .strip_prefix(root)
+            .map_err(|_| WorkspaceError::OutsideWorkspace)?;
+        let relative_path = normalize_path(relative);
+
+        searched_files += 1;
+        'line_matches: for (index, line) in contents.lines().enumerate() {
+            if matches.len() >= collection_limit {
+                break;
+            }
+
+            let line_text = line.trim_end().to_string();
+
+            for (match_start, match_end) in
+                case_insensitive_match_byte_ranges(line, &normalized_query)
+            {
+                if matches.len() >= collection_limit {
+                    break 'line_matches;
+                }
+
+                matches.push(SearchMatch {
+                    path: relative_path.clone(),
+                    line_number: index + 1,
+                    line_text: line_text.clone(),
+                    match_start: utf16_offset_for_byte_index(line, match_start),
+                    match_end: utf16_offset_for_byte_index(line, match_end),
+                });
+            }
+        }
     }
 
     let truncated = matches.len() > max_results;

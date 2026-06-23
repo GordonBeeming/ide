@@ -291,16 +291,14 @@ const defaultWorkspaceTitleMaxChars = 50;
 const minCommandPaletteResultLimit = 5;
 const maxCommandPaletteResultLimit = 100;
 const defaultCommandPaletteResultLimit = 18;
-const minEditorFontSize = 10;
-const maxEditorFontSize = 24;
+const minEditorFontSize = 1;
 const defaultEditorFontSize = 13;
 const editorFontSizeStep = 1;
-const minAppZoomPercent = 80;
-const maxAppZoomPercent = 160;
+const minAppZoomPercent = 10;
 const defaultAppZoomPercent = 100;
 const appZoomStepPercent = 10;
 const minSidebarWidth = 180;
-const maxSidebarWidth = 520;
+const maxSidebarWidth = 1040;
 const defaultSidebarWidth = 288;
 const sidebarWidthStep = 16;
 
@@ -313,6 +311,12 @@ function sanitizeNumberLimit(
   if (!Number.isFinite(value)) return fallback;
   const finiteValue = value as number;
   return Math.min(max, Math.max(min, Math.trunc(finiteValue)));
+}
+
+function sanitizeNumberMinimum(value: number | undefined, min: number, fallback: number) {
+  if (!Number.isFinite(value)) return fallback;
+  const finiteValue = value as number;
+  return Math.max(min, Math.trunc(finiteValue));
 }
 
 function sanitizeTreeScanLimit(value: number | undefined) {
@@ -459,6 +463,7 @@ export default function App() {
   const [showGeneratedInternal, setShowGeneratedInternal] = useState(false);
   const [showGitignoredFiles, setShowGitignoredFiles] = useState(false);
   const [showDiagnosticsPanel, setShowDiagnosticsPanel] = useState(false);
+  const [trackActiveFile, setTrackActiveFile] = useState(true);
   const [treeScanLimit, setTreeScanLimit] = useState(defaultTreeScanLimit);
   const [maxOpenFileKb, setMaxOpenFileKb] = useState(defaultMaxOpenFileKb);
   const [workspaceSearchResultLimit, setWorkspaceSearchResultLimit] = useState(
@@ -610,8 +615,9 @@ export default function App() {
     [keyBindingsQuery],
   );
   const filterExpanded = activeSidebarSearch === "filter" || filter.trim().length > 0;
-  const contentSearchExpanded =
-    activeSidebarSearch === "content" || contentQuery.trim().length > 0;
+  const filterVisible = activeSidebarSearch !== "content" && filterExpanded;
+  const contentSearchActive = activeSidebarSearch === "content";
+  const contentSearchReady = contentQuery.trim().length >= 2;
   const contentSearchStatsText =
     searchStats.searchedFiles === undefined
       ? undefined
@@ -800,6 +806,7 @@ export default function App() {
     setShowGeneratedInternal(snapshot.view.showGeneratedInternal);
     setShowGitignoredFiles(snapshot.view.showGitignoredFiles ?? false);
     setShowDiagnosticsPanel(Boolean(snapshot.view.showDiagnosticsPanel));
+    setTrackActiveFile(snapshot.view.trackActiveFile ?? true);
     setTreeScanLimit(sanitizeTreeScanLimit(snapshot.view.treeScanLimit));
     setMaxOpenFileKb(
       sanitizeNumberLimit(
@@ -866,18 +873,16 @@ export default function App() {
       ),
     );
     setEditorFontSize(
-      sanitizeNumberLimit(
+      sanitizeNumberMinimum(
         snapshot.view.editorFontSize,
         minEditorFontSize,
-        maxEditorFontSize,
         defaultEditorFontSize,
       ),
     );
     setAppZoomPercent(
-      sanitizeNumberLimit(
+      sanitizeNumberMinimum(
         snapshot.view.appZoomPercent,
         minAppZoomPercent,
-        maxAppZoomPercent,
         defaultAppZoomPercent,
       ),
     );
@@ -1223,7 +1228,9 @@ export default function App() {
       lineNumber?: number,
       recordAsSingleFile = singleFileMode,
     ) => {
-      setSelectedPath(entry.path);
+      if (entry.isDir || trackActiveFile) {
+        setSelectedPath(entry.path);
+      }
       setOpenFailure(undefined);
       if (lineNumber) {
         setRevealTarget({ path: entry.path, lineNumber });
@@ -1278,8 +1285,28 @@ export default function App() {
         setStatus("Open failed");
       }
     },
-    [maxOpenFileKb, openFiles, singleFileMode],
+    [maxOpenFileKb, openFiles, singleFileMode, trackActiveFile],
   );
+
+  useEffect(() => {
+    if (!trackActiveFile || !activePath || singleFileMode) return;
+
+    setSelectedPath(activePath);
+    const parentPaths = parentFolderPaths(activePath);
+    if (parentPaths.length === 0) return;
+
+    setExpandedFolders((current) => {
+      let changed = false;
+      const next = new Set(current);
+      for (const parentPath of parentPaths) {
+        if (!next.has(parentPath)) {
+          next.add(parentPath);
+          changed = true;
+        }
+      }
+      return changed ? next : current;
+    });
+  }, [activePath, singleFileMode, trackActiveFile]);
 
   const openPathByName = useCallback(
     async (path: string, pinned = false, lineNumber?: number) => {
@@ -1425,6 +1452,7 @@ export default function App() {
           showGeneratedInternal,
           showGitignoredFiles,
           showDiagnosticsPanel,
+          trackActiveFile,
           treeScanLimit,
           maxOpenFileKb,
           workspaceSearchResultLimit,
@@ -1463,6 +1491,7 @@ export default function App() {
     showGeneratedInternal,
     showGitignoredFiles,
     showDiagnosticsPanel,
+    trackActiveFile,
     singleFileMode,
     treeScanLimit,
     maxOpenFileKb,
@@ -1594,10 +1623,9 @@ export default function App() {
   }, []);
 
   const zoomEditor = useCallback((direction: 1 | -1) => {
-    const next = sanitizeNumberLimit(
+    const next = sanitizeNumberMinimum(
       editorFontSize + direction * editorFontSizeStep,
       minEditorFontSize,
-      maxEditorFontSize,
       defaultEditorFontSize,
     );
     setEditorFontSize(next);
@@ -1605,10 +1633,9 @@ export default function App() {
   }, [editorFontSize]);
 
   const zoomApp = useCallback((direction: 1 | -1) => {
-    const next = sanitizeNumberLimit(
+    const next = sanitizeNumberMinimum(
       appZoomPercent + direction * appZoomStepPercent,
       minAppZoomPercent,
-      maxAppZoomPercent,
       defaultAppZoomPercent,
     );
     setAppZoomPercent(next);
@@ -2620,7 +2647,7 @@ export default function App() {
       {
         id: "zoom_editor_in",
         title: "Zoom Editor In",
-        detail: `Set editor font size to ${Math.min(maxEditorFontSize, editorFontSize + editorFontSizeStep)}px`,
+        detail: `Set editor font size to ${editorFontSize + editorFontSizeStep}px`,
         keywords: ["font", "code", "increase"],
         enabled: true,
         run: () => zoomEditor(1),
@@ -2636,7 +2663,7 @@ export default function App() {
       {
         id: "zoom_app_in",
         title: "Zoom App In",
-        detail: `Set app zoom to ${Math.min(maxAppZoomPercent, appZoomPercent + appZoomStepPercent)}%`,
+        detail: `Set app zoom to ${appZoomPercent + appZoomStepPercent}%`,
         keywords: ["view", "ui", "increase"],
         enabled: true,
         run: () => zoomApp(1),
@@ -3231,24 +3258,28 @@ export default function App() {
             ].join(" ")}
             title="Filter files"
             aria-label="Filter files"
-            onClick={() => setActiveSidebarSearch("filter")}
+            onClick={() =>
+              setActiveSidebarSearch((current) => (current === "filter" ? undefined : "filter"))
+            }
           >
             <ListFilter size={16} />
           </button>
           <button
             className={[
               "icon-button",
-              contentSearchExpanded ? "icon-button--active" : "",
+              contentSearchActive ? "icon-button--active" : "",
             ].join(" ")}
             title="Search contents"
             aria-label="Search contents"
-            onClick={() => setActiveSidebarSearch("content")}
+            onClick={() =>
+              setActiveSidebarSearch((current) => (current === "content" ? undefined : "content"))
+            }
           >
             <Search size={16} />
           </button>
         </div>
 
-        {filterExpanded ? (
+        {filterVisible ? (
           <label className="search-box">
             <ListFilter size={15} />
             <input
@@ -3268,7 +3299,7 @@ export default function App() {
           </label>
         ) : null}
 
-        {contentSearchExpanded ? (
+        {contentSearchActive ? (
           <label className="search-box">
             <Search size={15} />
             <input
@@ -3288,8 +3319,11 @@ export default function App() {
           </label>
         ) : null}
 
-        {contentQuery.trim().length >= 2 ? (
-          <div className="search-results" aria-label="Content search results">
+        {contentSearchActive ? (
+          <div
+            className="search-results search-results--sidebar"
+            aria-label="Content search results"
+          >
             <div className="search-results__header">
               <span>{searching ? "Searching" : "Results"}</span>
               <span>
@@ -3316,54 +3350,60 @@ export default function App() {
                 </button>
               </div>
             ) : null}
-            {searchResults.map((result) => (
-              <button
-                className="search-result"
-                key={`${result.path}:${result.lineNumber}:${result.matchStart}`}
-                onClick={() => openPathByName(result.path, false, result.lineNumber)}
-                onDoubleClick={() => openPathByName(result.path, true, result.lineNumber)}
-              >
-                <span className="search-result__path">
-                  {result.path}:{result.lineNumber}
-                </span>
-                <span className="search-result__line">{result.lineText}</span>
-              </button>
-            ))}
+            {contentSearchReady
+              ? searchResults.map((result) => (
+                  <button
+                    className="search-result"
+                    key={`${result.path}:${result.lineNumber}:${result.matchStart}`}
+                    onClick={() => openPathByName(result.path, false, result.lineNumber)}
+                    onDoubleClick={() => openPathByName(result.path, true, result.lineNumber)}
+                  >
+                    <span className="search-result__path">
+                      {result.path}:{result.lineNumber}
+                    </span>
+                    <span className="search-result__line">{result.lineText}</span>
+                  </button>
+                ))
+              : null}
             {!searching && searchResults.length === 0 ? (
-              <div className="search-results__empty">No matches</div>
+              <div className="search-results__empty">
+                {contentSearchReady ? "No matches" : "Type at least 2 characters"}
+              </div>
             ) : null}
           </div>
         ) : null}
 
-        <nav className="file-tree" role="tree" aria-label="Workspace files">
-          {workspaceLoading && files.length === 0 ? (
-            <div className="tree-empty" role="status">Loading workspace</div>
-          ) : workspaceLoadFailed && files.length === 0 ? (
-            <div className="tree-empty tree-empty--error" role="status">
-              <span>Workspace load failed</span>
-              <button className="command-button command-button--quiet" onClick={refreshWorkspace}>
-                Retry
-              </button>
-            </div>
-          ) : filteredTree.length === 0 ? (
-            <div className="tree-empty" role="status">
-              {filter.trim() ? "No matching files" : "Empty workspace"}
-            </div>
-          ) : (
-            filteredTree.map((node) => (
-              <TreeItem
-                key={node.path}
-                expandedFolders={expandedFolders}
-                forceExpanded={Boolean(filter.trim())}
-                node={node}
-                selectedPath={selectedPath}
-                onOpen={openPath}
-                onSelect={setSelectedPath}
-                onToggleFolder={toggleFolder}
-              />
-            ))
-          )}
-        </nav>
+        {!contentSearchActive ? (
+          <nav className="file-tree" role="tree" aria-label="Workspace files">
+            {workspaceLoading && files.length === 0 ? (
+              <div className="tree-empty" role="status">Loading workspace</div>
+            ) : workspaceLoadFailed && files.length === 0 ? (
+              <div className="tree-empty tree-empty--error" role="status">
+                <span>Workspace load failed</span>
+                <button className="command-button command-button--quiet" onClick={refreshWorkspace}>
+                  Retry
+                </button>
+              </div>
+            ) : filteredTree.length === 0 ? (
+              <div className="tree-empty" role="status">
+                {filter.trim() ? "No matching files" : "Empty workspace"}
+              </div>
+            ) : (
+              filteredTree.map((node) => (
+                <TreeItem
+                  key={node.path}
+                  expandedFolders={expandedFolders}
+                  forceExpanded={Boolean(filter.trim())}
+                  node={node}
+                  selectedPath={selectedPath}
+                  onOpen={openPath}
+                  onSelect={setSelectedPath}
+                  onToggleFolder={toggleFolder}
+                />
+              ))
+            )}
+          </nav>
+        ) : null}
 
         {workspaceScanTruncated && !singleFileMode ? (
           <div className="sidebar-scan-status" role="status">
@@ -4150,6 +4190,21 @@ export default function App() {
                           }}
                         />
                         <span>Show diagnostics panel</span>
+                      </label>
+                      <label className="settings-row">
+                        <input
+                          type="checkbox"
+                          checked={trackActiveFile}
+                          onChange={(event) => {
+                            setTrackActiveFile(event.target.checked);
+                            setStatus(
+                              event.target.checked
+                                ? "Tracking active file in tree"
+                                : "Stopped tracking active file in tree",
+                            );
+                          }}
+                        />
+                        <span>Track active file</span>
                       </label>
                       <label className="settings-row settings-row--stacked">
                         <span>Date and time format</span>
@@ -5318,6 +5373,15 @@ function filterKeyBindings(bindings: KeyBindingInfo[], query: string) {
       .toLowerCase()
       .includes(normalized),
   );
+}
+
+function parentFolderPaths(path: string) {
+  const segments = path.split("/").filter(Boolean);
+  const parents: string[] = [];
+  for (let index = 1; index < segments.length; index += 1) {
+    parents.push(segments.slice(0, index).join("/"));
+  }
+  return parents;
 }
 
 function suggestNewFilePath(selectedPath: string | undefined, files: FileEntry[]) {
