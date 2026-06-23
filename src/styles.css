@@ -351,6 +351,13 @@ button {
   background: color-mix(in oklch, var(--panel) 86%, var(--bg));
 }
 
+.search-results--sidebar {
+  flex: 1;
+  min-height: 0;
+  max-height: none;
+  margin-top: 8px;
+}
+
 .search-results__header {
   display: flex;
   justify-content: space-between;

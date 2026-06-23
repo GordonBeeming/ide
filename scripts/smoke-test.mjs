@@ -576,7 +576,7 @@ async function runScenario(browser, url, colorScheme) {
   await contentSearchInput.fill("smoke");
   await page.getByText("docs/README.md:3").waitFor();
 
-  await page.getByText("README.md").dblclick();
+  await page.getByText("docs/README.md:3").dblclick();
   await page.locator(".cm-content").waitFor();
   await page.getByText("Smoke workspace").waitFor();
   await assertTheme(page, colorScheme);
@@ -616,6 +616,11 @@ async function runScenario(browser, url, colorScheme) {
   await assertInputValue(currentFindInput, "", "current-file search after first Escape");
   await page.keyboard.press("Escape");
   await currentFindInput.waitFor({ state: "hidden" });
+
+  await contentSearchInput.press("Escape");
+  await assertInputValue(contentSearchInput, "", "content search after opening result");
+  await contentSearchInput.press("Escape");
+  await contentSearchInput.waitFor({ state: "hidden" });
 
   await page.getByRole("treeitem", { name: "image.png" }).click();
   await page.getByText("Non-text file selected").waitFor();

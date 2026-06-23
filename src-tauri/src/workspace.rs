@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashSet, VecDeque};
 use std::ffi::OsStr;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
@@ -409,12 +409,11 @@ pub fn search_workspace_with_metadata(
     let mut searched_files = 0;
     let mut skipped_files = 0;
     let collection_limit = max_results.saturating_add(1);
-    let mut max_depth = 1;
+    let mut pending_directories = VecDeque::from([root.to_path_buf()]);
 
-    loop {
-        let previous_seen_count = seen_paths.len();
-        let mut walker = workspace_walker(root, show_dotfiles, false, true);
-        walker.max_depth(Some(max_depth));
+    while let Some(directory) = pending_directories.pop_front() {
+        let mut walker = workspace_walker(&directory, show_dotfiles, false, true);
+        walker.max_depth(Some(1));
 
         for result in walker.build() {
             if matches.len() >= collection_limit {
@@ -431,7 +430,7 @@ pub fn search_workspace_with_metadata(
 
             let entry = result?;
             let path = entry.path();
-            if path == root {
+            if path == directory {
                 continue;
             }
 
@@ -449,6 +448,7 @@ pub fn search_workspace_with_metadata(
                 continue;
             }
             if metadata.is_dir() {
+                pending_directories.push_back(path.to_path_buf());
                 continue;
             }
             if metadata.len() > max_file_bytes || is_known_binary_path(path) {
@@ -491,12 +491,6 @@ pub fn search_workspace_with_metadata(
                 }
             }
         }
-
-        if seen_paths.len() == previous_seen_count {
-            break;
-        }
-
-        max_depth += 1;
     }
 
     let truncated = matches.len() > max_results;

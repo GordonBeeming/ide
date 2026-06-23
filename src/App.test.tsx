@@ -1748,7 +1748,9 @@ describe("App shell interactions", () => {
       eventMocks.listeners.get("menu://find-in-files")?.({ payload: undefined });
     });
     expect(await screen.findByPlaceholderText("Search contents")).toHaveFocus();
+    expect(screen.queryByLabelText("Workspace files")).not.toBeInTheDocument();
 
+    fireEvent.keyDown(screen.getByPlaceholderText("Search contents"), { key: "Escape" });
     fireEvent.click(await treeButton("README.md"));
     await findTab("README.md");
     await waitFor(() => expect(eventMocks.listeners.has("menu://find-in-file")).toBe(true));
@@ -1868,11 +1870,24 @@ describe("App shell interactions", () => {
       ),
     ).toBe(String(100 / 110));
 
+    for (let index = 0; index < 10; index += 1) {
+      fireEvent.keyDown(window, { key: "-", ctrlKey: true, shiftKey: true });
+    }
+    expect(await screen.findByText("App zoom 10%")).toBeInTheDocument();
+    expect(shell.style.getPropertyValue("--app-zoom")).toBe("0.1");
+    expect(shell.style.getPropertyValue("--app-zoom-inverse")).toBe(String(100 / 10));
+
+    for (let index = 0; index < 20; index += 1) {
+      fireEvent.keyDown(window, { key: "=", ctrlKey: true });
+    }
+    expect(await screen.findByText("Editor font size 34px")).toBeInTheDocument();
+    expect(shell.style.getPropertyValue("--editor-font-size")).toBe("34px");
+
     await waitFor(() =>
       expect(tauriMocks.updateUiState).toHaveBeenCalledWith(
         expect.objectContaining({
-          editorFontSize: 14,
-          appZoomPercent: 110,
+          editorFontSize: 34,
+          appZoomPercent: 10,
         }),
         expect.any(Object),
       ),
@@ -1886,7 +1901,10 @@ describe("App shell interactions", () => {
     const shell = document.querySelector(".app-shell") as HTMLElement;
     expect(shell.style.getPropertyValue("--sidebar-width")).toBe("288px");
 
-    fireEvent.keyDown(screen.getByRole("separator", { name: "Resize sidebar" }), {
+    const resizer = screen.getByRole("separator", { name: "Resize sidebar" });
+    expect(resizer).toHaveAttribute("aria-valuemax", "1040");
+
+    fireEvent.keyDown(resizer, {
       key: "ArrowRight",
     });
 
@@ -3038,6 +3056,7 @@ describe("App shell interactions", () => {
     expect(screen.getByLabelText("Content search results")).toHaveTextContent(
       "Results1src/App.tsx:4const needle = true;",
     );
+    expect(screen.queryByLabelText("Workspace files")).not.toBeInTheDocument();
     fireEvent.click(resultPath.closest("button")!);
 
     await findTab("src/App.tsx");
