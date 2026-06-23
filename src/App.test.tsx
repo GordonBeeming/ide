@@ -1728,6 +1728,48 @@ describe("App shell interactions", () => {
     );
   });
 
+  it("keeps file filtering and content search as separate sidebar modes", async () => {
+    tauriMocks.searchFiles.mockResolvedValueOnce([
+      {
+        path: "src/App.tsx",
+        lineNumber: 4,
+        lineText: "const needle = true;",
+        matchStart: 6,
+        matchEnd: 12,
+      },
+    ]);
+    render(<App />);
+
+    expect(await treeButton("README.md")).toBeInTheDocument();
+    fireEvent.click(screen.getByTitle("Filter files"));
+    const filterInput = await screen.findByPlaceholderText("Filter files");
+    fireEvent.change(filterInput, { target: { value: "App" } });
+    expect(await treeButton("App.tsx")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTitle("Search contents"));
+    expect(screen.queryByPlaceholderText("Filter files")).not.toBeInTheDocument();
+    const contentInput = await screen.findByPlaceholderText("Search contents");
+    fireEvent.change(contentInput, { target: { value: "needle" } });
+    expect(await screen.findByText("src/App.tsx:4")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Workspace files")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByTitle("Search contents"));
+    await waitFor(() =>
+      expect(screen.queryByPlaceholderText("Search contents")).not.toBeInTheDocument(),
+    );
+    expect(await screen.findByLabelText("Workspace files")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTitle("Search contents"));
+    expect(await screen.findByPlaceholderText("Search contents")).toHaveValue("needle");
+    expect(screen.queryByPlaceholderText("Filter files")).not.toBeInTheDocument();
+    expect(await screen.findByText("src/App.tsx:4")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTitle("Filter files"));
+    expect(await screen.findByPlaceholderText("Filter files")).toHaveValue("App");
+    expect(screen.queryByPlaceholderText("Search contents")).not.toBeInTheDocument();
+    expect(await screen.findByLabelText("Workspace files")).toBeInTheDocument();
+  });
+
   it("opens quick open and search fields from the native Search menu", async () => {
     (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
     render(<App />);
@@ -2144,7 +2186,7 @@ describe("App shell interactions", () => {
 
     expect(screen.queryByRole("dialog", { name: "Go to line" }))
       .not.toBeInTheDocument();
-    expect(screen.getByText("Reveal line 4")).toBeInTheDocument();
+    expect(await screen.findByText("Reveal line 4")).toBeInTheDocument();
     expect(screen.getByText("Moved to README.md:4")).toBeInTheDocument();
     expect(screen.getByText("4:1")).toBeInTheDocument();
   });
@@ -3060,7 +3102,54 @@ describe("App shell interactions", () => {
     fireEvent.click(resultPath.closest("button")!);
 
     await findTab("src/App.tsx");
-    expect(screen.getByText("Reveal line 4")).toBeInTheDocument();
+    expect(await screen.findByText("Reveal line 4")).toBeInTheDocument();
+    fireEvent.click(screen.getByTitle("Search contents"));
+    const tree = await screen.findByLabelText("Workspace files");
+    expect(await within(tree).findByRole("treeitem", { name: "src" })).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
+    expect(await within(tree).findByRole("treeitem", { name: "App.tsx" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+  });
+
+  it("does not reveal content search result opens in the tree when active-file tracking is off", async () => {
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    tauriMocks.searchFiles.mockResolvedValueOnce([
+      {
+        path: "src/App.tsx",
+        lineNumber: 4,
+        lineText: "const needle = true;",
+        matchStart: 6,
+        matchEnd: 12,
+      },
+    ]);
+    render(<App />);
+
+    expect(await treeButton("README.md")).toBeInTheDocument();
+    await openSettingsDialog();
+    fireEvent.click(screen.getByLabelText("Track active file"));
+    fireEvent.keyDown(window, { key: "Escape" });
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "Settings" })).not.toBeInTheDocument(),
+    );
+
+    fireEvent.change(await openContentSearch(), {
+      target: { value: "needle" },
+    });
+    const resultPath = await screen.findByText("src/App.tsx:4");
+    fireEvent.click(resultPath.closest("button")!);
+    await findTab("src/App.tsx");
+
+    fireEvent.click(screen.getByTitle("Search contents"));
+    const tree = await screen.findByLabelText("Workspace files");
+    expect(await within(tree).findByRole("treeitem", { name: "src" })).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
+    expect(within(tree).queryByRole("treeitem", { name: "App.tsx" })).not.toBeInTheDocument();
   });
 
   it("clears stale content search results while a new query is searching", async () => {

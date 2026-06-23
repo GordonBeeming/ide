@@ -463,6 +463,7 @@ export default function App() {
   const [showGeneratedInternal, setShowGeneratedInternal] = useState(false);
   const [showGitignoredFiles, setShowGitignoredFiles] = useState(false);
   const [showDiagnosticsPanel, setShowDiagnosticsPanel] = useState(false);
+  const [trackActiveFile, setTrackActiveFile] = useState(true);
   const [treeScanLimit, setTreeScanLimit] = useState(defaultTreeScanLimit);
   const [maxOpenFileKb, setMaxOpenFileKb] = useState(defaultMaxOpenFileKb);
   const [workspaceSearchResultLimit, setWorkspaceSearchResultLimit] = useState(
@@ -614,8 +615,8 @@ export default function App() {
     [keyBindingsQuery],
   );
   const filterExpanded = activeSidebarSearch === "filter" || filter.trim().length > 0;
-  const contentSearchExpanded =
-    activeSidebarSearch === "content" || contentQuery.trim().length > 0;
+  const filterVisible = activeSidebarSearch !== "content" && filterExpanded;
+  const contentSearchActive = activeSidebarSearch === "content";
   const contentSearchReady = contentQuery.trim().length >= 2;
   const contentSearchStatsText =
     searchStats.searchedFiles === undefined
@@ -805,6 +806,7 @@ export default function App() {
     setShowGeneratedInternal(snapshot.view.showGeneratedInternal);
     setShowGitignoredFiles(snapshot.view.showGitignoredFiles ?? false);
     setShowDiagnosticsPanel(Boolean(snapshot.view.showDiagnosticsPanel));
+    setTrackActiveFile(snapshot.view.trackActiveFile ?? true);
     setTreeScanLimit(sanitizeTreeScanLimit(snapshot.view.treeScanLimit));
     setMaxOpenFileKb(
       sanitizeNumberLimit(
@@ -1226,7 +1228,9 @@ export default function App() {
       lineNumber?: number,
       recordAsSingleFile = singleFileMode,
     ) => {
-      setSelectedPath(entry.path);
+      if (entry.isDir || trackActiveFile) {
+        setSelectedPath(entry.path);
+      }
       setOpenFailure(undefined);
       if (lineNumber) {
         setRevealTarget({ path: entry.path, lineNumber });
@@ -1281,8 +1285,28 @@ export default function App() {
         setStatus("Open failed");
       }
     },
-    [maxOpenFileKb, openFiles, singleFileMode],
+    [maxOpenFileKb, openFiles, singleFileMode, trackActiveFile],
   );
+
+  useEffect(() => {
+    if (!trackActiveFile || !activePath || singleFileMode) return;
+
+    setSelectedPath(activePath);
+    const parentPaths = parentFolderPaths(activePath);
+    if (parentPaths.length === 0) return;
+
+    setExpandedFolders((current) => {
+      let changed = false;
+      const next = new Set(current);
+      for (const parentPath of parentPaths) {
+        if (!next.has(parentPath)) {
+          next.add(parentPath);
+          changed = true;
+        }
+      }
+      return changed ? next : current;
+    });
+  }, [activePath, singleFileMode, trackActiveFile]);
 
   const openPathByName = useCallback(
     async (path: string, pinned = false, lineNumber?: number) => {
@@ -1428,6 +1452,7 @@ export default function App() {
           showGeneratedInternal,
           showGitignoredFiles,
           showDiagnosticsPanel,
+          trackActiveFile,
           treeScanLimit,
           maxOpenFileKb,
           workspaceSearchResultLimit,
@@ -1466,6 +1491,7 @@ export default function App() {
     showGeneratedInternal,
     showGitignoredFiles,
     showDiagnosticsPanel,
+    trackActiveFile,
     singleFileMode,
     treeScanLimit,
     maxOpenFileKb,
@@ -3232,24 +3258,28 @@ export default function App() {
             ].join(" ")}
             title="Filter files"
             aria-label="Filter files"
-            onClick={() => setActiveSidebarSearch("filter")}
+            onClick={() =>
+              setActiveSidebarSearch((current) => (current === "filter" ? undefined : "filter"))
+            }
           >
             <ListFilter size={16} />
           </button>
           <button
             className={[
               "icon-button",
-              contentSearchExpanded ? "icon-button--active" : "",
+              contentSearchActive ? "icon-button--active" : "",
             ].join(" ")}
             title="Search contents"
             aria-label="Search contents"
-            onClick={() => setActiveSidebarSearch("content")}
+            onClick={() =>
+              setActiveSidebarSearch((current) => (current === "content" ? undefined : "content"))
+            }
           >
             <Search size={16} />
           </button>
         </div>
 
-        {filterExpanded ? (
+        {filterVisible ? (
           <label className="search-box">
             <ListFilter size={15} />
             <input
@@ -3269,7 +3299,7 @@ export default function App() {
           </label>
         ) : null}
 
-        {contentSearchExpanded ? (
+        {contentSearchActive ? (
           <label className="search-box">
             <Search size={15} />
             <input
@@ -3289,7 +3319,7 @@ export default function App() {
           </label>
         ) : null}
 
-        {contentSearchExpanded ? (
+        {contentSearchActive ? (
           <div
             className="search-results search-results--sidebar"
             aria-label="Content search results"
@@ -3343,7 +3373,7 @@ export default function App() {
           </div>
         ) : null}
 
-        {!contentSearchExpanded ? (
+        {!contentSearchActive ? (
           <nav className="file-tree" role="tree" aria-label="Workspace files">
             {workspaceLoading && files.length === 0 ? (
               <div className="tree-empty" role="status">Loading workspace</div>
@@ -4160,6 +4190,21 @@ export default function App() {
                           }}
                         />
                         <span>Show diagnostics panel</span>
+                      </label>
+                      <label className="settings-row">
+                        <input
+                          type="checkbox"
+                          checked={trackActiveFile}
+                          onChange={(event) => {
+                            setTrackActiveFile(event.target.checked);
+                            setStatus(
+                              event.target.checked
+                                ? "Tracking active file in tree"
+                                : "Stopped tracking active file in tree",
+                            );
+                          }}
+                        />
+                        <span>Track active file</span>
                       </label>
                       <label className="settings-row settings-row--stacked">
                         <span>Date and time format</span>
@@ -5328,6 +5373,15 @@ function filterKeyBindings(bindings: KeyBindingInfo[], query: string) {
       .toLowerCase()
       .includes(normalized),
   );
+}
+
+function parentFolderPaths(path: string) {
+  const segments = path.split("/").filter(Boolean);
+  const parents: string[] = [];
+  for (let index = 1; index < segments.length; index += 1) {
+    parents.push(segments.slice(0, index).join("/"));
+  }
+  return parents;
 }
 
 function suggestNewFilePath(selectedPath: string | undefined, files: FileEntry[]) {

@@ -166,6 +166,8 @@ struct PersistedViewSettings {
     show_gitignored_files: bool,
     #[serde(default)]
     show_diagnostics_panel: bool,
+    #[serde(default = "default_track_active_file")]
+    track_active_file: bool,
     #[serde(default = "default_tree_scan_limit")]
     tree_scan_limit: usize,
     #[serde(default = "default_max_open_file_kb")]
@@ -208,6 +210,7 @@ impl Default for PersistedViewSettings {
             show_generated_internal: false,
             show_gitignored_files: default_show_gitignored_files(),
             show_diagnostics_panel: false,
+            track_active_file: default_track_active_file(),
             tree_scan_limit: default_tree_scan_limit(),
             max_open_file_kb: default_max_open_file_kb(),
             workspace_search_result_limit: default_workspace_search_result_limit(),
@@ -336,6 +339,10 @@ fn default_editor_font_size() -> usize {
 
 fn default_app_zoom_percent() -> usize {
     DEFAULT_APP_ZOOM_PERCENT
+}
+
+fn default_track_active_file() -> bool {
+    true
 }
 
 fn default_date_time_format() -> String {
@@ -3150,6 +3157,7 @@ mod tests {
                 show_generated_internal: true,
                 show_gitignored_files: false,
                 show_diagnostics_panel: true,
+                track_active_file: false,
                 tree_scan_limit: 12_000,
                 max_open_file_kb: 8_192,
                 workspace_search_result_limit: 750,
@@ -3183,6 +3191,7 @@ mod tests {
         assert!(loaded.view.show_generated_internal);
         assert!(!loaded.view.show_gitignored_files);
         assert!(loaded.view.show_diagnostics_panel);
+        assert!(!loaded.view.track_active_file);
         assert_eq!(loaded.view.max_open_file_kb, 8_192);
         assert_eq!(loaded.view.workspace_search_result_limit, 750);
         assert_eq!(loaded.view.workspace_search_max_file_kb, 2_048);
