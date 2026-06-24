@@ -1075,6 +1075,12 @@ export default function App() {
     }
   }, [refreshFiles]);
 
+  const readOpenFileFromDisk = useCallback(async (path: string) => {
+    const entry = await statFile(path);
+    const contents = await readFile(path, maxOpenFileKb * 1024);
+    return { contents, modifiedMs: entry.modifiedMs };
+  }, [maxOpenFileKb]);
+
   const refreshWorkspaceIndexStats = useCallback(async () => {
     try {
       setWorkspaceIndexStats(await getWorkspaceIndexStats());
@@ -1262,13 +1268,13 @@ export default function App() {
       }
 
       try {
-        const contents = await readFile(entry.path, maxOpenFileKb * 1024);
+        const diskFile = await readOpenFileFromDisk(entry.path);
         setOpenFiles((current) =>
           addPreviewTab(current, {
             path: entry.path,
-            contents,
+            contents: diskFile.contents,
             dirty: false,
-            modifiedMs: entry.modifiedMs,
+            modifiedMs: diskFile.modifiedMs,
             pinned,
           }),
         );
@@ -1285,7 +1291,7 @@ export default function App() {
         setStatus("Open failed");
       }
     },
-    [maxOpenFileKb, openFiles, singleFileMode, trackActiveFile],
+    [openFiles, readOpenFileFromDisk, singleFileMode, trackActiveFile],
   );
 
   useEffect(() => {
@@ -1355,14 +1361,14 @@ export default function App() {
     let disposed = false;
     Promise.all(
       restorePaths.map(async (path) => {
-        const entry = entriesByPath.get(path)!;
         try {
+          const diskFile = await readOpenFileFromDisk(path);
           return {
             tab: {
               path,
-              contents: await readFile(path, maxOpenFileKb * 1024),
+              contents: diskFile.contents,
               dirty: false,
-              modifiedMs: entry.modifiedMs,
+              modifiedMs: diskFile.modifiedMs,
               pinned: true,
             },
           };
@@ -1429,7 +1435,7 @@ export default function App() {
     };
   }, [
     files,
-    maxOpenFileKb,
+    readOpenFileFromDisk,
     singleFileMode,
     uiStateLoaded,
     workspaceLoadFailed,
@@ -1838,17 +1844,15 @@ export default function App() {
     setStatus(`Saving ${fileToSave.path}`);
     try {
       await writeFile(fileToSave.path, fileToSave.contents, fileToSave.modifiedMs);
-      const refreshedEntries = await refreshFiles();
-      const modifiedMs = refreshedEntries.find(
-        (entry) => entry.path === fileToSave.path,
-      )?.modifiedMs;
+      const savedEntry = await statFile(fileToSave.path);
       setOpenFiles((current) =>
         current.map((file) =>
           file.path === fileToSave.path && file.contents === fileToSave.contents
-            ? { ...file, dirty: false, modifiedMs }
+            ? { ...file, dirty: false, modifiedMs: savedEntry.modifiedMs }
             : file,
         ),
       );
+      await refreshFiles();
       setStatus("Saved");
       return true;
     } catch (reason) {
@@ -1913,17 +1917,16 @@ export default function App() {
     setError(undefined);
     setStatus(`Reloading ${path}`);
     try {
-      const contents = await readFile(path, maxOpenFileKb * 1024);
-      const refreshedEntries = await refreshFiles();
-      const modifiedMs = refreshedEntries.find((entry) => entry.path === path)?.modifiedMs;
+      const diskFile = await readOpenFileFromDisk(path);
+      await refreshFiles();
       setOpenFiles((current) =>
         current.map((file) =>
           file.path === path
             ? {
                 ...file,
-                contents,
+                contents: diskFile.contents,
                 dirty: false,
-                modifiedMs,
+                modifiedMs: diskFile.modifiedMs,
               }
             : file,
         ),
@@ -1938,7 +1941,7 @@ export default function App() {
       setStatus("Reload failed");
       return false;
     }
-  }, [refreshFiles]);
+  }, [readOpenFileFromDisk, refreshFiles]);
 
   const requestReloadActiveFile = useCallback(() => {
     if (!activeFile) {
@@ -4994,7 +4997,12 @@ export default function App() {
         </div>
       ) : null}
 
-      {error ? <div className="toast">{error}</div> : null}
+      {error ? (
+        <div className="toast" role="alert">
+          <TriangleAlert size={16} aria-hidden="true" />
+          <span>{error}</span>
+        </div>
+      ) : null}
     </main>
   );
 }
