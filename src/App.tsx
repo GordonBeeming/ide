@@ -189,6 +189,12 @@ interface RevealTarget {
   preserveFocus?: boolean;
 }
 
+interface PendingReloadRequest {
+  path: string;
+  reason: "manual" | "external";
+  diskModifiedMs?: number;
+}
+
 interface OpenFailure {
   path: string;
   reason: string;
@@ -282,6 +288,7 @@ const defaultCurrentFileResultPreviewLimit = 12;
 const minQuickOpenResultLimit = 5;
 const maxQuickOpenResultLimit = 100;
 const defaultQuickOpenResultLimit = 12;
+const openFileDiskCheckIntervalMs = 1500;
 const minBackgroundIndexBatchEntries = 100;
 const maxBackgroundIndexBatchEntries = 20000;
 const defaultBackgroundIndexBatchEntries = 2000;
@@ -446,7 +453,8 @@ export default function App() {
   const [goToLineDialogOpen, setGoToLineDialogOpen] = useState(false);
   const [goToLineValue, setGoToLineValue] = useState("");
   const [pendingDeletePath, setPendingDeletePath] = useState<string>();
-  const [pendingReloadPath, setPendingReloadPath] = useState<string>();
+  const [pendingReloadRequest, setPendingReloadRequest] =
+    useState<PendingReloadRequest>();
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [sidebarWidth, setSidebarWidth] = useState(defaultSidebarWidth);
   const [pendingClosePath, setPendingClosePath] = useState<string>();
@@ -533,6 +541,10 @@ export default function App() {
   const skipNextUiStatePersistRef = useRef(false);
   const uiPersistTimerRef = useRef<number | undefined>(undefined);
   const editorCommandNonceRef = useRef(0);
+  const openFilesRef = useRef<EditorTab[]>([]);
+  const pendingReloadRequestRef = useRef<PendingReloadRequest | undefined>(undefined);
+  const diskCheckInFlightRef = useRef<Set<string>>(new Set());
+  const savingPathsRef = useRef<Set<string>>(new Set());
   const sidebarResizeRef = useRef<{ startX: number; startWidth: number } | undefined>(
     undefined,
   );
@@ -543,7 +555,9 @@ export default function App() {
   const pendingDeleteOpenFiles = pendingDeletePath
     ? openFiles.filter((file) => pathIsAtOrInside(file.path, pendingDeletePath))
     : [];
-  const pendingReloadFile = openFiles.find((file) => file.path === pendingReloadPath);
+  const pendingReloadFile = openFiles.find(
+    (file) => file.path === pendingReloadRequest?.path,
+  );
   const dirtyFiles = openFiles.filter((file) => file.dirty);
   const activeFileIsDirty = Boolean(activeFile?.dirty);
   const hasDirtyFiles = dirtyFiles.length > 0;
@@ -654,7 +668,7 @@ export default function App() {
     renameDialogOpen ||
     goToLineDialogOpen ||
     pendingDeletePath !== undefined ||
-    pendingReloadPath !== undefined ||
+    pendingReloadRequest !== undefined ||
     pendingCloseAll ||
     pendingAppClose ||
     integrationsOpen ||
@@ -667,6 +681,14 @@ export default function App() {
   useEffect(() => {
     modalUiOpenRef.current = modalUiOpen;
   }, [modalUiOpen]);
+
+  useEffect(() => {
+    openFilesRef.current = openFiles;
+  }, [openFiles]);
+
+  useEffect(() => {
+    pendingReloadRequestRef.current = pendingReloadRequest;
+  }, [pendingReloadRequest]);
 
   const runNativeMenuAction = useCallback((action: () => void) => {
     if (modalUiOpenRef.current) {
@@ -1081,6 +1103,85 @@ export default function App() {
     return { contents, modifiedMs: entry.modifiedMs };
   }, [maxOpenFileKb]);
 
+  const applyCleanDiskUpdate = useCallback(
+    async (path: string, entry: FileEntry, statusText: string) => {
+      const openFileBeforeRead = openFilesRef.current.find((file) => file.path === path);
+      if (!openFileBeforeRead || openFileBeforeRead.dirty) return;
+
+      const contents = await readFile(path, maxOpenFileKb * 1024);
+      const openFileAfterRead = openFilesRef.current.find((file) => file.path === path);
+      if (!openFileAfterRead || openFileAfterRead.dirty) return;
+
+      setOpenFiles((current) =>
+        current.map((file) =>
+          file.path === path && !file.dirty
+            ? {
+                ...file,
+                contents,
+                dirty: false,
+                modifiedMs: entry.modifiedMs,
+              }
+            : file,
+        ),
+      );
+      setFiles((current) => mergeFileEntries(current, [entry]));
+      setStatus(statusText);
+    },
+    [maxOpenFileKb],
+  );
+
+  const checkOpenFileDiskState = useCallback(
+    async (path: string, source: "activate" | "background" | "focus") => {
+      if (diskCheckInFlightRef.current.has(path)) return;
+      if (savingPathsRef.current.has(path)) return;
+      if (pendingReloadRequestRef.current) return;
+
+      const openFile = openFilesRef.current.find((file) => file.path === path);
+      if (!openFile) return;
+
+      diskCheckInFlightRef.current.add(path);
+      try {
+        const entry = await statFile(path);
+        if (savingPathsRef.current.has(path)) return;
+
+        const currentOpenFile = openFilesRef.current.find((file) => file.path === path);
+        if (!currentOpenFile) return;
+        if (entry.isDir || entry.modifiedMs === currentOpenFile.modifiedMs) return;
+
+        setFiles((current) => mergeFileEntries(current, [entry]));
+        if (currentOpenFile.dirty) {
+          setPendingReloadRequest({
+            path,
+            reason: "external",
+            diskModifiedMs: entry.modifiedMs,
+          });
+          setStatus(`${path} changed on disk`);
+          return;
+        }
+
+        await applyCleanDiskUpdate(
+          path,
+          entry,
+          source === "background" ? `Updated ${path} from disk` : `Reloaded ${path}`,
+        );
+      } catch (reason) {
+        setError(`Unable to check ${path} for disk changes: ${String(reason)}`);
+      } finally {
+        diskCheckInFlightRef.current.delete(path);
+      }
+    },
+    [applyCleanDiskUpdate],
+  );
+
+  const checkOpenFilesDiskState = useCallback(
+    (source: "background" | "focus") => {
+      for (const file of openFilesRef.current) {
+        void checkOpenFileDiskState(file.path, source);
+      }
+    },
+    [checkOpenFileDiskState],
+  );
+
   const refreshWorkspaceIndexStats = useCallback(async () => {
     try {
       setWorkspaceIndexStats(await getWorkspaceIndexStats());
@@ -1114,6 +1215,30 @@ export default function App() {
       setStatus("Workspace load failed");
     });
   }, [launchTargetLoaded, refreshFiles, uiStateLoaded]);
+
+  useEffect(() => {
+    const handleFocus = () => checkOpenFilesDiskState("focus");
+    const handleVisibilityChange = () => {
+      if (!document.hidden) checkOpenFilesDiskState("focus");
+    };
+
+    window.addEventListener("focus", handleFocus);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => {
+      window.removeEventListener("focus", handleFocus);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [checkOpenFilesDiskState]);
+
+  useEffect(() => {
+    if (openFiles.length === 0) return;
+
+    const timer = window.setInterval(
+      () => checkOpenFilesDiskState("background"),
+      openFileDiskCheckIntervalMs,
+    );
+    return () => window.clearInterval(timer);
+  }, [checkOpenFilesDiskState, openFiles.length, openFilePathSignature]);
 
   useEffect(() => {
     const query = contentQuery.trim();
@@ -1260,6 +1385,7 @@ export default function App() {
           setOpenFiles((current) => pinTab(current, entry.path));
         }
         setActivePath(existing.path);
+        void checkOpenFileDiskState(existing.path, "activate");
         recordRecentFile(existing.path, recordAsSingleFile).catch((reason) => {
           setError(`Unable to update recent files: ${String(reason)}`);
         });
@@ -1291,7 +1417,13 @@ export default function App() {
         setStatus("Open failed");
       }
     },
-    [openFiles, readOpenFileFromDisk, singleFileMode, trackActiveFile],
+    [
+      checkOpenFileDiskState,
+      openFiles,
+      readOpenFileFromDisk,
+      singleFileMode,
+      trackActiveFile,
+    ],
   );
 
   useEffect(() => {
@@ -1834,14 +1966,19 @@ export default function App() {
 
   const activateAdjacentTab = useCallback(
     (direction: 1 | -1) => {
-      setActivePath((current) => adjacentTabPath(openFiles, current, direction));
+      const nextPath = adjacentTabPath(openFiles, activePath, direction);
+      setActivePath(nextPath);
+      if (nextPath) {
+        void checkOpenFileDiskState(nextPath, "activate");
+      }
     },
-    [openFiles],
+    [activePath, checkOpenFileDiskState, openFiles],
   );
 
   const saveFile = useCallback(async (fileToSave: EditorTab) => {
     setError(undefined);
     setStatus(`Saving ${fileToSave.path}`);
+    savingPathsRef.current.add(fileToSave.path);
     try {
       await writeFile(fileToSave.path, fileToSave.contents, fileToSave.modifiedMs);
       const savedEntry = await statFile(fileToSave.path);
@@ -1859,6 +1996,8 @@ export default function App() {
       setError(String(reason));
       setStatus("Save failed");
       return false;
+    } finally {
+      savingPathsRef.current.delete(fileToSave.path);
     }
   }, [refreshFiles]);
 
@@ -1933,7 +2072,7 @@ export default function App() {
       );
       setRevealTarget((current) => (current?.path === path ? undefined : current));
       setSelection((current) => (current?.filePath === path ? undefined : current));
-      setPendingReloadPath(undefined);
+      setPendingReloadRequest(undefined);
       setStatus(`Reloaded ${path}`);
       return true;
     } catch (reason) {
@@ -1949,7 +2088,7 @@ export default function App() {
       return;
     }
     if (activeFile.dirty) {
-      setPendingReloadPath(activeFile.path);
+      setPendingReloadRequest({ path: activeFile.path, reason: "manual" });
       return;
     }
 
@@ -2108,7 +2247,18 @@ export default function App() {
   );
 
   const cancelReloadActiveFile = useCallback(() => {
-    setPendingReloadPath(undefined);
+    const request = pendingReloadRequestRef.current;
+    if (request?.reason === "external") {
+      setOpenFiles((current) =>
+        current.map((file) =>
+          file.path === request.path && file.dirty
+            ? { ...file, modifiedMs: request.diskModifiedMs }
+            : file,
+        ),
+      );
+      setStatus(`Keeping editor changes for ${request.path}`);
+    }
+    setPendingReloadRequest(undefined);
   }, []);
 
   const copyText = useCallback(async (label: string, value: string) => {
@@ -3035,7 +3185,7 @@ export default function App() {
         cancelDeleteSelectedFile();
         return;
       }
-      if (event.key === "Escape" && pendingReloadPath) {
+      if (event.key === "Escape" && pendingReloadRequest) {
         event.preventDefault();
         cancelReloadActiveFile();
         return;
@@ -3189,7 +3339,7 @@ export default function App() {
     pendingCloseAll,
     pendingClosePath,
     pendingDeletePath,
-    pendingReloadPath,
+    pendingReloadRequest,
     quickOpenVisible,
     renameDialogOpen,
     requestCloseActiveFile,
@@ -3492,7 +3642,10 @@ export default function App() {
                     file.pinned ? "" : "tab--temp",
                   ].join(" ")}
                   key={file.path}
-                  onClick={() => setActivePath(file.path)}
+                  onClick={() => {
+                    setActivePath(file.path);
+                    void checkOpenFileDiskState(file.path, "activate");
+                  }}
                   onAuxClick={(event) => {
                     if (event.button !== 1) return;
                     event.preventDefault();
@@ -4928,11 +5081,16 @@ export default function App() {
             aria-labelledby="reload-file-title"
           >
             <div>
-              <div className="eyebrow">Unsaved changes</div>
+              <div className="eyebrow">
+                {pendingReloadRequest?.reason === "external"
+                  ? "File changed on disk"
+                  : "Unsaved changes"}
+              </div>
               <h2 id="reload-file-title">Reload file from disk?</h2>
               <p>
-                {pendingReloadFile.path} has edits that will be discarded and replaced
-                with the current disk contents.
+                {pendingReloadRequest?.reason === "external"
+                  ? `${pendingReloadFile.path} has unsaved edits, and the file changed on disk. Reloading will discard your editor changes. Keeping them lets your next save overwrite the disk version.`
+                  : `${pendingReloadFile.path} has edits that will be discarded and replaced with the current disk contents.`}
               </p>
             </div>
             <div className="confirm-dialog__actions">
@@ -4940,7 +5098,7 @@ export default function App() {
                 className="command-button command-button--quiet"
                 onClick={cancelReloadActiveFile}
               >
-                Cancel
+                {pendingReloadRequest?.reason === "external" ? "Keep Mine" : "Cancel"}
               </button>
               <button
                 className="command-button command-button--danger"
