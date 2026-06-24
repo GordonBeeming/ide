@@ -347,6 +347,7 @@ describe("App shell interactions", () => {
 
   afterEach(() => {
     delete (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
+    vi.useRealTimers();
     vi.unstubAllGlobals();
   });
 
@@ -2925,11 +2926,54 @@ describe("App shell interactions", () => {
     );
   });
 
-  it("updates a clean open file from disk while it stays open", async () => {
+  it("does not prompt for external reload while saving the same file", async () => {
+    let finishWrite: () => void = () => undefined;
+    const writePromise = new Promise<void>((resolve) => {
+      finishWrite = resolve;
+    });
+    tauriMocks.writeFile.mockReturnValueOnce(writePromise);
     render(<App />);
 
     fireEvent.click(await treeButton("README.md"));
-    expect(await screen.findByLabelText("Editor README.md")).toHaveValue("readme");
+    await findTab("README.md");
+    fireEvent.change(await screen.findByLabelText("Editor README.md"), {
+      target: { value: "changed readme" },
+    });
+
+    fireEvent.click(screen.getByTitle("Save"));
+    await waitFor(() => expect(tauriMocks.writeFile).toHaveBeenCalledTimes(1));
+
+    tauriMocks.statFile.mockImplementation(async (path: string) => {
+      const entry = files.find((candidate) => candidate.path === path);
+      if (!entry) throw new Error(`missing ${path}`);
+      return path === "README.md" ? { ...entry, size: 24, modifiedMs: 303 } : entry;
+    });
+
+    window.dispatchEvent(new Event("focus"));
+    expect(
+      screen.queryByRole("alertdialog", { name: "Reload file from disk?" }),
+    ).not.toBeInTheDocument();
+
+    await act(async () => {
+      finishWrite();
+      await writePromise;
+    });
+
+    await waitFor(() => expect(screen.getByText("Saved")).toBeInTheDocument());
+  });
+
+  it("updates a clean open file from disk while it stays open", async () => {
+    render(<App />);
+
+    const readmeButton = await treeButton("README.md");
+    vi.useFakeTimers();
+
+    fireEvent.click(readmeButton);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(screen.getByLabelText("Editor README.md")).toHaveValue("readme");
 
     tauriMocks.statFile.mockImplementation(async (path: string) => {
       const entry = files.find((candidate) => candidate.path === path);
@@ -2943,8 +2987,9 @@ describe("App shell interactions", () => {
     });
 
     await act(async () => {
-      await new Promise((resolve) => window.setTimeout(resolve, 1600));
+      await vi.advanceTimersByTimeAsync(1500);
     });
+    vi.useRealTimers();
 
     await waitFor(() =>
       expect(screen.getByLabelText("Editor README.md")).toHaveValue(

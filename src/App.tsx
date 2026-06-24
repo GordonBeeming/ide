@@ -544,6 +544,7 @@ export default function App() {
   const openFilesRef = useRef<EditorTab[]>([]);
   const pendingReloadRequestRef = useRef<PendingReloadRequest | undefined>(undefined);
   const diskCheckInFlightRef = useRef<Set<string>>(new Set());
+  const savingPathsRef = useRef<Set<string>>(new Set());
   const sidebarResizeRef = useRef<{ startX: number; startWidth: number } | undefined>(
     undefined,
   );
@@ -1104,7 +1105,13 @@ export default function App() {
 
   const applyCleanDiskUpdate = useCallback(
     async (path: string, entry: FileEntry, statusText: string) => {
+      const openFileBeforeRead = openFilesRef.current.find((file) => file.path === path);
+      if (!openFileBeforeRead || openFileBeforeRead.dirty) return;
+
       const contents = await readFile(path, maxOpenFileKb * 1024);
+      const openFileAfterRead = openFilesRef.current.find((file) => file.path === path);
+      if (!openFileAfterRead || openFileAfterRead.dirty) return;
+
       setOpenFiles((current) =>
         current.map((file) =>
           file.path === path && !file.dirty
@@ -1126,6 +1133,7 @@ export default function App() {
   const checkOpenFileDiskState = useCallback(
     async (path: string, source: "activate" | "background" | "focus") => {
       if (diskCheckInFlightRef.current.has(path)) return;
+      if (savingPathsRef.current.has(path)) return;
       if (pendingReloadRequestRef.current) return;
 
       const openFile = openFilesRef.current.find((file) => file.path === path);
@@ -1134,10 +1142,14 @@ export default function App() {
       diskCheckInFlightRef.current.add(path);
       try {
         const entry = await statFile(path);
-        if (entry.isDir || entry.modifiedMs === openFile.modifiedMs) return;
+        if (savingPathsRef.current.has(path)) return;
+
+        const currentOpenFile = openFilesRef.current.find((file) => file.path === path);
+        if (!currentOpenFile) return;
+        if (entry.isDir || entry.modifiedMs === currentOpenFile.modifiedMs) return;
 
         setFiles((current) => mergeFileEntries(current, [entry]));
-        if (openFile.dirty) {
+        if (currentOpenFile.dirty) {
           setPendingReloadRequest({
             path,
             reason: "external",
@@ -1966,6 +1978,7 @@ export default function App() {
   const saveFile = useCallback(async (fileToSave: EditorTab) => {
     setError(undefined);
     setStatus(`Saving ${fileToSave.path}`);
+    savingPathsRef.current.add(fileToSave.path);
     try {
       await writeFile(fileToSave.path, fileToSave.contents, fileToSave.modifiedMs);
       const savedEntry = await statFile(fileToSave.path);
@@ -1983,6 +1996,8 @@ export default function App() {
       setError(String(reason));
       setStatus("Save failed");
       return false;
+    } finally {
+      savingPathsRef.current.delete(fileToSave.path);
     }
   }, [refreshFiles]);
 
