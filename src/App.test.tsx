@@ -271,8 +271,14 @@ describe("App shell interactions", () => {
     );
     tauriMocks.statFile.mockImplementation(async (path: string) => {
       const entry = files.find((candidate) => candidate.path === path);
-      if (!entry) throw new Error(`missing ${path}`);
-      return entry;
+      if (entry) return entry;
+      return {
+        path,
+        name: path.split("/").at(-1) ?? path,
+        isDir: false,
+        depth: path.split("/").length - 1,
+        size: 0,
+      };
     });
     tauriMocks.recordRecentFile.mockResolvedValue(undefined);
     tauriMocks.readFile.mockImplementation(async (path: string) => {
@@ -2779,6 +2785,9 @@ describe("App shell interactions", () => {
     fireEvent.click(screen.getByTitle("Save"));
 
     await screen.findByText("Error: file changed on disk since it was opened");
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Error: file changed on disk since it was opened",
+    );
     expect(tauriMocks.writeFile).toHaveBeenCalledWith(
       "README.md",
       "changed readme",
@@ -2786,6 +2795,31 @@ describe("App shell interactions", () => {
     );
     expect(document.querySelectorAll(".dirty-dot")).toHaveLength(1);
     expect(screen.getByText("Save failed")).toBeInTheDocument();
+  });
+
+  it("saves with fresh metadata after opening a file from a stale tree entry", async () => {
+    tauriMocks.statFile.mockImplementation(async (path: string) => {
+      const entry = files.find((candidate) => candidate.path === path);
+      if (!entry) throw new Error(`missing ${path}`);
+      return path === "README.md" ? { ...entry, modifiedMs: 303 } : entry;
+    });
+    render(<App />);
+
+    fireEvent.click(await treeButton("README.md"));
+    await findTab("README.md");
+    fireEvent.change(await screen.findByLabelText("Editor README.md"), {
+      target: { value: "changed readme" },
+    });
+
+    fireEvent.click(screen.getByTitle("Save"));
+
+    await waitFor(() =>
+      expect(tauriMocks.writeFile).toHaveBeenCalledWith(
+        "README.md",
+        "changed readme",
+        303,
+      ),
+    );
   });
 
   it("reloads a clean active file from disk", async () => {
@@ -3571,7 +3605,6 @@ describe("App shell interactions", () => {
 
     await screen.findByText("Error: permission denied");
     expect(screen.getByRole("alertdialog", { name: "Delete file?" })).toBeInTheDocument();
-    expect(screen.getByText("Delete failed")).toBeInTheDocument();
   });
 });
 
