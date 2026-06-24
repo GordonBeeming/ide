@@ -2861,6 +2861,99 @@ describe("App shell interactions", () => {
     expect(screen.getByText("Reloaded README.md")).toBeInTheDocument();
   });
 
+  it("reloads a clean open tab from disk when the tab is refocused", async () => {
+    render(<App />);
+
+    fireEvent.click(await treeButton("README.md"));
+    expect(await screen.findByLabelText("Editor README.md")).toHaveValue("readme");
+
+    tauriMocks.statFile.mockImplementation(async (path: string) => {
+      const entry = files.find((candidate) => candidate.path === path);
+      if (!entry) throw new Error(`missing ${path}`);
+      return path === "README.md" ? { ...entry, size: 24, modifiedMs: 303 } : entry;
+    });
+    tauriMocks.readFile.mockImplementation(async (path: string) => {
+      if (path === "README.md") return "disk readme";
+      if (path === "src/App.tsx") return "export function App() {}";
+      return "";
+    });
+
+    fireEvent.click(tabButton("README.md")!);
+
+    await waitFor(() =>
+      expect(screen.getByLabelText("Editor README.md")).toHaveValue("disk readme"),
+    );
+    expect(document.querySelectorAll(".dirty-dot")).toHaveLength(0);
+    expect(screen.getByText("Reloaded README.md")).toBeInTheDocument();
+  });
+
+  it("prompts when a dirty open file changed on disk and allows overwrite after keeping editor changes", async () => {
+    render(<App />);
+
+    fireEvent.click(await treeButton("README.md"));
+    await findTab("README.md");
+    fireEvent.change(await screen.findByLabelText("Editor README.md"), {
+      target: { value: "changed readme" },
+    });
+    const readsBeforeDiskCheck = tauriMocks.readFile.mock.calls.length;
+    tauriMocks.statFile.mockImplementation(async (path: string) => {
+      const entry = files.find((candidate) => candidate.path === path);
+      if (!entry) throw new Error(`missing ${path}`);
+      return path === "README.md" ? { ...entry, size: 24, modifiedMs: 303 } : entry;
+    });
+
+    window.dispatchEvent(new Event("focus"));
+
+    const dialog = await screen.findByRole("alertdialog", {
+      name: "Reload file from disk?",
+    });
+    expect(dialog).toHaveTextContent(
+      "README.md has unsaved edits, and the file changed on disk.",
+    );
+    expect(tauriMocks.readFile).toHaveBeenCalledTimes(readsBeforeDiskCheck);
+    expect(screen.getByLabelText("Editor README.md")).toHaveValue("changed readme");
+
+    fireEvent.click(within(dialog).getByText("Keep Mine"));
+    fireEvent.click(screen.getByTitle("Save"));
+
+    await waitFor(() =>
+      expect(tauriMocks.writeFile).toHaveBeenCalledWith(
+        "README.md",
+        "changed readme",
+        303,
+      ),
+    );
+  });
+
+  it("updates a clean open file from disk while it stays open", async () => {
+    render(<App />);
+
+    fireEvent.click(await treeButton("README.md"));
+    expect(await screen.findByLabelText("Editor README.md")).toHaveValue("readme");
+
+    tauriMocks.statFile.mockImplementation(async (path: string) => {
+      const entry = files.find((candidate) => candidate.path === path);
+      if (!entry) throw new Error(`missing ${path}`);
+      return path === "README.md" ? { ...entry, size: 32, modifiedMs: 404 } : entry;
+    });
+    tauriMocks.readFile.mockImplementation(async (path: string) => {
+      if (path === "README.md") return "background disk readme";
+      if (path === "src/App.tsx") return "export function App() {}";
+      return "";
+    });
+
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 1600));
+    });
+
+    await waitFor(() =>
+      expect(screen.getByLabelText("Editor README.md")).toHaveValue(
+        "background disk readme",
+      ),
+    );
+    expect(screen.getByText("Updated README.md from disk")).toBeInTheDocument();
+  });
+
   it("reloads a clean active file from the keyboard", async () => {
     render(<App />);
 
