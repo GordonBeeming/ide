@@ -60,6 +60,21 @@ const fileContents = new Map([
   ["package.json", "{\n  \"name\": \"ide-smoke\"\n}\n"],
 ]);
 
+const indexedOnlyFileMetadata = new Map([
+  [
+    "deep/Nested.ts",
+    {
+      path: "deep/Nested.ts",
+      name: "Nested.ts",
+      parent: "deep",
+      isDir: false,
+      depth: 1,
+      size: 42,
+      modifiedMs: 5,
+    },
+  ],
+]);
+
 function findBrowserExecutable() {
   const candidates = [
     process.env.IDE_SMOKE_BROWSER,
@@ -143,7 +158,9 @@ async function fulfillApi(route) {
 
   if (url.pathname === "/api/file-metadata") {
     const filePath = url.searchParams.get("path") ?? "";
-    const entry = files.find((candidate) => candidate.path === filePath);
+    const entry =
+      files.find((candidate) => candidate.path === filePath) ??
+      indexedOnlyFileMetadata.get(filePath);
     if (entry) {
       await route.fulfill(json(entry));
     } else {

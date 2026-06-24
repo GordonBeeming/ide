@@ -1076,8 +1076,8 @@ export default function App() {
   }, [refreshFiles]);
 
   const readOpenFileFromDisk = useCallback(async (path: string) => {
-    const contents = await readFile(path, maxOpenFileKb * 1024);
     const entry = await statFile(path);
+    const contents = await readFile(path, maxOpenFileKb * 1024);
     return { contents, modifiedMs: entry.modifiedMs };
   }, [maxOpenFileKb]);
 
@@ -1845,7 +1845,6 @@ export default function App() {
     try {
       await writeFile(fileToSave.path, fileToSave.contents, fileToSave.modifiedMs);
       const savedEntry = await statFile(fileToSave.path);
-      await refreshFiles();
       setOpenFiles((current) =>
         current.map((file) =>
           file.path === fileToSave.path && file.contents === fileToSave.contents
@@ -1853,6 +1852,7 @@ export default function App() {
             : file,
         ),
       );
+      await refreshFiles();
       setStatus("Saved");
       return true;
     } catch (reason) {

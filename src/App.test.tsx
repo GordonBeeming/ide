@@ -278,6 +278,7 @@ describe("App shell interactions", () => {
         isDir: false,
         depth: path.split("/").length - 1,
         size: 0,
+        modifiedMs: 0,
       };
     });
     tauriMocks.recordRecentFile.mockResolvedValue(undefined);
@@ -2798,15 +2799,26 @@ describe("App shell interactions", () => {
   });
 
   it("saves with fresh metadata after opening a file from a stale tree entry", async () => {
+    const openOrder: string[] = [];
     tauriMocks.statFile.mockImplementation(async (path: string) => {
       const entry = files.find((candidate) => candidate.path === path);
       if (!entry) throw new Error(`missing ${path}`);
+      if (path === "README.md") openOrder.push("stat");
       return path === "README.md" ? { ...entry, modifiedMs: 303 } : entry;
+    });
+    tauriMocks.readFile.mockImplementation(async (path: string) => {
+      if (path === "README.md") {
+        openOrder.push("read");
+        return "readme";
+      }
+      if (path === "src/App.tsx") return "export function App() {}";
+      return "";
     });
     render(<App />);
 
     fireEvent.click(await treeButton("README.md"));
     await findTab("README.md");
+    expect(openOrder).toEqual(["stat", "read"]);
     fireEvent.change(await screen.findByLabelText("Editor README.md"), {
       target: { value: "changed readme" },
     });
