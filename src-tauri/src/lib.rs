@@ -1302,6 +1302,41 @@ async fn send_lsp_message(
         .map_err(CommandError::from)
 }
 
+/// Pick the directory the HTTP server serves web assets from.
+///
+/// Release bundles can't trust the compile-time `CARGO_MANIFEST_DIR` path — it
+/// points at the build machine's checkout (a CI runner), which doesn't exist on
+/// an end user's machine. The build copies `dist` into the app's resource dir,
+/// so prefer that; fall back to the source-tree path for `cargo run`/`tauri dev`
+/// where resources aren't staged on disk.
+fn resolve_frontend_dist(resource_dir: Option<PathBuf>, manifest_dist: PathBuf) -> PathBuf {
+    if let Some(dir) = &resource_dir {
+        // Accept either the map-form target (`dist`) or the bare-array layout
+        // (`_up_/dist`) so the resolver survives a change to the bundle config.
+        for candidate in [dir.join("dist"), dir.join("_up_").join("dist")] {
+            if candidate.join("index.html").is_file() {
+                return candidate;
+            }
+        }
+    }
+
+    // Dev / `cargo run`: the source-tree `dist` sits next to the crate.
+    if manifest_dist.exists() {
+        return manifest_dist;
+    }
+
+    // Release bundle whose assets aren't where we expect (relocated bundle
+    // layout, resources not staged). The manifest path is a build-machine
+    // checkout that doesn't exist here, so anchor the serve dir to the real
+    // app bundle instead — a missing file there surfaces a "not found" inside
+    // the app rather than pointing diagnostics at a phantom CI directory.
+    if let Some(dir) = resource_dir {
+        return dir.join("dist");
+    }
+
+    manifest_dist
+}
+
 pub fn run() {
     let explicit_launch_target =
         resolve_explicit_launch_target().expect("failed to determine requested launch target");
@@ -1491,7 +1526,9 @@ pub fn run() {
             let claude_bridge = http_state.claude_bridge.clone();
             let claude_bridge_error = http_state.claude_bridge_error.clone();
             let window_sessions = http_state.window_sessions.clone();
-            let frontend_dist = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../dist");
+            let manifest_dist = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../dist");
+            let resource_dir = app.path().resource_dir().ok();
+            let frontend_dist = resolve_frontend_dist(resource_dir, manifest_dist);
             let (mcp_token, mcp_token_error) =
                 codex_mcp_token_for_startup(&app_local_data_dir.join(CODEX_MCP_TOKEN_FILE));
             if let Some(error) = mcp_token_error {
@@ -2808,6 +2845,70 @@ fn project_root_for_process_dir(process_dir: &std::path::Path) -> PathBuf {
 mod tests {
     use super::*;
     use tempfile::tempdir;
+
+    #[test]
+    fn resolve_frontend_dist_prefers_bundled_resource_dir() {
+        let dir = tempdir().unwrap();
+        let bundled = dir.path().join("dist");
+        std::fs::create_dir(&bundled).unwrap();
+        std::fs::write(bundled.join("index.html"), "<!doctype html>").unwrap();
+        let manifest = PathBuf::from("/nonexistent/manifest/dist");
+
+        let resolved = resolve_frontend_dist(Some(dir.path().to_path_buf()), manifest);
+
+        assert_eq!(resolved, bundled);
+    }
+
+    #[test]
+    fn resolve_frontend_dist_accepts_up_one_layout() {
+        let dir = tempdir().unwrap();
+        let bundled = dir.path().join("_up_").join("dist");
+        std::fs::create_dir_all(&bundled).unwrap();
+        std::fs::write(bundled.join("index.html"), "<!doctype html>").unwrap();
+        let manifest = PathBuf::from("/nonexistent/manifest/dist");
+
+        let resolved = resolve_frontend_dist(Some(dir.path().to_path_buf()), manifest);
+
+        assert_eq!(resolved, bundled);
+    }
+
+    #[test]
+    fn resolve_frontend_dist_falls_back_to_existing_manifest_for_dev() {
+        let dir = tempdir().unwrap();
+        // Dev: the source-tree manifest dist exists on disk; resource dir has
+        // no staged assets.
+        let manifest = dir.path().join("manifest-dist");
+        std::fs::create_dir(&manifest).unwrap();
+        let resource = dir.path().join("resources");
+        std::fs::create_dir(&resource).unwrap();
+
+        let resolved = resolve_frontend_dist(Some(resource), manifest.clone());
+
+        assert_eq!(resolved, manifest);
+    }
+
+    #[test]
+    fn resolve_frontend_dist_anchors_to_resource_dir_when_manifest_missing() {
+        let dir = tempdir().unwrap();
+        // Release bundle: resource dir present without staged assets and the
+        // baked manifest path doesn't exist — never point at the build machine.
+        let resource = dir.path().to_path_buf();
+        let manifest = PathBuf::from("/nonexistent/runner/work/ide/dist");
+
+        let resolved = resolve_frontend_dist(Some(resource.clone()), manifest);
+
+        assert_eq!(resolved, resource.join("dist"));
+    }
+
+    #[test]
+    fn resolve_frontend_dist_returns_manifest_when_no_resource_dir() {
+        // Last resort with no resource dir at all.
+        let manifest = PathBuf::from("/nonexistent/source/dist");
+
+        let resolved = resolve_frontend_dist(None, manifest.clone());
+
+        assert_eq!(resolved, manifest);
+    }
 
     #[test]
     fn project_root_for_process_dir_climbs_from_tauri_source_dir() {
