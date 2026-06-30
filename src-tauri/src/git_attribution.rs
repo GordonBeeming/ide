@@ -62,7 +62,9 @@ struct RemoteTemplate {
 }
 
 pub(crate) async fn attribution_for_file(workspace_root: &Path, relative: &str) -> GitAttribution {
-    let file_path = match resolve_existing_workspace_file_path(workspace_root, relative) {
+    // Attribution is only requested for a file already open in the editor, which
+    // means its symlink (if any) was already trusted at open time.
+    let file_path = match resolve_existing_workspace_file_path(workspace_root, relative, true) {
         Ok(path) => path,
         Err(error) => return unsupported(relative, workspace_error_reason(error)),
     };
@@ -524,7 +526,9 @@ fn workspace_error_reason(error: WorkspaceError) -> String {
         WorkspaceError::NotAFile => "Path is not a file".to_string(),
         WorkspaceError::OutsideWorkspace => "File is outside the workspace".to_string(),
         WorkspaceError::InvalidPath => "File path is not supported".to_string(),
-        WorkspaceError::SymlinkUnsupported => "Symbolic links are not supported".to_string(),
+        WorkspaceError::SymlinkOutsideWorkspace => {
+            "Symbolic link points outside the workspace".to_string()
+        }
         WorkspaceError::Io(error) if error.kind() == std::io::ErrorKind::NotFound => {
             "File does not exist".to_string()
         }

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
 import { bracketMatching, defaultHighlightStyle, foldGutter, syntaxHighlighting } from "@codemirror/language";
-import { highlightSelectionMatches, searchKeymap } from "@codemirror/search";
+import { highlightSelectionMatches } from "@codemirror/search";
 import { Compartment, EditorState } from "@codemirror/state";
 import {
   crosshairCursor,
@@ -37,6 +37,7 @@ import { editorThemeExtensions } from "./editorTheme";
 import {
   editorCommandLabel,
   type EditorCommandRequest,
+  type EditorReplacePayload,
 } from "./editorCommands";
 import type { EditorCursor } from "./editorCursor";
 
@@ -48,6 +49,10 @@ interface EditorPaneProps {
   prefersDark?: boolean;
   isDirty?: boolean;
   revealLine?: number;
+  // Column offsets (0-based, within revealLine) to select on reveal, so a find
+  // match highlights the exact text rather than just landing on the line.
+  revealMatchStart?: number;
+  revealMatchEnd?: number;
   focusOnReveal?: boolean;
   editorCommand?: EditorCommandRequest;
   gitAttribution?: GitAttribution;
@@ -70,6 +75,8 @@ export default function EditorPane({
   focusOnReveal = true,
   prefersDark = false,
   revealLine,
+  revealMatchStart,
+  revealMatchEnd,
   onChange,
   onError,
   onGitCommitClick,
@@ -144,7 +151,7 @@ export default function EditorPane({
             highlightActiveLine(),
             highlightSelectionMatches(),
             syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
-            keymap.of([...defaultKeymap, indentWithTab, ...historyKeymap, ...searchKeymap]),
+            keymap.of([...defaultKeymap, indentWithTab, ...historyKeymap]),
             ...languageExtensions,
             ...lspExtensions,
             EditorView.lineWrapping,
@@ -183,7 +190,7 @@ export default function EditorPane({
 
       viewRef.current = view;
       emitCursorAndSelection(view, path, onCursor, onSelection);
-      revealLineInView(view, revealLine, focusOnReveal);
+      revealLineInView(view, revealLine, focusOnReveal, revealMatchStart, revealMatchEnd);
     }).catch((error) => {
       if (!cancelled) {
         onError(`Unable to initialize editor for ${path}: ${String(error)}`);
@@ -241,9 +248,15 @@ export default function EditorPane({
 
   useEffect(() => {
     if (viewRef.current) {
-      revealLineInView(viewRef.current, revealLine, focusOnReveal);
+      revealLineInView(
+        viewRef.current,
+        revealLine,
+        focusOnReveal,
+        revealMatchStart,
+        revealMatchEnd,
+      );
     }
-  }, [focusOnReveal, revealLine]);
+  }, [focusOnReveal, revealLine, revealMatchStart, revealMatchEnd]);
 
   useEffect(() => {
     const view = viewRef.current;
@@ -252,6 +265,19 @@ export default function EditorPane({
 
     const label = editorCommandLabel(editorCommand.name);
     try {
+      if (
+        editorCommand.name === "replaceMatch" ||
+        editorCommand.name === "replaceAll"
+      ) {
+        const replaced = applyReplace(view, editorCommand.replace);
+        onNotice?.(
+          replaced > 0
+            ? `${label}: ${replaced} occurrence${replaced === 1 ? "" : "s"}`
+            : `${label}: nothing to replace`,
+        );
+        return;
+      }
+
       const handled =
         editorCommand.name === "goToDefinition"
           ? jumpToDefinition(view)
@@ -298,18 +324,53 @@ function emitCursorAndSelection(
   );
 }
 
+// Rewrites the given match ranges in one dispatch so a single undo reverts the
+// whole replace. Targets carry 1-based line + 0-based column offsets (SearchMatch
+// shape); they are mapped to absolute doc offsets here. Returns the count applied.
+function applyReplace(
+  view: EditorView,
+  payload: EditorReplacePayload | undefined,
+): number {
+  if (!payload || payload.targets.length === 0) return 0;
+
+  const doc = view.state.doc;
+  const changes = [];
+  for (const target of payload.targets) {
+    const line = clampLineNumber(target.line, doc.lines);
+    if (!line) continue;
+    const docLine = doc.line(line);
+    const from = Math.min(docLine.from + target.matchStart, docLine.to);
+    const to = Math.min(docLine.from + target.matchEnd, docLine.to);
+    if (to < from) continue;
+    changes.push({ from, to, insert: payload.replacement });
+  }
+  if (changes.length === 0) return 0;
+
+  view.dispatch({ changes });
+  return changes.length;
+}
+
 function revealLineInView(
   view: EditorView,
   lineNumber: number | undefined,
   focus = true,
+  matchStart?: number,
+  matchEnd?: number,
 ) {
   const line = clampLineNumber(lineNumber, view.state.doc.lines);
   if (!line) return;
 
-  const position = view.state.doc.line(line).from;
+  const docLine = view.state.doc.line(line);
+  // Select the exact match when columns are supplied (find navigation); otherwise
+  // just place the cursor at the start of the line (go-to-line, reveal).
+  const hasMatch = matchStart !== undefined && matchEnd !== undefined;
+  const anchor = hasMatch
+    ? Math.min(docLine.from + matchStart, docLine.to)
+    : docLine.from;
+  const head = hasMatch ? Math.min(docLine.from + matchEnd, docLine.to) : anchor;
   view.dispatch({
-    selection: { anchor: position },
-    effects: EditorView.scrollIntoView(position, { y: "center" }),
+    selection: { anchor, head },
+    effects: EditorView.scrollIntoView(anchor, { y: "center" }),
   });
   if (focus) view.focus();
 }

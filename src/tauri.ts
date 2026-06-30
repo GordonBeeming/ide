@@ -14,6 +14,9 @@ export interface FileEntry {
   depth: number;
   size: number;
   modifiedMs?: number;
+  isSymlink?: boolean;
+  isExternal?: boolean;
+  symlinkTarget?: string;
 }
 
 export interface FileListResult {
@@ -173,6 +176,7 @@ export interface WorkspaceUiState {
   activeFile?: string;
   selectedPath?: string;
   sidebarWidth?: number;
+  trustExternalSymlinks?: boolean;
 }
 
 export interface PersistedUiSnapshot {
@@ -456,13 +460,20 @@ export function listDirectory(
   showDotfiles = false,
   showGeneratedInternal = false,
   showGitignoredFiles = false,
+  allowExternalSymlinks = false,
 ) {
   const params = new URLSearchParams({ path });
   if (showDotfiles) params.set("showDotfiles", "true");
   if (showGeneratedInternal) params.set("showGeneratedInternal", "true");
   if (showGitignoredFiles) params.set("showGitignoredFiles", "true");
   return callApi<unknown>("list_directory", `/api/directory?${params.toString()}`, {
-    invokeArgs: { path, showDotfiles, showGeneratedInternal, showGitignoredFiles },
+    invokeArgs: {
+      path,
+      showDotfiles,
+      showGeneratedInternal,
+      showGitignoredFiles,
+      allowExternalSymlinks,
+    },
   }).then((entries) => {
     if (!Array.isArray(entries)) {
       throw new Error("Workspace directory response was not valid JSON");
@@ -471,7 +482,11 @@ export function listDirectory(
   });
 }
 
-export function readFile(path: string, maxOpenBytes?: number) {
+export function readFile(
+  path: string,
+  maxOpenBytes?: number,
+  allowExternalSymlinks = false,
+) {
   const params = new URLSearchParams({ path });
   if (maxOpenBytes !== undefined) {
     params.set("maxOpenBytes", String(maxOpenBytes));
@@ -481,6 +496,7 @@ export function readFile(path: string, maxOpenBytes?: number) {
     invokeArgs: {
       path,
       ...(maxOpenBytes === undefined ? {} : { maxOpenBytes }),
+      allowExternalSymlinks,
     },
   });
 }
@@ -513,11 +529,16 @@ export function getGitAttribution(path: string) {
   });
 }
 
-export function writeFile(path: string, contents: string, expectedModifiedMs?: number) {
+export function writeFile(
+  path: string,
+  contents: string,
+  expectedModifiedMs?: number,
+  allowExternalSymlinks = false,
+) {
   return callApi<void>("write_file", "/api/file", {
     method: "PUT",
     body: { path, contents, expectedModifiedMs },
-    invokeArgs: { path, contents, expectedModifiedMs },
+    invokeArgs: { path, contents, expectedModifiedMs, allowExternalSymlinks },
   });
 }
 
@@ -643,27 +664,31 @@ function normalizeGitCommitAction(value: unknown): GitCommitAction | undefined {
   };
 }
 
-export function createFile(path: string) {
+export function createFile(path: string, allowExternalSymlinks = false) {
   return callApi<void>("create_file", "/api/file", {
     method: "POST",
     body: { path, contents: "" },
-    invokeArgs: { path },
+    invokeArgs: { path, allowExternalSymlinks },
   });
 }
 
-export function createFolder(path: string) {
+export function createFolder(path: string, allowExternalSymlinks = false) {
   return callApi<void>("create_folder", "/api/folder", {
     method: "POST",
     body: { path },
-    invokeArgs: { path },
+    invokeArgs: { path, allowExternalSymlinks },
   });
 }
 
-export function renameFile(fromPath: string, toPath: string) {
+export function renameFile(
+  fromPath: string,
+  toPath: string,
+  allowExternalSymlinks = false,
+) {
   return callApi<void>("rename_file", "/api/file", {
     method: "PATCH",
     body: { fromPath, toPath },
-    invokeArgs: { fromPath, toPath },
+    invokeArgs: { fromPath, toPath, allowExternalSymlinks },
   });
 }
 

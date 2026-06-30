@@ -798,6 +798,7 @@ describe("hosted Tauri API transport", () => {
     expect(invoke).toHaveBeenCalledWith("read_file", {
       path: "README.md",
       maxOpenBytes: 5 * 1024,
+      allowExternalSymlinks: false,
     });
   });
 
@@ -831,6 +832,7 @@ describe("hosted Tauri API transport", () => {
       showDotfiles: true,
       showGeneratedInternal: true,
       showGitignoredFiles: false,
+      allowExternalSymlinks: false,
     });
   });
 

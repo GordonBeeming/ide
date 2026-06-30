@@ -385,6 +385,8 @@ pub fn advance_workspace_index(
             show_dotfiles,
             show_generated_internal,
             show_gitignored_files,
+            // Background indexing never follows external symlinks.
+            false,
         ) {
             Ok(entries) => entries,
             Err(error) if !directory.is_empty() && stale_indexed_directory_error(&error) => {
@@ -547,6 +549,12 @@ fn file_entry_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<FileEntry> {
         depth: usize::try_from(depth).unwrap_or(usize::MAX),
         size: u64::try_from(size).unwrap_or(u64::MAX),
         modified_ms: modified_ms.and_then(|value| u128::try_from(value).ok()),
+        // The index (quick-open) does not persist symlink metadata; the live tree
+        // scan / directory listing carry it. Opening still resolves through the
+        // symlink-aware read path.
+        is_symlink: false,
+        is_external: false,
+        symlink_target: None,
     })
 }
 
@@ -569,6 +577,9 @@ mod tests {
             depth: path.matches('/').count(),
             size: 0,
             modified_ms: Some(1),
+            is_symlink: false,
+            is_external: false,
+            symlink_target: None,
         }
     }
 

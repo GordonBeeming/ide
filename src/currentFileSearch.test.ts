@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   currentFileMatches,
+  currentFileResultWindow,
   nextCurrentFileMatchIndex,
 } from "./currentFileSearch";
 
@@ -97,5 +98,49 @@ describe("current file search", () => {
     expect(nextCurrentFileMatchIndex(0, -1, 3)).toBe(2);
     expect(nextCurrentFileMatchIndex(99, 1, 3)).toBe(0);
     expect(nextCurrentFileMatchIndex(0, 1, 0)).toBe(-1);
+  });
+
+  it("scrolls the result preview window to follow the active match", () => {
+    const results = Array.from({ length: 14 }, (_, index) => index);
+
+    // No active match yet: show the first window.
+    expect(currentFileResultWindow(results, -1, 4)).toEqual({
+      startIndex: 0,
+      items: [0, 1, 2, 3],
+    });
+
+    // Active near the start stays pinned to the top.
+    expect(currentFileResultWindow(results, 1, 4)).toEqual({
+      startIndex: 0,
+      items: [0, 1, 2, 3],
+    });
+
+    // Mid-list: the active row sits one slot from the bottom (offset limit-2),
+    // keeping one item of lookahead visible.
+    expect(currentFileResultWindow(results, 5, 4)).toEqual({
+      startIndex: 3,
+      items: [3, 4, 5, 6],
+    });
+
+    // Near the end the window clamps so the last items show and active is still in view.
+    expect(currentFileResultWindow(results, 13, 4)).toEqual({
+      startIndex: 10,
+      items: [10, 11, 12, 13],
+    });
+  });
+
+  it("handles result windows shorter than the limit and a single-row limit", () => {
+    expect(currentFileResultWindow([0, 1], 1, 4)).toEqual({
+      startIndex: 0,
+      items: [0, 1],
+    });
+    expect(currentFileResultWindow([0, 1, 2, 3], 2, 1)).toEqual({
+      startIndex: 2,
+      items: [2],
+    });
+    expect(currentFileResultWindow([], 0, 4)).toEqual({
+      startIndex: 0,
+      items: [],
+    });
   });
 });
