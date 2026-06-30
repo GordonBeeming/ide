@@ -339,8 +339,16 @@ function applyReplace(
     const line = clampLineNumber(target.line, doc.lines);
     if (!line) continue;
     const docLine = doc.line(line);
-    const from = Math.min(docLine.from + target.matchStart, docLine.to);
-    const to = Math.min(docLine.from + target.matchEnd, docLine.to);
+    // Clamp to the line on both ends so a malformed payload (negative or
+    // overshooting column offsets) can't rewrite outside the matched line.
+    const from = Math.min(
+      Math.max(docLine.from + target.matchStart, docLine.from),
+      docLine.to,
+    );
+    const to = Math.min(
+      Math.max(docLine.from + target.matchEnd, docLine.from),
+      docLine.to,
+    );
     if (to < from) continue;
     changes.push({ from, to, insert: payload.replacement });
   }

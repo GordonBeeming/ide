@@ -669,7 +669,7 @@ pub fn rename_workspace_file(
     to: &str,
     allow_external_symlinks: bool,
 ) -> Result<(), WorkspaceError> {
-    let from_path = resolve_existing_workspace_entry_path(root, from)?;
+    let from_path = resolve_existing_workspace_entry_path(root, from, allow_external_symlinks)?;
     let to_path = resolve_new_workspace_entry_path(root, to, allow_external_symlinks)?;
     if let Some(parent) = to_path.parent() {
         fs::create_dir_all(parent)?;
@@ -679,7 +679,9 @@ pub fn rename_workspace_file(
 }
 
 pub fn delete_workspace_file(root: &Path, relative: &str) -> Result<(), WorkspaceError> {
-    let path = resolve_existing_workspace_entry_path(root, relative)?;
+    // Deleting only ever removes a link or an in-workspace entry, so external
+    // traversal is never needed here.
+    let path = resolve_existing_workspace_entry_path(root, relative, false)?;
 
     // A symlink resolves to the link itself; remove just the link so the target
     // (a real file or directory, possibly outside the workspace) is left intact.
@@ -973,12 +975,15 @@ fn resolve_existing_workspace_dir_path_following(
 
 // Resolves the source of a rename/delete. A symlink resolves to the link itself
 // (so the operation moves/removes the link, never its target); its location is
-// already verified within the workspace by resolve_workspace_path.
+// already verified within the workspace by resolve_workspace_path. `allow_external`
+// permits an entry that lives inside a trusted external symlinked directory, so
+// rename can follow the same trust grant that create/write already honour.
 fn resolve_existing_workspace_entry_path(
     root: &Path,
     relative: &str,
+    allow_external: bool,
 ) -> Result<PathBuf, WorkspaceError> {
-    let path = resolve_workspace_path(root, relative)?;
+    let path = resolve_workspace_path_inner(root, relative, allow_external)?;
     let metadata = fs::symlink_metadata(&path)?;
     if metadata.file_type().is_symlink() {
         return Ok(path);
@@ -989,7 +994,7 @@ fn resolve_existing_workspace_entry_path(
 
     let root = root.canonicalize()?;
     let canonical = path.canonicalize()?;
-    if !canonical.starts_with(&root) {
+    if !canonical.starts_with(&root) && !allow_external {
         return Err(WorkspaceError::OutsideWorkspace);
     }
 

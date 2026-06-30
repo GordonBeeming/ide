@@ -62,9 +62,11 @@ struct RemoteTemplate {
 }
 
 pub(crate) async fn attribution_for_file(workspace_root: &Path, relative: &str) -> GitAttribution {
-    // Attribution is only requested for a file already open in the editor, which
-    // means its symlink (if any) was already trusted at open time.
-    let file_path = match resolve_existing_workspace_file_path(workspace_root, relative, true) {
+    // Never follow a symlink that escapes the workspace here — attribution must
+    // not become a way to read external files without the trust gate. In-workspace
+    // symlinks still resolve (allow_external = false still follows within root);
+    // a symlink pointing outside the repo has no meaningful git blame anyway.
+    let file_path = match resolve_existing_workspace_file_path(workspace_root, relative, false) {
         Ok(path) => path,
         Err(error) => return unsupported(relative, workspace_error_reason(error)),
     };

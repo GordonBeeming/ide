@@ -292,6 +292,9 @@ const defaultCurrentFileSearchResultLimit = 200;
 const minCurrentFileResultPreviewLimit = 3;
 const maxCurrentFileResultPreviewLimit = 100;
 const defaultCurrentFileResultPreviewLimit = 12;
+// Upper bound on matches a single Replace All rewrites — high enough to cover any
+// realistic file, low enough to keep the array and the CodeMirror transaction sane.
+const replaceAllMatchLimit = 100000;
 const minQuickOpenResultLimit = 5;
 const maxQuickOpenResultLimit = 100;
 const defaultQuickOpenResultLimit = 12;
@@ -2258,13 +2261,15 @@ export default function App() {
       return;
     }
     // The find preview caps results at currentFileSearchResultLimit; replacing
-    // only that capped set would silently skip later matches in large files.
-    // Recompute over the full file contents so "Replace All" really means all.
+    // only that capped set would silently skip later matches in large files. So
+    // recompute over the full file — but bound it so a pathological query (e.g. a
+    // single character in a huge file) can't allocate an unbounded array and freeze
+    // the editor on one giant transaction.
     const allMatches = currentFileMatches(
       activeFile.path,
       activeFile.contents,
       currentFileQuery,
-      Number.MAX_SAFE_INTEGER,
+      replaceAllMatchLimit,
     );
     if (allMatches.length === 0) {
       setStatus("No matches to replace");
@@ -2272,6 +2277,11 @@ export default function App() {
     }
 
     requestEditorCommand("replaceAll", replaceTargetsFrom(allMatches));
+    if (allMatches.length >= replaceAllMatchLimit) {
+      setStatus(
+        `Replaced the first ${replaceAllMatchLimit.toLocaleString()} matches — run Replace All again for the rest`,
+      );
+    }
   }, [activeFile, currentFileQuery, replaceTargetsFrom, requestEditorCommand]);
 
   const openReplaceInFile = useCallback(() => {
