@@ -334,7 +334,7 @@ function applyReplace(
   if (!payload || payload.targets.length === 0) return 0;
 
   const doc = view.state.doc;
-  const changes = [];
+  const changes: { from: number; to: number; insert: string }[] = [];
   for (const target of payload.targets) {
     const line = clampLineNumber(target.line, doc.lines);
     if (!line) continue;
@@ -346,8 +346,22 @@ function applyReplace(
   }
   if (changes.length === 0) return 0;
 
-  view.dispatch({ changes });
-  return changes.length;
+  // CodeMirror requires change specs sorted by `from` and non-overlapping, or
+  // the transaction throws. Match order is normally already sorted, but sort and
+  // drop overlaps defensively so a bad payload can't crash the editor.
+  changes.sort((a, b) => a.from - b.from);
+  const safeChanges: typeof changes = [];
+  let lastTo = -1;
+  for (const change of changes) {
+    if (change.from >= lastTo) {
+      safeChanges.push(change);
+      lastTo = change.to;
+    }
+  }
+  if (safeChanges.length === 0) return 0;
+
+  view.dispatch({ changes: safeChanges });
+  return safeChanges.length;
 }
 
 function revealLineInView(

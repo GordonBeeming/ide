@@ -358,6 +358,19 @@ struct SymlinkFacts {
     is_symlink: bool,
     is_external: bool,
     symlink_target: Option<String>,
+    // Modified time of the thing the editor actually reads/writes — the link's
+    // target for a symlink, the entry itself otherwise. The save conflict check
+    // compares against the target's mtime, so an open + save round-trip has to
+    // start from the same source or it falsely reports "changed on disk".
+    modified_ms: Option<u128>,
+}
+
+fn metadata_modified_ms(metadata: &fs::Metadata) -> Option<u128> {
+    metadata
+        .modified()
+        .ok()
+        .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+        .map(|duration| duration.as_millis())
 }
 
 // Resolves the displayable facts for an entry. For a symlink it follows the link
@@ -377,6 +390,7 @@ fn symlink_facts(
             is_symlink: false,
             is_external: false,
             symlink_target: None,
+            modified_ms: metadata_modified_ms(link_metadata),
         };
     }
 
@@ -396,6 +410,7 @@ fn symlink_facts(
                 is_symlink: true,
                 is_external: !canonical.starts_with(canonical_root),
                 symlink_target,
+                modified_ms: target_metadata.as_ref().and_then(metadata_modified_ms),
             }
         }
         // Broken link (target missing or loop): show it, but never as a folder.
@@ -405,6 +420,7 @@ fn symlink_facts(
             is_symlink: true,
             is_external: true,
             symlink_target,
+            modified_ms: metadata_modified_ms(link_metadata),
         },
     }
 }
@@ -421,11 +437,6 @@ fn file_entry_from_relative(
         .filter(|value| !value.as_os_str().is_empty())
         .map(normalize_path);
     let depth = relative.components().count().saturating_sub(1);
-    let modified_ms = link_metadata
-        .modified()
-        .ok()
-        .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
-        .map(|duration| duration.as_millis());
 
     let name = relative
         .file_name()
@@ -434,6 +445,7 @@ fn file_entry_from_relative(
         .to_string();
 
     let facts = symlink_facts(abs_path, link_metadata, canonical_root);
+    let modified_ms = facts.modified_ms;
 
     Ok(FileEntry {
         path: relative_path,

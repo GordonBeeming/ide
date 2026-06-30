@@ -2257,13 +2257,22 @@ export default function App() {
       setStatus("Find in file requires an open file");
       return;
     }
-    if (currentFindResults.length === 0) {
+    // The find preview caps results at currentFileSearchResultLimit; replacing
+    // only that capped set would silently skip later matches in large files.
+    // Recompute over the full file contents so "Replace All" really means all.
+    const allMatches = currentFileMatches(
+      activeFile.path,
+      activeFile.contents,
+      currentFileQuery,
+      Number.MAX_SAFE_INTEGER,
+    );
+    if (allMatches.length === 0) {
       setStatus("No matches to replace");
       return;
     }
 
-    requestEditorCommand("replaceAll", replaceTargetsFrom(currentFindResults));
-  }, [activeFile, currentFindResults, replaceTargetsFrom, requestEditorCommand]);
+    requestEditorCommand("replaceAll", replaceTargetsFrom(allMatches));
+  }, [activeFile, currentFileQuery, replaceTargetsFrom, requestEditorCommand]);
 
   const openReplaceInFile = useCallback(() => {
     if (!activeFile) {
@@ -2428,7 +2437,10 @@ export default function App() {
     (event: ReactKeyboardEvent<HTMLInputElement>) => {
       if (event.key === "Enter") {
         event.preventDefault();
-        if (event.metaKey || event.ctrlKey || event.altKey) {
+        // Cmd/Ctrl+Enter = Replace All (matches the button title); plain Enter =
+        // replace current. Alt is deliberately excluded — Alt+Enter inserts a
+        // newline on some layouts and shouldn't rewrite the whole file.
+        if (event.metaKey || event.ctrlKey) {
           replaceAllMatches();
         } else {
           replaceCurrentMatch();
@@ -3922,13 +3934,11 @@ export default function App() {
                     aria-label={replaceVisible ? "Hide replace" : "Replace"}
                     aria-pressed={replaceVisible}
                     onClick={() => {
-                      setReplaceVisible((visible) => {
-                        const next = !visible;
-                        if (next) {
-                          requestAnimationFrame(() => replaceInputRef.current?.focus());
-                        }
-                        return next;
-                      });
+                      const next = !replaceVisible;
+                      setReplaceVisible(next);
+                      if (next) {
+                        requestAnimationFrame(() => replaceInputRef.current?.focus());
+                      }
                     }}
                   >
                     <Replace size={14} />
