@@ -388,7 +388,10 @@ fn symlink_facts(
         Ok(canonical) => {
             let target_metadata = fs::metadata(&canonical).ok();
             SymlinkFacts {
-                is_dir: target_metadata.as_ref().map(|m| m.is_dir()).unwrap_or(false),
+                is_dir: target_metadata
+                    .as_ref()
+                    .map(|m| m.is_dir())
+                    .unwrap_or(false),
                 size: target_metadata.as_ref().map(|m| m.len()).unwrap_or(0),
                 is_symlink: true,
                 is_external: !canonical.starts_with(canonical_root),
@@ -1063,7 +1066,10 @@ mod tests {
 
         // Untrusted external symlink is refused...
         let result = read_workspace_file(dir.path(), "linked.txt", 1024, false);
-        assert!(matches!(result, Err(WorkspaceError::SymlinkOutsideWorkspace)));
+        assert!(matches!(
+            result,
+            Err(WorkspaceError::SymlinkOutsideWorkspace)
+        ));
 
         // ...but reads through once the user grants trust.
         assert_eq!(
@@ -1078,7 +1084,11 @@ mod tests {
         let dir = tempdir().unwrap();
         fs::create_dir(dir.path().join("real")).unwrap();
         fs::write(dir.path().join("real/note.txt"), "inside").unwrap();
-        symlink(dir.path().join("real/note.txt"), dir.path().join("link.txt")).unwrap();
+        symlink(
+            dir.path().join("real/note.txt"),
+            dir.path().join("link.txt"),
+        )
+        .unwrap();
 
         // In-workspace target needs no trust.
         assert_eq!(
@@ -1097,7 +1107,10 @@ mod tests {
         symlink(&secret_path, dir.path().join("linked.txt")).unwrap();
 
         let result = write_workspace_file(dir.path(), "linked.txt", "changed", None, false);
-        assert!(matches!(result, Err(WorkspaceError::SymlinkOutsideWorkspace)));
+        assert!(matches!(
+            result,
+            Err(WorkspaceError::SymlinkOutsideWorkspace)
+        ));
         assert_eq!(fs::read_to_string(&secret_path).unwrap(), "secret");
 
         // With trust, the write edits through the link to the real target.
@@ -1133,8 +1146,13 @@ mod tests {
 
         fs::write(&path, "outside change").unwrap();
         let stale_modified_ms = modified_ms.saturating_sub(1);
-        let result =
-            write_workspace_file(dir.path(), "note.txt", "after", Some(stale_modified_ms), false);
+        let result = write_workspace_file(
+            dir.path(),
+            "note.txt",
+            "after",
+            Some(stale_modified_ms),
+            false,
+        );
 
         assert!(matches!(
             result,
@@ -1200,7 +1218,10 @@ mod tests {
 
         let result = create_workspace_file(dir.path(), "linked/new.txt", false);
 
-        assert!(matches!(result, Err(WorkspaceError::SymlinkOutsideWorkspace)));
+        assert!(matches!(
+            result,
+            Err(WorkspaceError::SymlinkOutsideWorkspace)
+        ));
         assert!(!outside.path().join("new.txt").exists());
     }
 
@@ -1251,7 +1272,10 @@ mod tests {
 
         let result = create_workspace_folder(dir.path(), "linked/new-folder", false);
 
-        assert!(matches!(result, Err(WorkspaceError::SymlinkOutsideWorkspace)));
+        assert!(matches!(
+            result,
+            Err(WorkspaceError::SymlinkOutsideWorkspace)
+        ));
         assert!(!outside.path().join("new-folder").exists());
     }
 
@@ -1344,7 +1368,10 @@ mod tests {
         // The link moved; the external target is untouched and not relocated.
         assert!(fs::symlink_metadata(&linked_path).is_err());
         let renamed = dir.path().join("renamed.txt");
-        assert!(fs::symlink_metadata(&renamed).unwrap().file_type().is_symlink());
+        assert!(fs::symlink_metadata(&renamed)
+            .unwrap()
+            .file_type()
+            .is_symlink());
         assert_eq!(fs::read_to_string(secret_path).unwrap(), "secret");
     }
 
@@ -1358,7 +1385,10 @@ mod tests {
 
         let result = rename_workspace_file(dir.path(), "note.txt", "linked/renamed.txt", false);
 
-        assert!(matches!(result, Err(WorkspaceError::SymlinkOutsideWorkspace)));
+        assert!(matches!(
+            result,
+            Err(WorkspaceError::SymlinkOutsideWorkspace)
+        ));
         assert_eq!(
             fs::read_to_string(dir.path().join("note.txt")).unwrap(),
             "contents"
@@ -1427,7 +1457,10 @@ mod tests {
 
         assert!(fs::symlink_metadata(dir.path().join("linked")).is_err());
         // The real directory and its contents are left intact.
-        assert_eq!(fs::read_to_string(outside.path().join("keep.txt")).unwrap(), "keep");
+        assert_eq!(
+            fs::read_to_string(outside.path().join("keep.txt")).unwrap(),
+            "keep"
+        );
     }
 
     #[test]
@@ -1635,7 +1668,8 @@ mod tests {
         fs::write(dir.path().join("src/.env"), "").unwrap();
         fs::write(dir.path().join("src/node_modules/pkg/index.js"), "").unwrap();
 
-        let entries = workspace_directory_entries(dir.path(), "src", false, false, true, false).unwrap();
+        let entries =
+            workspace_directory_entries(dir.path(), "src", false, false, true, false).unwrap();
         let paths = entries
             .iter()
             .map(|entry| entry.path.as_str())
@@ -1647,7 +1681,8 @@ mod tests {
         assert!(!paths.contains(&"src/.env"));
         assert!(!paths.contains(&"src/node_modules"));
 
-        let entries = workspace_directory_entries(dir.path(), "src", true, true, true, false).unwrap();
+        let entries =
+            workspace_directory_entries(dir.path(), "src", true, true, true, false).unwrap();
         let paths = entries
             .iter()
             .map(|entry| entry.path.as_str())
@@ -1665,7 +1700,8 @@ mod tests {
         fs::create_dir_all(dir.path().join("src")).unwrap();
         fs::write(dir.path().join("README.md"), "").unwrap();
 
-        let entries = workspace_directory_entries(dir.path(), "", false, false, true, false).unwrap();
+        let entries =
+            workspace_directory_entries(dir.path(), "", false, false, true, false).unwrap();
         let paths = entries
             .iter()
             .map(|entry| entry.path.as_str())
@@ -1703,10 +1739,15 @@ mod tests {
         fs::create_dir(dir.path().join("real")).unwrap();
         symlink(dir.path().join("real"), dir.path().join("inside_dir_link")).unwrap();
         fs::write(dir.path().join("file.txt"), "x").unwrap();
-        symlink(dir.path().join("file.txt"), dir.path().join("inside_file_link")).unwrap();
+        symlink(
+            dir.path().join("file.txt"),
+            dir.path().join("inside_file_link"),
+        )
+        .unwrap();
         symlink(outside.path(), dir.path().join("external_link")).unwrap();
 
-        let entries = workspace_directory_entries(dir.path(), "", false, false, true, false).unwrap();
+        let entries =
+            workspace_directory_entries(dir.path(), "", false, false, true, false).unwrap();
         let by_name = |name: &str| {
             entries
                 .iter()

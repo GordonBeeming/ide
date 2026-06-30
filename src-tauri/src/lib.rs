@@ -915,8 +915,12 @@ async fn create_file(
     allow_external_symlinks: Option<bool>,
 ) -> Result<(), CommandError> {
     let workspace_root = workspace_root_for_window(&state, &window).await;
-    create_workspace_file(&workspace_root, &path, allow_external_symlinks.unwrap_or(false))
-        .map_err(CommandError::from)?;
+    create_workspace_file(
+        &workspace_root,
+        &path,
+        allow_external_symlinks.unwrap_or(false),
+    )
+    .map_err(CommandError::from)?;
     refresh_indexed_entry(&state.workspace_index, &workspace_root, &path)?;
     Ok(())
 }
@@ -929,8 +933,12 @@ async fn create_folder(
     allow_external_symlinks: Option<bool>,
 ) -> Result<(), CommandError> {
     let workspace_root = workspace_root_for_window(&state, &window).await;
-    create_workspace_folder(&workspace_root, &path, allow_external_symlinks.unwrap_or(false))
-        .map_err(CommandError::from)?;
+    create_workspace_folder(
+        &workspace_root,
+        &path,
+        allow_external_symlinks.unwrap_or(false),
+    )
+    .map_err(CommandError::from)?;
     refresh_indexed_entry(&state.workspace_index, &workspace_root, &path)?;
     Ok(())
 }
