@@ -3925,9 +3925,21 @@ export default function App() {
                   <input
                     ref={currentFindInputRef}
                     value={currentFileQuery}
-                    onBlur={() => {
+                    onBlur={(event) => {
+                      // Keep the overlay open when focus moves to the replace
+                      // toggle or replace input — only auto-close when focus
+                      // leaves the whole find/replace group with an empty query.
+                      const group = event.currentTarget.closest(".topbar-find-group");
+                      if (
+                        group &&
+                        event.relatedTarget instanceof Node &&
+                        group.contains(event.relatedTarget)
+                      ) {
+                        return;
+                      }
                       if (!currentFileQuery.trim()) {
                         setCurrentFindOpen(false);
+                        setReplaceVisible(false);
                       }
                     }}
                     onChange={(event) => setCurrentFileQuery(event.target.value)}
