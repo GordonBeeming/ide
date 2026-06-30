@@ -596,7 +596,7 @@ button {
 
 .tree-row {
   display: grid;
-  grid-template-columns: 14px 18px minmax(0, 1fr);
+  grid-template-columns: 14px 18px minmax(0, 1fr) auto;
   width: 100%;
   min-height: 28px;
   align-items: center;
@@ -606,6 +606,23 @@ button {
   color: var(--muted);
   cursor: pointer;
   text-align: left;
+}
+
+.tree-row__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tree-row__symlink {
+  color: var(--muted);
+  opacity: 0.85;
+  flex-shrink: 0;
+}
+
+.tree-row__symlink--external {
+  color: var(--accent);
+  opacity: 1;
 }
 
 .tree-row:hover,
@@ -732,9 +749,15 @@ button {
   gap: 6px;
 }
 
+.topbar-find-group {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
 .topbar-find {
   display: grid;
-  grid-template-columns: 16px minmax(80px, 180px) 28px;
+  grid-template-columns: 16px minmax(80px, 180px) 28px 24px;
   height: 32px;
   align-items: center;
   gap: 6px;
@@ -743,6 +766,62 @@ button {
   border-radius: 6px;
   background: var(--panel-strong);
   color: var(--muted);
+}
+
+/* Replace row drops below the find box so it doesn't grow the fixed-height topbar. */
+.topbar-find--replace {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 20;
+  grid-template-columns: 16px minmax(80px, 180px) auto auto;
+  box-shadow: var(--shadow);
+}
+
+.topbar-find__toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.topbar-find__toggle:hover,
+.topbar-find__toggle:focus-visible {
+  color: var(--text);
+}
+
+.topbar-find__toggle[aria-pressed="true"] {
+  background: var(--accent-weak);
+  color: var(--text);
+}
+
+.topbar-find__action {
+  height: 24px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--panel);
+  color: var(--text);
+  font-size: 11px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.topbar-find__action:hover:not(:disabled),
+.topbar-find__action:focus-visible {
+  border-color: var(--accent);
+}
+
+.topbar-find__action:disabled {
+  color: var(--muted);
+  cursor: not-allowed;
+  opacity: 0.6;
 }
 
 .topbar-find input {

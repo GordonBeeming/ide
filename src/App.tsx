@@ -18,6 +18,7 @@ import {
   Copy,
   ExternalLink,
   FileInput,
+  Link2,
   FilePlus,
   FileCog,
   FolderOpen,
@@ -28,6 +29,7 @@ import {
   PanelLeftOpen,
   Pencil,
   RefreshCw,
+  Replace,
   RotateCcw,
   Save,
   SaveAll,
@@ -56,6 +58,7 @@ import {
 } from "./dateTimeFormat";
 import {
   currentFileMatches,
+  currentFileResultWindow,
   nextCurrentFileMatchIndex,
 } from "./currentFileSearch";
 import { iconForFile, isKnownBinaryFile } from "./fileTypes";
@@ -160,6 +163,7 @@ import {
   editorCommandLabel,
   type EditorCommandName,
   type EditorCommandRequest,
+  type EditorReplacePayload,
 } from "./editorCommands";
 import { cursorStatus, type EditorCursor } from "./editorCursor";
 
@@ -187,6 +191,9 @@ interface RevealTarget {
   path: string;
   lineNumber: number;
   preserveFocus?: boolean;
+  // Column offsets (0-based, within lineNumber) of a find match to select on reveal.
+  matchStart?: number;
+  matchEnd?: number;
 }
 
 interface PendingReloadRequest {
@@ -285,6 +292,9 @@ const defaultCurrentFileSearchResultLimit = 200;
 const minCurrentFileResultPreviewLimit = 3;
 const maxCurrentFileResultPreviewLimit = 100;
 const defaultCurrentFileResultPreviewLimit = 12;
+// Upper bound on matches a single Replace All rewrites — high enough to cover any
+// realistic file, low enough to keep the array and the CodeMirror transaction sane.
+const replaceAllMatchLimit = 100000;
 const minQuickOpenResultLimit = 5;
 const maxQuickOpenResultLimit = 100;
 const defaultQuickOpenResultLimit = 12;
@@ -420,6 +430,8 @@ export default function App() {
   const [filter, setFilter] = useState("");
   const [contentQuery, setContentQuery] = useState("");
   const [currentFileQuery, setCurrentFileQuery] = useState("");
+  const [replaceQuery, setReplaceQuery] = useState("");
+  const [replaceVisible, setReplaceVisible] = useState(false);
   const [activeSidebarSearch, setActiveSidebarSearch] =
     useState<SidebarSearchMode>();
   const [currentFindOpen, setCurrentFindOpen] = useState(false);
@@ -511,6 +523,12 @@ export default function App() {
   const [uiStateLoaded, setUiStateLoaded] = useState(false);
   const [workspaceUiRestored, setWorkspaceUiRestored] = useState(false);
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(() => new Set());
+  // Trust to follow symlinks whose target escapes the workspace. Session = this
+  // run only ("Trust once"); workspace = persisted ("Trust for workspace").
+  const [trustExternalSession, setTrustExternalSession] = useState(false);
+  const [trustExternalWorkspace, setTrustExternalWorkspace] = useState(false);
+  const [pendingSymlinkTrust, setPendingSymlinkTrust] =
+    useState<{ entry: FileEntry; action: "open" | "expand" }>();
   const [openFailure, setOpenFailure] = useState<OpenFailure>();
   const [error, setError] = useState<string>();
   const [status, setStatus] = useState("Ready");
@@ -530,9 +548,17 @@ export default function App() {
   const sidebarFilterInputRef = useRef<HTMLInputElement | null>(null);
   const sidebarContentSearchInputRef = useRef<HTMLInputElement | null>(null);
   const currentFindInputRef = useRef<HTMLInputElement | null>(null);
+  const replaceInputRef = useRef<HTMLInputElement | null>(null);
   const gitCommitPopoverCloseRef = useRef<HTMLButtonElement | null>(null);
   const initialFileOpenedRef = useRef(false);
   const openedLaunchTargetsDrainedRef = useRef(false);
+  // Effective external-symlink trust, mirrored to a ref so the many file I/O
+  // callbacks can read the current value without each depending on it.
+  const allowExternalSymlinks = trustExternalSession || trustExternalWorkspace;
+  const allowExternalSymlinksRef = useRef(allowExternalSymlinks);
+  useEffect(() => {
+    allowExternalSymlinksRef.current = allowExternalSymlinks;
+  }, [allowExternalSymlinks]);
   const persistedWorkspaceRef = useRef<WorkspaceUiState>({
     expandedFolders: [],
     openFiles: [],
@@ -612,6 +638,15 @@ export default function App() {
         : [],
     [activeFile, currentFileQuery, currentFileSearchResultLimit],
   );
+  const currentFindWindow = useMemo(
+    () =>
+      currentFileResultWindow(
+        currentFindResults,
+        currentFindIndex,
+        currentFileResultPreviewLimit,
+      ),
+    [currentFindResults, currentFindIndex, currentFileResultPreviewLimit],
+  );
   const diagnostics = useMemo(
     () => sortDiagnostics(Object.values(diagnosticsByPath).flat()),
     [diagnosticsByPath],
@@ -668,6 +703,7 @@ export default function App() {
     renameDialogOpen ||
     goToLineDialogOpen ||
     pendingDeletePath !== undefined ||
+    pendingSymlinkTrust !== undefined ||
     pendingReloadRequest !== undefined ||
     pendingCloseAll ||
     pendingAppClose ||
@@ -914,6 +950,7 @@ export default function App() {
     );
     setFeatureFlags(sanitizeFeatureFlagOverrides(snapshot.view.featureFlags));
     setExpandedFolders(new Set(snapshot.workspace.expandedFolders));
+    setTrustExternalWorkspace(Boolean(snapshot.workspace.trustExternalSymlinks));
     setSelectedPath(snapshot.workspace.selectedPath);
     setSidebarWidth(
       sanitizeNumberLimit(
@@ -952,6 +989,7 @@ export default function App() {
           showDotfiles,
           showGeneratedInternal,
           showGitignoredFiles,
+          allowExternalSymlinksRef.current,
         );
         setFiles((current) => mergeFileEntries(current, entries));
         setLoadedFolders((current) => new Set(current).add(path));
@@ -972,6 +1010,13 @@ export default function App() {
   );
 
   const toggleFolder = useCallback((path: string) => {
+    // Expanding an external symlinked directory follows it outside the workspace;
+    // require trust first.
+    const entry = files.find((file) => file.path === path);
+    if (entry?.isExternal && !allowExternalSymlinksRef.current) {
+      setPendingSymlinkTrust({ entry, action: "expand" });
+      return;
+    }
     const shouldLoad = !expandedFolders.has(path);
     setExpandedFolders((current) => {
       const next = new Set(current);
@@ -985,7 +1030,7 @@ export default function App() {
     if (shouldLoad) {
       void loadFolderChildren(path);
     }
-  }, [expandedFolders, loadFolderChildren]);
+  }, [expandedFolders, files, loadFolderChildren]);
 
   const refreshIntegrationStatus = useCallback(async () => {
     try {
@@ -1099,7 +1144,11 @@ export default function App() {
 
   const readOpenFileFromDisk = useCallback(async (path: string) => {
     const entry = await statFile(path);
-    const contents = await readFile(path, maxOpenFileKb * 1024);
+    const contents = await readFile(
+      path,
+      maxOpenFileKb * 1024,
+      allowExternalSymlinksRef.current,
+    );
     return { contents, modifiedMs: entry.modifiedMs };
   }, [maxOpenFileKb]);
 
@@ -1108,7 +1157,11 @@ export default function App() {
       const openFileBeforeRead = openFilesRef.current.find((file) => file.path === path);
       if (!openFileBeforeRead || openFileBeforeRead.dirty) return;
 
-      const contents = await readFile(path, maxOpenFileKb * 1024);
+      const contents = await readFile(
+        path,
+        maxOpenFileKb * 1024,
+        allowExternalSymlinksRef.current,
+      );
       const openFileAfterRead = openFilesRef.current.find((file) => file.path === path);
       if (!openFileAfterRead || openFileAfterRead.dirty) return;
 
@@ -1256,7 +1309,11 @@ export default function App() {
     let cancelled = false;
     const timeout = window.setTimeout(() => {
       const searchPromise = singleFileMode && singleFilePath
-        ? readFile(singleFilePath, maxOpenFileKb * 1024).then((contents) => {
+        ? readFile(
+            singleFilePath,
+            maxOpenFileKb * 1024,
+            allowExternalSymlinksRef.current,
+          ).then((contents) => {
             const limit = currentFileSearchResultLimit;
             const matches = currentFileMatches(
               singleFilePath,
@@ -1393,6 +1450,13 @@ export default function App() {
         return;
       }
 
+      // Opening an external symlinked file reads outside the workspace; require trust.
+      if (entry.isExternal && !allowExternalSymlinksRef.current) {
+        setPendingSymlinkTrust({ entry, action: "open" });
+        setStatus("Ready");
+        return;
+      }
+
       try {
         const diskFile = await readOpenFileFromDisk(entry.path);
         setOpenFiles((current) =>
@@ -1425,6 +1489,32 @@ export default function App() {
       trackActiveFile,
     ],
   );
+
+  const confirmSymlinkTrust = useCallback(
+    (scope: "once" | "workspace") => {
+      const pending = pendingSymlinkTrust;
+      if (!pending) return;
+      // Apply to the ref immediately so the retried action sees the grant before
+      // the state update has flushed.
+      allowExternalSymlinksRef.current = true;
+      if (scope === "workspace") {
+        setTrustExternalWorkspace(true);
+      } else {
+        setTrustExternalSession(true);
+      }
+      setPendingSymlinkTrust(undefined);
+      if (pending.action === "open") {
+        void openPath(pending.entry);
+      } else {
+        toggleFolder(pending.entry.path);
+      }
+    },
+    [openPath, pendingSymlinkTrust, toggleFolder],
+  );
+
+  const cancelSymlinkTrust = useCallback(() => {
+    setPendingSymlinkTrust(undefined);
+  }, []);
 
   useEffect(() => {
     if (!trackActiveFile || !activePath || singleFileMode) return;
@@ -1612,6 +1702,7 @@ export default function App() {
           activeFile: activePath,
           selectedPath,
           sidebarWidth,
+          trustExternalSymlinks: trustExternalWorkspace,
         },
       ).catch((reason) => {
         setError(`Unable to save UI state: ${String(reason)}`);
@@ -1622,6 +1713,7 @@ export default function App() {
   }, [
     activePath,
     expandedFolders,
+    trustExternalWorkspace,
     openFilePathSignature,
     selectedPath,
     sidebarWidth,
@@ -1904,7 +1996,12 @@ export default function App() {
 
   const revealCurrentFileMatch = useCallback((match: SearchMatch, index?: number) => {
     if (index !== undefined) setCurrentFindIndex(index);
-    setRevealTarget({ path: match.path, lineNumber: match.lineNumber });
+    setRevealTarget({
+      path: match.path,
+      lineNumber: match.lineNumber,
+      matchStart: match.matchStart,
+      matchEnd: match.matchEnd,
+    });
     setStatus(`Found ${match.path}:${match.lineNumber}`);
   }, []);
 
@@ -1930,6 +2027,8 @@ export default function App() {
         path: match.path,
         lineNumber: match.lineNumber,
         preserveFocus: true,
+        matchStart: match.matchStart,
+        matchEnd: match.matchEnd,
       });
       setStatus(
         `Match ${nextIndex + 1} of ${currentFindResults.length} at ${match.path}:${match.lineNumber}`,
@@ -1980,7 +2079,12 @@ export default function App() {
     setStatus(`Saving ${fileToSave.path}`);
     savingPathsRef.current.add(fileToSave.path);
     try {
-      await writeFile(fileToSave.path, fileToSave.contents, fileToSave.modifiedMs);
+      await writeFile(
+        fileToSave.path,
+        fileToSave.contents,
+        fileToSave.modifiedMs,
+        allowExternalSymlinksRef.current,
+      );
       const savedEntry = await statFile(fileToSave.path);
       setOpenFiles((current) =>
         current.map((file) =>
@@ -2096,7 +2200,7 @@ export default function App() {
   }, [activeFile, reloadFileFromDisk]);
 
   const requestEditorCommand = useCallback(
-    (name: EditorCommandName) => {
+    (name: EditorCommandName, replace?: EditorReplacePayload) => {
       if (!activeFile) {
         setStatus(`${editorCommandLabel(name)} requires an open file`);
         return;
@@ -2107,10 +2211,89 @@ export default function App() {
         filePath: activeFile.path,
         name,
         nonce: editorCommandNonceRef.current,
+        replace,
       });
     },
     [activeFile],
   );
+
+  const replaceTargetsFrom = useCallback(
+    (matches: SearchMatch[]): EditorReplacePayload => ({
+      replacement: replaceQuery,
+      targets: matches.map((match) => ({
+        line: match.lineNumber,
+        matchStart: match.matchStart,
+        matchEnd: match.matchEnd,
+      })),
+    }),
+    [replaceQuery],
+  );
+
+  const replaceCurrentMatch = useCallback(() => {
+    if (!activeFile) {
+      setStatus("Find in file requires an open file");
+      return;
+    }
+    if (currentFindResults.length === 0) {
+      setStatus("No matches to replace");
+      return;
+    }
+
+    const targetIndex =
+      currentFindIndex >= 0 && currentFindIndex < currentFindResults.length
+        ? currentFindIndex
+        : 0;
+    requestEditorCommand(
+      "replaceMatch",
+      replaceTargetsFrom([currentFindResults[targetIndex]]),
+    );
+  }, [
+    activeFile,
+    currentFindIndex,
+    currentFindResults,
+    replaceTargetsFrom,
+    requestEditorCommand,
+  ]);
+
+  const replaceAllMatches = useCallback(() => {
+    if (!activeFile) {
+      setStatus("Find in file requires an open file");
+      return;
+    }
+    // The find preview caps results at currentFileSearchResultLimit; replacing
+    // only that capped set would silently skip later matches in large files. So
+    // recompute over the full file — but bound it so a pathological query (e.g. a
+    // single character in a huge file) can't allocate an unbounded array and freeze
+    // the editor on one giant transaction.
+    const allMatches = currentFileMatches(
+      activeFile.path,
+      activeFile.contents,
+      currentFileQuery,
+      replaceAllMatchLimit,
+    );
+    if (allMatches.length === 0) {
+      setStatus("No matches to replace");
+      return;
+    }
+
+    requestEditorCommand("replaceAll", replaceTargetsFrom(allMatches));
+    if (allMatches.length >= replaceAllMatchLimit) {
+      setStatus(
+        `Replaced the first ${replaceAllMatchLimit.toLocaleString()} matches — run Replace All again for the rest`,
+      );
+    }
+  }, [activeFile, currentFileQuery, replaceTargetsFrom, requestEditorCommand]);
+
+  const openReplaceInFile = useCallback(() => {
+    if (!activeFile) {
+      setStatus("Replace in file requires an open file");
+      return;
+    }
+    setCurrentFindOpen(true);
+    setReplaceVisible(true);
+    // Defer focus until the replace input has mounted in the expanded overlay.
+    requestAnimationFrame(() => replaceInputRef.current?.focus());
+  }, [activeFile]);
 
   const openQuickOpen = useCallback(() => {
     setCommandPaletteVisible(false);
@@ -2232,6 +2415,19 @@ export default function App() {
         return;
       }
 
+      // Arrow up/down step through matches and select each in the editor while
+      // focus stays in the find input, so you can bounce around the file.
+      if (event.key === "ArrowDown") {
+        event.preventDefault();
+        revealCurrentFindMatch(1);
+        return;
+      }
+      if (event.key === "ArrowUp") {
+        event.preventDefault();
+        revealCurrentFindMatch(-1);
+        return;
+      }
+
       if (event.key !== "Escape") return;
       event.preventDefault();
       event.stopPropagation();
@@ -2241,9 +2437,34 @@ export default function App() {
         return;
       }
 
+      setReplaceVisible(false);
       setCurrentFindOpen(false);
     },
     [currentFileQuery, revealCurrentFindMatch],
+  );
+
+  const handleReplaceKeyDown = useCallback(
+    (event: ReactKeyboardEvent<HTMLInputElement>) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        // Cmd/Ctrl+Enter = Replace All (matches the button title); plain Enter =
+        // replace current. Alt is deliberately excluded — Alt+Enter inserts a
+        // newline on some layouts and shouldn't rewrite the whole file.
+        if (event.metaKey || event.ctrlKey) {
+          replaceAllMatches();
+        } else {
+          replaceCurrentMatch();
+        }
+        return;
+      }
+
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      event.stopPropagation();
+      setReplaceVisible(false);
+      currentFindInputRef.current?.focus();
+    },
+    [replaceAllMatches, replaceCurrentMatch],
   );
 
   const cancelReloadActiveFile = useCallback(() => {
@@ -2929,7 +3150,7 @@ export default function App() {
     setError(undefined);
     setStatus(`Creating ${path}`);
     try {
-      await createFile(path);
+      await createFile(path, allowExternalSymlinksRef.current);
       const refreshedEntries = await refreshFiles();
       const modifiedMs = refreshedEntries.find((entry) => entry.path === path)?.modifiedMs;
       setOpenFiles((current) =>
@@ -2963,7 +3184,7 @@ export default function App() {
     setError(undefined);
     setStatus(`Creating ${path}`);
     try {
-      await createFolder(path);
+      await createFolder(path, allowExternalSymlinksRef.current);
       setSelectedPath(path);
       closeNewFolderDialog();
       await refreshFiles();
@@ -2990,7 +3211,7 @@ export default function App() {
     setError(undefined);
     setStatus(`Renaming ${fromPath}`);
     try {
-      await renameFile(fromPath, toPath);
+      await renameFile(fromPath, toPath, allowExternalSymlinksRef.current);
       const refreshedEntries = await refreshFiles();
       const modifiedMs = refreshedEntries.find((entry) => entry.path === toPath)?.modifiedMs;
       setOpenFiles((current) =>
@@ -3185,6 +3406,11 @@ export default function App() {
         cancelDeleteSelectedFile();
         return;
       }
+      if (event.key === "Escape" && pendingSymlinkTrust) {
+        event.preventDefault();
+        cancelSymlinkTrust();
+        return;
+      }
       if (event.key === "Escape" && pendingReloadRequest) {
         event.preventDefault();
         cancelReloadActiveFile();
@@ -3295,6 +3521,10 @@ export default function App() {
       } else if (isIntellijShortcut(event, "findInFile")) {
         event.preventDefault();
         openCurrentFileFind();
+      } else if (isIntellijShortcut(event, "findInFileReplace")) {
+        // preventDefault stops the webview from treating Cmd/Ctrl+R as a reload.
+        event.preventDefault();
+        openReplaceInFile();
       } else if (isIntellijShortcut(event, "goToDefinition")) {
         event.preventDefault();
         requestEditorCommand("goToDefinition");
@@ -3315,6 +3545,8 @@ export default function App() {
     closeRenameDialog,
     activateAdjacentTab,
     cancelDeleteSelectedFile,
+    cancelSymlinkTrust,
+    pendingSymlinkTrust,
     cancelReloadActiveFile,
     newFileDialogOpen,
     newFolderDialogOpen,
@@ -3331,6 +3563,7 @@ export default function App() {
     openNewFileDialog,
     openCommandPalette,
     openCurrentFileFind,
+    openReplaceInFile,
     openGoToLineDialog,
     openQuickOpen,
     openWorkspaceSearch,
@@ -3686,24 +3919,84 @@ export default function App() {
           </div>
           <div className="topbar__actions">
             {currentFindExpanded ? (
-              <label className="topbar-find">
-                <Search size={14} />
-                <input
-                  ref={currentFindInputRef}
-                  value={currentFileQuery}
-                  onBlur={() => {
-                    if (!currentFileQuery.trim()) {
-                      setCurrentFindOpen(false);
-                    }
-                  }}
-                  onChange={(event) => setCurrentFileQuery(event.target.value)}
-                  onKeyDown={handleCurrentFindKeyDown}
-                  placeholder="Find in file"
-                />
-                <span>
-                  {activeFile && currentFileQuery.trim() ? currentFindResults.length : ""}
-                </span>
-              </label>
+              <div className="topbar-find-group">
+                <label className="topbar-find">
+                  <Search size={14} />
+                  <input
+                    ref={currentFindInputRef}
+                    value={currentFileQuery}
+                    onBlur={(event) => {
+                      // Keep the overlay open when focus moves to the replace
+                      // toggle or replace input — only auto-close when focus
+                      // leaves the whole find/replace group with an empty query.
+                      const group = event.currentTarget.closest(".topbar-find-group");
+                      if (
+                        group &&
+                        event.relatedTarget instanceof Node &&
+                        group.contains(event.relatedTarget)
+                      ) {
+                        return;
+                      }
+                      if (!currentFileQuery.trim()) {
+                        setCurrentFindOpen(false);
+                        setReplaceVisible(false);
+                      }
+                    }}
+                    onChange={(event) => setCurrentFileQuery(event.target.value)}
+                    onKeyDown={handleCurrentFindKeyDown}
+                    placeholder="Find in file"
+                  />
+                  <span>
+                    {activeFile && currentFileQuery.trim() ? currentFindResults.length : ""}
+                  </span>
+                  <button
+                    type="button"
+                    className="topbar-find__toggle"
+                    title={replaceVisible ? "Hide replace" : "Replace"}
+                    aria-label={replaceVisible ? "Hide replace" : "Replace"}
+                    aria-pressed={replaceVisible}
+                    onClick={() => {
+                      const next = !replaceVisible;
+                      setReplaceVisible(next);
+                      if (next) {
+                        requestAnimationFrame(() => replaceInputRef.current?.focus());
+                      }
+                    }}
+                  >
+                    <Replace size={14} />
+                  </button>
+                </label>
+                {replaceVisible ? (
+                  <label className="topbar-find topbar-find--replace">
+                    <Replace size={14} />
+                    <input
+                      ref={replaceInputRef}
+                      value={replaceQuery}
+                      onChange={(event) => setReplaceQuery(event.target.value)}
+                      onKeyDown={handleReplaceKeyDown}
+                      placeholder="Replace with"
+                    />
+                    <button
+                      type="button"
+                      className="topbar-find__action"
+                      title="Replace current match (Enter)"
+                      disabled={!activeFile || currentFindResults.length === 0}
+                      onClick={replaceCurrentMatch}
+                    >
+                      Replace
+                    </button>
+                    <button
+                      type="button"
+                      className="topbar-find__action"
+                      title="Replace all matches (⌘/Ctrl+Enter)"
+                      disabled={!activeFile || currentFindResults.length === 0}
+                      onClick={replaceAllMatches}
+                    >
+                      All
+                    </button>
+                  </label>
+                ) : null}
+              </div>
             ) : (
               <button
                 className="icon-button"
@@ -3756,21 +4049,24 @@ export default function App() {
                 <span>Find in {activeFile.path}</span>
                 <span>{currentFindResults.length}</span>
               </div>
-              {currentFindResults.slice(0, currentFileResultPreviewLimit).map((result, index) => (
-                <button
-                  className={[
-                    "current-find-result",
-                    index === currentFindIndex ? "current-find-result--active" : "",
-                  ].join(" ")}
-                  key={`${result.lineNumber}:${result.matchStart}:${result.matchEnd}`}
-                  onClick={() => revealCurrentFileMatch(result, index)}
-                >
-                  <span className="current-find-result__path">
-                    line {result.lineNumber}
-                  </span>
-                  <span className="current-find-result__line">{result.lineText}</span>
-                </button>
-              ))}
+              {currentFindWindow.items.map((result, offset) => {
+                const index = currentFindWindow.startIndex + offset;
+                return (
+                  <button
+                    className={[
+                      "current-find-result",
+                      index === currentFindIndex ? "current-find-result--active" : "",
+                    ].join(" ")}
+                    key={`${index}:${result.lineNumber}:${result.matchStart}:${result.matchEnd}`}
+                    onClick={() => revealCurrentFileMatch(result, index)}
+                  >
+                    <span className="current-find-result__path">
+                      line {result.lineNumber}
+                    </span>
+                    <span className="current-find-result__line">{result.lineText}</span>
+                  </button>
+                );
+              })}
               {currentFindResults.length === 0 ? (
                 <div className="current-find-results__empty">No matches</div>
               ) : null}
@@ -3789,6 +4085,12 @@ export default function App() {
                 recentRelativeThreshold={recentRelativeThreshold}
                 revealLine={
                   revealTarget?.path === activeFile.path ? revealTarget.lineNumber : undefined
+                }
+                revealMatchStart={
+                  revealTarget?.path === activeFile.path ? revealTarget.matchStart : undefined
+                }
+                revealMatchEnd={
+                  revealTarget?.path === activeFile.path ? revealTarget.matchEnd : undefined
                 }
                 focusOnReveal={
                   revealTarget?.path === activeFile.path
@@ -4988,6 +5290,49 @@ export default function App() {
         </div>
       ) : null}
 
+      {pendingSymlinkTrust ? (
+        <div className="dialog-backdrop" role="presentation">
+          <section
+            className="confirm-dialog"
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="symlink-trust-title"
+          >
+            <div>
+              <div className="eyebrow">External symbolic link</div>
+              <h2 id="symlink-trust-title">Follow link outside the workspace?</h2>
+              <p>
+                <code>{pendingSymlinkTrust.entry.path}</code> points to{" "}
+                <code>{pendingSymlinkTrust.entry.symlinkTarget ?? "an external location"}</code>,
+                which is outside this workspace. Following it lets the editor{" "}
+                {pendingSymlinkTrust.action === "open" ? "read and edit" : "browse"} files
+                outside the folder you opened.
+              </p>
+            </div>
+            <div className="confirm-dialog__actions">
+              <button
+                className="command-button command-button--quiet"
+                onClick={cancelSymlinkTrust}
+              >
+                Cancel
+              </button>
+              <button
+                className="command-button command-button--quiet"
+                onClick={() => confirmSymlinkTrust("once")}
+              >
+                Trust once
+              </button>
+              <button
+                className="command-button"
+                onClick={() => confirmSymlinkTrust("workspace")}
+              >
+                Trust for workspace
+              </button>
+            </div>
+          </section>
+        </div>
+      ) : null}
+
       {pendingCloseFile ? (
         <div className="dialog-backdrop" role="presentation">
           <section
@@ -5253,7 +5598,24 @@ function TreeItem({
           <span className="tree-row__spacer" />
         )}
         <Icon size={15} />
-        <span>{node.name}</span>
+        <span className="tree-row__name">{node.name}</span>
+        {node.isSymlink ? (
+          node.isExternal ? (
+            <ExternalLink
+              className="tree-row__symlink tree-row__symlink--external"
+              size={12}
+              aria-label="External symbolic link"
+              data-testid="tree-symlink-external"
+            />
+          ) : (
+            <Link2
+              className="tree-row__symlink"
+              size={12}
+              aria-label="Symbolic link"
+              data-testid="tree-symlink"
+            />
+          )
+        ) : null}
       </button>
       {node.isDir && expanded
         ? node.children.map((child) => (
@@ -5327,6 +5689,7 @@ type ShortcutAction =
   | "goToLine"
   | "findInFile"
   | "findInFiles"
+  | "findInFileReplace"
   | "goToDefinition"
   | "findReferences"
   | "saveAll"
@@ -5371,6 +5734,10 @@ const intellijShortcuts: Record<ShortcutAction, { mac: ShortcutPattern; other: S
   findInFiles: {
     mac: { key: "f", meta: true, shift: true },
     other: { key: "f", ctrl: true, shift: true },
+  },
+  findInFileReplace: {
+    mac: { key: "r", meta: true },
+    other: { key: "r", ctrl: true },
   },
   goToDefinition: {
     mac: { key: "b", meta: true },

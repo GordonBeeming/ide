@@ -418,6 +418,10 @@ struct PersistedWorkspaceUiState {
     selected_path: Option<String>,
     #[serde(default)]
     sidebar_width: Option<usize>,
+    // "Trust for workspace" decision for following symlinks whose target escapes
+    // the workspace root; persisted so it survives restart.
+    #[serde(default)]
+    trust_external_symlinks: bool,
     updated_at: u128,
 }
 
@@ -429,6 +433,8 @@ struct WorkspaceUiStatePayload {
     active_file: Option<String>,
     selected_path: Option<String>,
     sidebar_width: Option<usize>,
+    #[serde(default)]
+    trust_external_symlinks: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -681,6 +687,7 @@ async fn list_directory(
     show_dotfiles: bool,
     show_generated_internal: bool,
     show_gitignored_files: bool,
+    allow_external_symlinks: Option<bool>,
 ) -> Result<Vec<workspace::FileEntry>, CommandError> {
     let workspace_root = workspace_root_for_window(&state, &window).await;
     let entries = workspace_directory_entries(
@@ -689,6 +696,7 @@ async fn list_directory(
         show_dotfiles,
         show_generated_internal,
         show_gitignored_files,
+        allow_external_symlinks.unwrap_or(false),
     )
     .map_err(CommandError::from)?;
     state
@@ -766,6 +774,8 @@ fn search_indexed_files_with_expansion(
             visibility.show_dotfiles,
             visibility.show_generated_internal,
             visibility.show_gitignored_files,
+            // Background quick-open indexing never follows external symlinks.
+            false,
         ) {
             Ok(entries) => entries,
             Err(error) if !directory.is_empty() && stale_indexed_directory_error(&error) => {
@@ -831,6 +841,7 @@ async fn read_file(
     state: State<'_, AppState>,
     path: String,
     max_open_bytes: Option<u64>,
+    allow_external_symlinks: Option<bool>,
 ) -> Result<String, CommandError> {
     let workspace_root = workspace_root_for_window(&state, &window).await;
     let max_open_bytes = max_open_bytes
@@ -845,7 +856,13 @@ async fn read_file(
             MIN_MAX_OPEN_FILE_KB.saturating_mul(1024),
             MAX_MAX_OPEN_FILE_KB.saturating_mul(1024),
         );
-    read_workspace_file(&workspace_root, &path, max_open_bytes).map_err(CommandError::from)
+    read_workspace_file(
+        &workspace_root,
+        &path,
+        max_open_bytes,
+        allow_external_symlinks.unwrap_or(false),
+    )
+    .map_err(CommandError::from)
 }
 
 #[tauri::command]
@@ -875,10 +892,17 @@ async fn write_file(
     path: String,
     contents: String,
     expected_modified_ms: Option<u128>,
+    allow_external_symlinks: Option<bool>,
 ) -> Result<(), CommandError> {
     let workspace_root = workspace_root_for_window(&state, &window).await;
-    write_workspace_file(&workspace_root, &path, &contents, expected_modified_ms)
-        .map_err(CommandError::from)?;
+    write_workspace_file(
+        &workspace_root,
+        &path,
+        &contents,
+        expected_modified_ms,
+        allow_external_symlinks.unwrap_or(false),
+    )
+    .map_err(CommandError::from)?;
     refresh_indexed_entry(&state.workspace_index, &workspace_root, &path)?;
     Ok(())
 }
@@ -888,9 +912,15 @@ async fn create_file(
     window: tauri::Window,
     state: State<'_, AppState>,
     path: String,
+    allow_external_symlinks: Option<bool>,
 ) -> Result<(), CommandError> {
     let workspace_root = workspace_root_for_window(&state, &window).await;
-    create_workspace_file(&workspace_root, &path).map_err(CommandError::from)?;
+    create_workspace_file(
+        &workspace_root,
+        &path,
+        allow_external_symlinks.unwrap_or(false),
+    )
+    .map_err(CommandError::from)?;
     refresh_indexed_entry(&state.workspace_index, &workspace_root, &path)?;
     Ok(())
 }
@@ -900,9 +930,15 @@ async fn create_folder(
     window: tauri::Window,
     state: State<'_, AppState>,
     path: String,
+    allow_external_symlinks: Option<bool>,
 ) -> Result<(), CommandError> {
     let workspace_root = workspace_root_for_window(&state, &window).await;
-    create_workspace_folder(&workspace_root, &path).map_err(CommandError::from)?;
+    create_workspace_folder(
+        &workspace_root,
+        &path,
+        allow_external_symlinks.unwrap_or(false),
+    )
+    .map_err(CommandError::from)?;
     refresh_indexed_entry(&state.workspace_index, &workspace_root, &path)?;
     Ok(())
 }
@@ -913,9 +949,16 @@ async fn rename_file(
     state: State<'_, AppState>,
     from_path: String,
     to_path: String,
+    allow_external_symlinks: Option<bool>,
 ) -> Result<(), CommandError> {
     let workspace_root = workspace_root_for_window(&state, &window).await;
-    rename_workspace_file(&workspace_root, &from_path, &to_path).map_err(CommandError::from)?;
+    rename_workspace_file(
+        &workspace_root,
+        &from_path,
+        &to_path,
+        allow_external_symlinks.unwrap_or(false),
+    )
+    .map_err(CommandError::from)?;
     state
         .workspace_index
         .remove_path(&workspace_root, &from_path)?;
@@ -1169,6 +1212,7 @@ async fn update_ui_state(
         active_file: workspace.active_file.take(),
         selected_path: workspace.selected_path.take(),
         sidebar_width: workspace.sidebar_width,
+        trust_external_symlinks: workspace.trust_external_symlinks,
         updated_at: now_ms(),
     };
     ui_state
@@ -2152,6 +2196,7 @@ fn rebuild_app_menu(app: &tauri::AppHandle, state: &AppState) -> Result<(), Comm
         .cut()
         .copy()
         .paste()
+        .select_all()
         .build()
         .map_err(|error| CommandError::Recent(error.to_string()))?;
     let go_to_definition = MenuItemBuilder::with_id("go_to_definition", "Go to Definition")
@@ -2303,6 +2348,7 @@ fn workspace_ui_snapshot_for_root(
             active_file: workspace.active_file.clone(),
             selected_path: workspace.selected_path.clone(),
             sidebar_width: workspace.sidebar_width,
+            trust_external_symlinks: workspace.trust_external_symlinks,
         })
         .unwrap_or_default();
     Ok(PersistedUiSnapshot { view, workspace })
@@ -2341,6 +2387,7 @@ fn sanitize_workspace_ui_state(state: WorkspaceUiStatePayload) -> WorkspaceUiSta
         active_file,
         selected_path,
         sidebar_width,
+        trust_external_symlinks: state.trust_external_symlinks,
     }
 }
 
@@ -3144,6 +3191,7 @@ mod tests {
                     active_file: None,
                     selected_path: None,
                     sidebar_width: None,
+                    trust_external_symlinks: false,
                     updated_at: 1,
                 },
                 PersistedWorkspaceUiState {
@@ -3153,6 +3201,7 @@ mod tests {
                     active_file: None,
                     selected_path: None,
                     sidebar_width: None,
+                    trust_external_symlinks: false,
                     updated_at: 2,
                 },
             ],
@@ -3241,6 +3290,7 @@ mod tests {
             active_file: Some("src/App.tsx".to_string()),
             selected_path: Some("/tmp".to_string()),
             sidebar_width: Some(9_999),
+            trust_external_symlinks: false,
         });
 
         assert_eq!(workspace.expanded_folders, vec!["src".to_string()]);
@@ -3282,6 +3332,7 @@ mod tests {
                 active_file: workspace.active_file,
                 selected_path: workspace.selected_path,
                 sidebar_width: workspace.sidebar_width,
+                trust_external_symlinks: workspace.trust_external_symlinks,
                 updated_at: 123,
             }],
         };
@@ -3585,6 +3636,9 @@ mod tests {
             depth: path.matches('/').count(),
             size: 0,
             modified_ms: Some(1),
+            is_symlink: false,
+            is_external: false,
+            symlink_target: None,
         }
     }
 

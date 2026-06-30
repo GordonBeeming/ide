@@ -39,6 +39,29 @@ function escapeRegExp(value: string) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+// Picks the slice of results to preview so the active match stays visible with
+// one item of lookahead: the active row sits one slot from the bottom (offset
+// limit-2) until it is the genuine last match, then it occupies the last slot.
+// `startIndex` lets callers map back to absolute match indices.
+export function currentFileResultWindow<T>(
+  results: T[],
+  activeIndex: number,
+  limit: number,
+): { startIndex: number; items: T[] } {
+  if (limit <= 0 || results.length === 0) {
+    return { startIndex: 0, items: [] };
+  }
+
+  const maxStart = Math.max(0, results.length - limit);
+  let startIndex = 0;
+  if (activeIndex >= 0) {
+    const desiredOffset = Math.max(0, limit - 2);
+    startIndex = Math.min(Math.max(activeIndex - desiredOffset, 0), maxStart);
+  }
+
+  return { startIndex, items: results.slice(startIndex, startIndex + limit) };
+}
+
 export function nextCurrentFileMatchIndex(
   currentIndex: number,
   direction: 1 | -1,

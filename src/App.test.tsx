@@ -680,7 +680,7 @@ describe("App shell interactions", () => {
 
     fireEvent.click(await treeButton("src"));
 
-    expect(tauriMocks.listDirectory).toHaveBeenCalledWith("src", false, false, false);
+    expect(tauriMocks.listDirectory).toHaveBeenCalledWith("src", false, false, false, false);
     expect(await treeButton("App.tsx")).toBeInTheDocument();
   });
 
@@ -1417,7 +1417,7 @@ describe("App shell interactions", () => {
     fireEvent.click(await treeButton("README.md"));
 
     await waitFor(() =>
-      expect(tauriMocks.readFile).toHaveBeenCalledWith("README.md", 2048 * 1024),
+      expect(tauriMocks.readFile).toHaveBeenCalledWith("README.md", 2048 * 1024, false),
     );
     await waitFor(() =>
       expect(tauriMocks.updateUiState).toHaveBeenLastCalledWith(
@@ -1733,6 +1733,96 @@ describe("App shell interactions", () => {
     fireEvent.keyDown(findInput, { key: "Escape" });
     await waitFor(() =>
       expect(screen.queryByPlaceholderText("Find in file")).not.toBeInTheDocument(),
+    );
+  });
+
+  it("drives find and replace in the active file from the keyboard", async () => {
+    tauriMocks.readFile.mockImplementation(async (path: string) => {
+      if (path === "README.md") return "needle one\nsecond needle\nthird needle";
+      if (path === "src/App.tsx") return "export function App() {}";
+      return "";
+    });
+    render(<App />);
+
+    fireEvent.click(await treeButton("README.md"));
+    await findTab("README.md");
+
+    // Cmd/Ctrl+F opens the app's Find in File even while the editor has focus,
+    // rather than CodeMirror's own search panel.
+    const editor = await screen.findByLabelText("Editor README.md");
+    fireEvent.keyDown(editor, { key: "f", ctrlKey: true });
+    const findInput = await screen.findByPlaceholderText("Find in file");
+    fireEvent.change(findInput, { target: { value: "needle" } });
+
+    // Arrow keys step through matches and reveal each one in the editor.
+    fireEvent.keyDown(findInput, { key: "ArrowDown" });
+    expect(await screen.findByText("Reveal line 1")).toBeInTheDocument();
+    fireEvent.keyDown(findInput, { key: "ArrowDown" });
+    expect(await screen.findByText("Reveal line 2")).toBeInTheDocument();
+    fireEvent.keyDown(findInput, { key: "ArrowUp" });
+    expect(await screen.findByText("Reveal line 1")).toBeInTheDocument();
+
+    // Cmd/Ctrl+R reveals the replace field; Replace All emits the editor command.
+    fireEvent.keyDown(findInput, { key: "r", ctrlKey: true });
+    const replaceInput = await screen.findByPlaceholderText("Replace with");
+    fireEvent.change(replaceInput, { target: { value: "pin" } });
+    fireEvent.click(screen.getByRole("button", { name: "All" }));
+    expect(await screen.findByTestId("editor-command")).toHaveTextContent(
+      /replaceAll:/,
+    );
+  });
+
+  it("marks an external symlink and prompts for trust before following it", async () => {
+    tauriMocks.listFiles.mockResolvedValue([
+      ...files,
+      {
+        path: "ext-link",
+        name: "ext-link",
+        isDir: false,
+        depth: 0,
+        size: 0,
+        isSymlink: true,
+        isExternal: true,
+        symlinkTarget: "/outside/secret.txt",
+      },
+    ]);
+    tauriMocks.readFile.mockImplementation(
+      async (path: string, _maxBytes?: number, allowExternal?: boolean) => {
+        if (path === "ext-link") {
+          if (!allowExternal) {
+            throw new Error("symbolic link points outside the workspace");
+          }
+          return "external contents";
+        }
+        if (path === "README.md") return "readme";
+        return "";
+      },
+    );
+    render(<App />);
+
+    const link = await treeButton("ext-link");
+    // The external symlink is visually marked.
+    expect(within(link).getByTestId("tree-symlink-external")).toBeInTheDocument();
+
+    // Opening it surfaces the trust prompt naming the target, not the file.
+    fireEvent.click(link);
+    const dialog = await screen.findByRole("alertdialog", {
+      name: "Follow link outside the workspace?",
+    });
+    expect(within(dialog).getByText("/outside/secret.txt")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Editor ext-link")).not.toBeInTheDocument();
+
+    // Trust once follows the link for the session.
+    fireEvent.click(within(dialog).getByRole("button", { name: "Trust once" }));
+    expect(await screen.findByLabelText("Editor ext-link")).toHaveValue(
+      "external contents",
+    );
+    await waitFor(() =>
+      expect(tauriMocks.readFile).toHaveBeenCalledWith(
+        "ext-link",
+        expect.any(Number),
+        true,
+      ),
     );
   });
 
@@ -2427,6 +2517,7 @@ describe("App shell interactions", () => {
         "README.md",
         "changed readme",
         101,
+        false,
       ),
     );
     await waitFor(() => expect(tabButton("README.md")).toBeUndefined());
@@ -2537,6 +2628,7 @@ describe("App shell interactions", () => {
         "README.md",
         "changed readme",
         101,
+        false,
       ),
     );
 
@@ -2552,6 +2644,7 @@ describe("App shell interactions", () => {
         "README.md",
         "changed again",
         101,
+        false,
       ),
     );
   });
@@ -2682,6 +2775,7 @@ describe("App shell interactions", () => {
         "README.md",
         "changed readme",
         101,
+        false,
       ),
     );
     await waitFor(() => expect(tabButton("README.md")).toBeUndefined());
@@ -2762,11 +2856,13 @@ describe("App shell interactions", () => {
       "README.md",
       "changed readme",
       101,
+      false,
     );
     expect(tauriMocks.writeFile).toHaveBeenCalledWith(
       "src/App.tsx",
       "changed app",
       202,
+      false,
     );
     await waitFor(() => expect(document.querySelectorAll(".dirty-dot")).toHaveLength(0));
     expect(screen.getByText("Saved 2 unsaved files")).toBeInTheDocument();
@@ -2794,6 +2890,7 @@ describe("App shell interactions", () => {
       "README.md",
       "changed readme",
       101,
+      false,
     );
     expect(document.querySelectorAll(".dirty-dot")).toHaveLength(1);
     expect(screen.getByText("Save failed")).toBeInTheDocument();
@@ -2831,6 +2928,7 @@ describe("App shell interactions", () => {
         "README.md",
         "changed readme",
         303,
+        false,
       ),
     );
   });
@@ -2922,6 +3020,7 @@ describe("App shell interactions", () => {
         "README.md",
         "changed readme",
         303,
+        false,
       ),
     );
   });
@@ -3526,7 +3625,7 @@ describe("App shell interactions", () => {
     ]);
     fireEvent.click(screen.getByText("Create"));
 
-    await waitFor(() => expect(tauriMocks.createFile).toHaveBeenCalledWith("src/NewFile.tsx"));
+    await waitFor(() => expect(tauriMocks.createFile).toHaveBeenCalledWith("src/NewFile.tsx", false));
     const tab = await findTab("src/NewFile.tsx");
     expect(tab).not.toHaveClass("tab--temp");
     expect(screen.getByLabelText("Editor src/NewFile.tsx")).toHaveValue("");
@@ -3542,6 +3641,7 @@ describe("App shell interactions", () => {
         "src/NewFile.tsx",
         "export function NewFile() {}",
         404,
+        false,
       ),
     );
   });
@@ -3574,7 +3674,7 @@ describe("App shell interactions", () => {
     fireEvent.click(screen.getByText("Create"));
 
     await waitFor(() =>
-      expect(tauriMocks.createFolder).toHaveBeenCalledWith("src/features/editor"),
+      expect(tauriMocks.createFolder).toHaveBeenCalledWith("src/features/editor", false),
     );
     expect(screen.queryByRole("dialog", { name: "New folder" })).not.toBeInTheDocument();
     expect(screen.getByText("Created folder src/features/editor")).toBeInTheDocument();
@@ -3623,6 +3723,7 @@ describe("App shell interactions", () => {
       expect(tauriMocks.renameFile).toHaveBeenCalledWith(
         "README.md",
         "README-renamed.md",
+        false,
       ),
     );
     const tab = await findTab("README-renamed.md");
@@ -3640,6 +3741,7 @@ describe("App shell interactions", () => {
         "README-renamed.md",
         "renamed readme",
         505,
+        false,
       ),
     );
   });
@@ -3678,7 +3780,7 @@ describe("App shell interactions", () => {
     ]);
     fireEvent.click(screen.getByText("Rename"));
 
-    await waitFor(() => expect(tauriMocks.renameFile).toHaveBeenCalledWith("src", "app"));
+    await waitFor(() => expect(tauriMocks.renameFile).toHaveBeenCalledWith("src", "app", false));
     expect(await findTab("app/App.tsx")).toHaveClass("tab--active");
     expect(tabButton("src/App.tsx")).toBeUndefined();
     expect(screen.getByLabelText("Editor app/App.tsx")).toHaveValue(

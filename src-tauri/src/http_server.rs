@@ -627,6 +627,7 @@ fn search_indexed_files_with_expansion(
             visibility.show_dotfiles,
             visibility.show_generated_internal,
             visibility.show_gitignored_files,
+            false,
         ) {
             Ok(entries) => entries,
             Err(error) if !directory.is_empty() && stale_indexed_directory_error(&error) => {
@@ -688,6 +689,7 @@ async fn directory(
         query.show_dotfiles.unwrap_or(false),
         query.show_generated_internal.unwrap_or(false),
         query.show_gitignored_files.unwrap_or(false),
+        false,
     )?;
     state
         .workspace_index
@@ -715,6 +717,7 @@ async fn read_file(
         &workspace_root,
         &query.path,
         max_open_bytes,
+        false,
     )?)
 }
 
@@ -747,6 +750,7 @@ async fn write_file(
         &request.path,
         &request.contents,
         request.expected_modified_ms,
+        false,
     )?;
     refresh_indexed_entry(&state.workspace_index, &workspace_root, &request.path)?;
     Ok(StatusCode::NO_CONTENT)
@@ -760,7 +764,7 @@ async fn create_file(
 ) -> Result<StatusCode, ApiError> {
     require_bearer_auth(&headers, &state.mcp_token)?;
     let workspace_root = resolved.workspace_root.read().await.clone();
-    create_workspace_file(&workspace_root, &request.path)?;
+    create_workspace_file(&workspace_root, &request.path, false)?;
     refresh_indexed_entry(&state.workspace_index, &workspace_root, &request.path)?;
     Ok(StatusCode::CREATED)
 }
@@ -773,7 +777,7 @@ async fn create_folder(
 ) -> Result<StatusCode, ApiError> {
     require_bearer_auth(&headers, &state.mcp_token)?;
     let workspace_root = resolved.workspace_root.read().await.clone();
-    create_workspace_folder(&workspace_root, &request.path)?;
+    create_workspace_folder(&workspace_root, &request.path, false)?;
     refresh_indexed_entry(&state.workspace_index, &workspace_root, &request.path)?;
     Ok(StatusCode::CREATED)
 }
@@ -842,7 +846,7 @@ async fn rename_file(
 ) -> Result<StatusCode, ApiError> {
     require_bearer_auth(&headers, &state.mcp_token)?;
     let workspace_root = resolved.workspace_root.read().await.clone();
-    rename_workspace_file(&workspace_root, &request.from_path, &request.to_path)?;
+    rename_workspace_file(&workspace_root, &request.from_path, &request.to_path, false)?;
     state
         .workspace_index
         .remove_path(&workspace_root, &request.from_path)?;
@@ -1553,6 +1557,9 @@ mod tests {
             depth: path.matches('/').count(),
             size: 0,
             modified_ms: Some(1),
+            is_symlink: false,
+            is_external: false,
+            symlink_target: None,
         }
     }
 
