@@ -69,29 +69,30 @@ immediately — a draft does not trigger the workflow.
    ```
 
 6. Create the release on `main`. Use a published release (not a draft) when the
-   user wants the pipeline to start now:
-   ```bash
-   gh release create v{major}.{minor} \
-     --repo GordonBeeming/ide \
-     --target main \
-     --title "v{major}.{minor} - {short description}" \
-     --notes "$(cat <<'EOF'
-   # ide v{major}.{minor} - {short description}
+   user wants the pipeline to start now.
 
-   ## What's new
+````bash
+gh release create v{major}.{minor} \
+  --repo GordonBeeming/ide \
+  --target main \
+  --title "v{major}.{minor} - {short description}" \
+  --notes "$(cat <<'EOF'
+# ide v{major}.{minor} - {short description}
 
-   - {list changes since the last release using git log}
+## What's new
 
-   ## Install
+- {list changes since the last release using git log}
 
-   ```bash
-   brew upgrade --cask gordonbeeming/tap/ide
-   ```
+## Install
 
-   Or download the DMG from the assets below after the release workflow completes.
-   EOF
-   )"
-   ```
+```bash
+brew upgrade --cask gordonbeeming/tap/ide
+```
+
+Or download the DMG from the assets below after the release workflow completes.
+EOF
+)"
+````
 
 7. The release pipeline then runs on its own:
    - Runs the verification suite
