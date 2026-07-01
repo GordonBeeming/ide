@@ -2,7 +2,7 @@
 name: feature-flags
 description: >
   Add, gate on, remove, or promote a local feature flag in the ide app. Use when
-  the user says "$feature-flags", "add a feature flag", "put this behind a flag",
+  the user says "/feature-flags", "add a feature flag", "put this behind a flag",
   "remove a flag", "make this always on", "promote a flag to a setting", or
   "preview feature". The concepts live in docs/development.md; this skill is the
   step-by-step procedure for each lifecycle operation, including the exact files
@@ -11,9 +11,9 @@ description: >
 
 # Feature Flags
 
-Operate the local feature-flag system: introduce a capability behind a flag,
-gate code on it, and later either remove the flag (feature becomes always-on) or
-promote it into a normal user setting. Background and the lifecycle narrative are
+Operate the local feature-flag system: introduce a capability behind a flag, gate
+code on it, and later either remove the flag (feature becomes always-on) or
+promote it into a normal user setting. Background and the lifecycle narrative live
 in [docs/development.md](../../../docs/development.md#feature-flags).
 
 ## Mental Model
@@ -25,18 +25,19 @@ Two halves and one rule.
   `FeatureFlagDefinition` shape (id, label, description, `defaultEnabled`,
   `visibility`, `lifecycle`, `graduationCriteria`).
 - **Persisted state** — the `featureFlags` map on `PersistedViewSettings` in
-  `src-tauri/src/lib.rs` stores **overrides only**. A flag's effective value is
-  its registry default unless the user set something different, and only that
-  difference is written to `ui-state.json`.
+  `src-tauri/src/lib.rs` stores overrides only. A flag's effective value is its
+  registry default unless the user changed it, and only that difference is written
+  to `ui-state.json`. Storing overrides only keeps the registry as the single
+  source of truth for defaults.
 - **The sync rule** — every id in the TS registry must also appear in
-  `KNOWN_FEATURE_FLAGS` in `src-tauri/src/lib.rs`. On load,
-  `sanitize_view_settings` drops any persisted override whose id is not in that
-  list, so an id missing from `KNOWN_FEATURE_FLAGS` silently loses its saved
-  value. Add to both lists, remove from both lists.
+  `KNOWN_FEATURE_FLAGS` in `src-tauri/src/lib.rs`. On load, `sanitize_view_settings`
+  drops any persisted override whose id is not in that list, so an id missing from
+  `KNOWN_FEATURE_FLAGS` silently loses its saved value. Add to both lists, remove
+  from both lists — always keep them in step.
 
-Read effective state with `isFeatureEnabled(id, overrides)`. Every call site
-asks the same question and gets the same answer, so never read the raw map
-directly in feature code.
+Read effective state with `isFeatureEnabled(id, overrides)`. Every call site asks
+the same question and gets the same answer, so read through this helper in feature
+code rather than reading the raw map directly.
 
 ## Add A Flag
 
@@ -57,8 +58,8 @@ directly in feature code.
 
 2. In `src-tauri/src/lib.rs`, add the same id to `KNOWN_FEATURE_FLAGS`.
 
-3. Gate the feature with `isFeatureEnabled` (see below). A disabled flag must
-   render no UI, start no background work, and write no stored data.
+3. Gate the feature with `isFeatureEnabled` (see below). While a flag is disabled
+   it must render no UI, start no background work, and write no stored data.
 
 4. Visibility is automatic: a `preview` flag shows up in Settings → Preview
    Features with no extra UI code, and an `internal` flag never renders as a
@@ -71,8 +72,8 @@ directly in feature code.
 
 ## Gate Code On A Flag
 
-`isFeatureEnabled` takes the current overrides and returns the effective value.
-In `App.tsx` the overrides live in the `featureFlags` state; pass them through:
+`isFeatureEnabled` takes the current overrides and returns the effective value. In
+`App.tsx` the overrides live in the `featureFlags` state; pass them through:
 
 ```ts
 if (isFeatureEnabled("myFeature", featureFlags)) {
@@ -110,9 +111,10 @@ into a permanent setting in whatever category fits it.
    - `useState`, `applyPersistedUiSnapshot`, and the debounced persist effect in
      `src/App.tsx`.
    - A control in the right Settings category in `src/App.tsx`.
-2. Migrate the saved choice **before** removing the flag, so a user who opted in
-   keeps it: when loading state, if the old `featureFlags[id]` override is set,
-   seed the new setting from it.
+2. Migrate the saved choice before removing the flag, so a user who opted in keeps
+   it: when loading state, if the old `featureFlags[id]` override is set, seed the
+   new setting from it. Do this migration first, otherwise the opt-in is lost the
+   moment the flag disappears.
 3. Once the new setting reads and persists, remove the flag using the steps in
    *Remove A Flag*.
 
@@ -125,8 +127,8 @@ into a permanent setting in whatever category fits it.
 
 ## Verify
 
-- Run `./run-tests.sh`, or the targeted subset while iterating:
-  `npm test` then `cd src-tauri && cargo test`.
+- Run `./run-tests.sh`, or the targeted subset while iterating: `npm test`, then
+  `cd src-tauri && cargo test`.
 - Manual: toggle the flag in Settings → Preview Features, restart the app, and
   confirm it stuck. Then hand-add a bogus id to `ui-state.json`, restart, and
   confirm it is pruned.
@@ -136,7 +138,7 @@ into a permanent setting in whatever category fits it.
 - The registry (`src/featureFlags.ts`) and `KNOWN_FEATURE_FLAGS`
   (`src-tauri/src/lib.rs`) must list the same ids. Drift means a flag's persisted
   override gets pruned out from under it.
-- Do not let preview flags linger. Each one carries `graduationCriteria` for a
+- Retire preview flags on schedule. Each one carries `graduationCriteria` for a
   reason: once it is met, decide whether to remove the flag or promote it to a
   setting, and do it. A pile of stale preview toggles makes Settings feel
   unfinished.
