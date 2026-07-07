@@ -1293,6 +1293,14 @@ button {
 }
 
 .git-attribution-ghost {
+  /* Out of the inline flow so the widget can never push the caret, wrap the
+     line, or grow its height — it paints at its "static position" (where it
+     would have sat inline, right after the last character) without taking
+     up any box in that flow. `.cm-editor`/`.cm-scroller` are both already
+     `position: relative` in CodeMirror's base theme, so this needs no extra
+     positioning context of its own. */
+  position: absolute;
+  white-space: nowrap;
   margin-left: 16px;
   padding: 0;
   border: 0;
