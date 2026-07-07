@@ -506,6 +506,157 @@ button {
   color: var(--muted);
 }
 
+.commit-panel {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+}
+
+.commit-panel__empty {
+  padding: 14px 12px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.commit-panel__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px 6px;
+}
+
+.commit-panel__select-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.commit-panel__count {
+  color: var(--muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.commit-panel__tree {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 2px 0;
+}
+
+.commit-tree-row {
+  display: grid;
+  grid-template-columns: 16px 18px minmax(0, 1fr) auto;
+  width: 100%;
+  min-height: 28px;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  color: var(--muted);
+}
+
+.commit-tree-row--folder {
+  grid-template-columns: 18px minmax(0, 1fr);
+}
+
+.commit-tree-row input[type="checkbox"] {
+  margin: 0;
+}
+
+.commit-tree-row__open {
+  display: grid;
+  grid-template-columns: 15px minmax(0, 1fr);
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+}
+
+.commit-tree-row__open:hover,
+.commit-tree-row__open:focus-visible {
+  color: var(--accent);
+  outline: 0;
+}
+
+.commit-tree-row__open:disabled {
+  color: var(--muted);
+  cursor: not-allowed;
+}
+
+.commit-tree-row__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.commit-tree-row__badge {
+  display: inline-flex;
+  min-width: 16px;
+  height: 16px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 650;
+}
+
+.commit-tree-row__badge--added {
+  background: color-mix(in oklch, oklch(71% 0.16 145) 20%, var(--panel));
+  color: oklch(71% 0.16 145);
+}
+
+.commit-tree-row__badge--modified {
+  background: color-mix(in oklch, var(--accent) 18%, var(--panel));
+  color: var(--accent);
+}
+
+.commit-tree-row__badge--deleted {
+  background: color-mix(in oklch, var(--danger) 18%, var(--panel));
+  color: var(--danger);
+}
+
+.commit-panel__footer {
+  display: grid;
+  gap: 6px;
+  padding: 8px 10px 10px;
+  border-top: 1px solid var(--border);
+}
+
+.commit-panel__message {
+  min-height: 56px;
+  padding: 7px 9px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  resize: vertical;
+}
+
+.commit-panel__notice {
+  padding: 6px 8px;
+  border-radius: 6px;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.commit-panel__notice--error {
+  border: 1px solid color-mix(in oklch, var(--danger) 42%, var(--border));
+  background: color-mix(in oklch, var(--danger) 8%, var(--panel));
+  color: var(--text);
+}
+
+.commit-panel__notice--success {
+  border: 1px solid color-mix(in oklch, oklch(71% 0.16 145) 42%, var(--border));
+  background: color-mix(in oklch, oklch(71% 0.16 145) 8%, var(--panel));
+  color: var(--text);
+}
+
 .endpoint {
   overflow: hidden;
   color: var(--muted);

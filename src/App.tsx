@@ -23,6 +23,7 @@ import {
   FileCog,
   FolderOpen,
   FolderPlus,
+  GitCommitHorizontal,
   ListOrdered,
   ListFilter,
   PanelLeftClose,
@@ -98,12 +99,14 @@ import {
   LspServerStatus,
   SearchMatch,
   advanceWorkspaceIndex,
+  commitGitChanges,
   createFile,
   createFolder,
   deleteFile,
   getClaudeBridgeStatus,
   getCodexMcpStatus,
   getGitAttribution,
+  getGitStatus,
   getHttpEndpoint,
   getInitialFile,
   getAppInfo,
@@ -136,6 +139,8 @@ import {
   type SettingsLocations,
   type GitAttribution,
   type GitCommitInfo,
+  type GitStatus,
+  type GitStatusEntry,
   type WorkspaceIndexStats,
   type WorkspaceDisplayContext,
   type WorkspaceUiState,
@@ -207,7 +212,7 @@ interface OpenFailure {
   reason: string;
 }
 
-type SidebarSearchMode = "filter" | "content";
+type SidebarPanelMode = "filter" | "content" | "commit";
 type SettingsCategory =
   | "view"
   | "performance"
@@ -433,7 +438,7 @@ export default function App() {
   const [replaceQuery, setReplaceQuery] = useState("");
   const [replaceVisible, setReplaceVisible] = useState(false);
   const [activeSidebarSearch, setActiveSidebarSearch] =
-    useState<SidebarSearchMode>();
+    useState<SidebarPanelMode>();
   const [currentFindOpen, setCurrentFindOpen] = useState(false);
   const [currentFindIndex, setCurrentFindIndex] = useState(-1);
   const [editorCommand, setEditorCommand] = useState<EditorCommandRequest>();
@@ -545,6 +550,16 @@ export default function App() {
   const [claudeBridge, setClaudeBridge] = useState<ClaudeBridgeStatus>();
   const [gitAttribution, setGitAttribution] = useState<GitAttribution>();
   const [gitCommitPopover, setGitCommitPopover] = useState<GitCommitInfo>();
+  const [gitStatus, setGitStatus] = useState<GitStatus>();
+  const [gitStatusError, setGitStatusError] = useState<string>();
+  const [gitCommitSelectedPaths, setGitCommitSelectedPaths] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const [gitCommitMessage, setGitCommitMessage] = useState("");
+  const [gitCommitInFlight, setGitCommitInFlight] = useState(false);
+  const [gitCommitError, setGitCommitError] = useState<string>();
+  const [gitCommitSuccess, setGitCommitSuccess] = useState<string>();
+  const gitStatusInitializedRef = useRef(false);
   const sidebarFilterInputRef = useRef<HTMLInputElement | null>(null);
   const sidebarContentSearchInputRef = useRef<HTMLInputElement | null>(null);
   const currentFindInputRef = useRef<HTMLInputElement | null>(null);
@@ -590,6 +605,7 @@ export default function App() {
   const activeSelection = selection?.filePath === activePath ? selection : undefined;
   const cursorPosition = cursorStatus(activePath, cursor, revealTarget);
   const gitAttributionEnabled = isFeatureEnabled("gitAttribution", featureFlags);
+  const gitCommitEnabled = isFeatureEnabled("gitCommit", featureFlags);
   const activeGitAttribution =
     gitAttributionEnabled &&
     gitAttribution?.status === "available" &&
@@ -618,6 +634,15 @@ export default function App() {
     () => filterTree(tree, filter.trim().toLowerCase()),
     [filter, tree],
   );
+  const changedFiles = gitStatus?.status === "available" ? gitStatus.files : [];
+  const commitTree = useMemo(() => buildCommitTree(changedFiles), [changedFiles]);
+  const changedFilePaths = useMemo(
+    () => changedFiles.map((file) => file.path),
+    [changedFiles],
+  );
+  const allChangedFilesSelected =
+    changedFilePaths.length > 0 &&
+    changedFilePaths.every((path) => gitCommitSelectedPaths.has(path));
   const quickOpenCandidates = useMemo(
     () => mergeFileEntries(sidebarFiles, quickOpenIndexedResults),
     [quickOpenIndexedResults, sidebarFiles],
@@ -664,8 +689,10 @@ export default function App() {
     [keyBindingsQuery],
   );
   const filterExpanded = activeSidebarSearch === "filter" || filter.trim().length > 0;
-  const filterVisible = activeSidebarSearch !== "content" && filterExpanded;
+  const filterVisible =
+    activeSidebarSearch !== "content" && activeSidebarSearch !== "commit" && filterExpanded;
   const contentSearchActive = activeSidebarSearch === "content";
+  const commitModeActive = activeSidebarSearch === "commit";
   const contentSearchReady = contentQuery.trim().length >= 2;
   const contentSearchStatsText =
     searchStats.searchedFiles === undefined
@@ -1130,17 +1157,96 @@ export default function App() {
     }
   }, []);
 
+  const refreshGitStatus = useCallback(async () => {
+    if (!gitCommitEnabled) return;
+
+    try {
+      const status = await getGitStatus();
+      setGitStatus(status);
+      setGitStatusError(undefined);
+      setGitCommitSelectedPaths((current) => {
+        const validPaths = new Set(status.files.map((file) => file.path));
+        if (!gitStatusInitializedRef.current) {
+          gitStatusInitializedRef.current = true;
+          return validPaths;
+        }
+        const next = new Set<string>();
+        for (const path of current) {
+          if (validPaths.has(path)) next.add(path);
+        }
+        return next;
+      });
+    } catch (reason) {
+      setGitStatus(undefined);
+      setGitStatusError(`Unable to load Git status: ${String(reason)}`);
+    }
+  }, [gitCommitEnabled]);
+
   const refreshWorkspace = useCallback(async () => {
     setError(undefined);
     setStatus("Refreshing files");
     try {
       await refreshFiles();
+      if (commitModeActive) {
+        void refreshGitStatus();
+      }
       setStatus("Ready");
     } catch (reason) {
       setError(String(reason));
       setStatus("Workspace load failed");
     }
-  }, [refreshFiles]);
+  }, [refreshFiles, commitModeActive, refreshGitStatus]);
+
+  useEffect(() => {
+    if (!commitModeActive) return;
+    void refreshGitStatus();
+  }, [commitModeActive, refreshGitStatus]);
+
+  const toggleGitCommitSelection = useCallback((path: string) => {
+    setGitCommitSelectedPaths((current) => {
+      const next = new Set(current);
+      if (next.has(path)) {
+        next.delete(path);
+      } else {
+        next.add(path);
+      }
+      return next;
+    });
+  }, []);
+
+  const selectAllChangedFiles = useCallback(() => {
+    setGitCommitSelectedPaths(new Set(changedFilePaths));
+  }, [changedFilePaths]);
+
+  const deselectAllChangedFiles = useCallback(() => {
+    setGitCommitSelectedPaths(new Set());
+  }, []);
+
+  const handleGitCommit = useCallback(async () => {
+    const trimmedMessage = gitCommitMessage.trim();
+    const selectedPaths = changedFilePaths.filter((path) => gitCommitSelectedPaths.has(path));
+    if (!trimmedMessage || selectedPaths.length === 0 || gitCommitInFlight) return;
+
+    setGitCommitInFlight(true);
+    setGitCommitError(undefined);
+    setGitCommitSuccess(undefined);
+    try {
+      const result = await commitGitChanges(trimmedMessage, selectedPaths);
+      setGitCommitMessage("");
+      setGitCommitSuccess(`Committed ${result.committedPaths.length} file(s) as ${result.shortSha}`);
+      await refreshGitStatus();
+    } catch (reason) {
+      setGitCommitError(`Unable to commit: ${String(reason)}`);
+    } finally {
+      setGitCommitInFlight(false);
+    }
+  }, [
+    changedFilePaths,
+    gitCommitInFlight,
+    gitCommitMessage,
+    gitCommitSelectedPaths,
+    refreshGitStatus,
+  ]);
 
   const readOpenFileFromDisk = useCallback(async (path: string) => {
     const entry = await statFile(path);
@@ -3663,6 +3769,21 @@ export default function App() {
           >
             <Search size={16} />
           </button>
+          {gitCommitEnabled ? (
+            <button
+              className={[
+                "icon-button",
+                commitModeActive ? "icon-button--active" : "",
+              ].join(" ")}
+              title="Commit changes"
+              aria-label="Commit changes"
+              onClick={() =>
+                setActiveSidebarSearch((current) => (current === "commit" ? undefined : "commit"))
+              }
+            >
+              <GitCommitHorizontal size={16} />
+            </button>
+          ) : null}
         </div>
 
         {filterVisible ? (
@@ -3759,7 +3880,83 @@ export default function App() {
           </div>
         ) : null}
 
-        {!contentSearchActive ? (
+        {commitModeActive ? (
+          <div className="commit-panel" aria-label="Git commit panel">
+            {!gitStatus || gitStatus.status === "unsupported" ? (
+              <div className="commit-panel__empty" role="status">
+                {gitStatusError ?? gitStatus?.unsupportedReason ?? "Loading Git status…"}
+              </div>
+            ) : changedFilePaths.length === 0 ? (
+              <div className="commit-panel__empty" role="status">No changes</div>
+            ) : (
+              <>
+                <div className="commit-panel__header">
+                  <div className="commit-panel__select-actions">
+                    <button
+                      className="command-button command-button--quiet"
+                      disabled={allChangedFilesSelected}
+                      onClick={selectAllChangedFiles}
+                    >
+                      Select all
+                    </button>
+                    <button
+                      className="command-button command-button--quiet"
+                      disabled={gitCommitSelectedPaths.size === 0}
+                      onClick={deselectAllChangedFiles}
+                    >
+                      Deselect all
+                    </button>
+                  </div>
+                  <span className="commit-panel__count">
+                    {gitCommitSelectedPaths.size} / {changedFilePaths.length} selected
+                  </span>
+                </div>
+                <div className="commit-panel__tree" role="tree" aria-label="Changed files">
+                  {commitTree.map((node) => (
+                    <CommitTreeItem
+                      key={node.path}
+                      node={node}
+                      selectedPaths={gitCommitSelectedPaths}
+                      onToggleSelected={toggleGitCommitSelection}
+                      onOpen={(path) => openPathByName(path, false)}
+                    />
+                  ))}
+                </div>
+                <div className="commit-panel__footer">
+                  <textarea
+                    className="commit-panel__message"
+                    placeholder="Commit message"
+                    value={gitCommitMessage}
+                    onChange={(event) => setGitCommitMessage(event.target.value)}
+                  />
+                  <button
+                    className="command-button command-button--primary"
+                    disabled={
+                      !gitCommitMessage.trim() ||
+                      gitCommitSelectedPaths.size === 0 ||
+                      gitCommitInFlight
+                    }
+                    onClick={handleGitCommit}
+                  >
+                    {gitCommitInFlight ? "Committing…" : "Commit"}
+                  </button>
+                  {gitCommitError ? (
+                    <div className="commit-panel__notice commit-panel__notice--error">
+                      {gitCommitError}
+                    </div>
+                  ) : null}
+                  {gitCommitSuccess ? (
+                    <div className="commit-panel__notice commit-panel__notice--success">
+                      {gitCommitSuccess}
+                    </div>
+                  ) : null}
+                </div>
+              </>
+            )}
+          </div>
+        ) : null}
+
+        {!contentSearchActive && !commitModeActive ? (
           <nav className="file-tree" role="tree" aria-label="Workspace files">
             {workspaceLoading && files.length === 0 ? (
               <div className="tree-empty" role="status">Loading workspace</div>
@@ -5656,6 +5853,130 @@ function buildTree(entries: FileEntry[]): TreeNode[] {
   };
   sortNodes(roots);
   return roots;
+}
+
+interface CommitTreeNode {
+  path: string;
+  name: string;
+  depth: number;
+  isDir: boolean;
+  children: CommitTreeNode[];
+  // Only set on file leaves — folder nodes are synthesized purely for nesting.
+  status?: GitStatusEntry["status"];
+}
+
+// Changed-file paths have no corresponding FileEntry for their ancestor
+// directories (unlike the workspace scan, which returns one), so this builds
+// a small parallel tree straight from git status paths rather than reusing
+// `buildTree`.
+function buildCommitTree(files: GitStatusEntry[]): CommitTreeNode[] {
+  const nodes = new Map<string, CommitTreeNode>();
+  const roots: CommitTreeNode[] = [];
+
+  for (const file of files) {
+    const segments = file.path.split("/");
+    let parent: CommitTreeNode | undefined;
+    for (let index = 0; index < segments.length; index += 1) {
+      const path = segments.slice(0, index + 1).join("/");
+      const isLeaf = index === segments.length - 1;
+      let node = nodes.get(path);
+      if (!node) {
+        node = {
+          path,
+          name: segments[index],
+          depth: index,
+          isDir: !isLeaf,
+          children: [],
+          status: isLeaf ? file.status : undefined,
+        };
+        nodes.set(path, node);
+        if (parent) {
+          parent.children.push(node);
+        } else {
+          roots.push(node);
+        }
+      }
+      parent = node;
+    }
+  }
+
+  const sortNodes = (items: CommitTreeNode[]) => {
+    items.sort((a, b) => Number(b.isDir) - Number(a.isDir) || a.name.localeCompare(b.name));
+    items.forEach((item) => sortNodes(item.children));
+  };
+  sortNodes(roots);
+  return roots;
+}
+
+function commitStatusBadgeLabel(status: GitStatusEntry["status"]): string {
+  if (status === "added") return "A";
+  if (status === "deleted") return "D";
+  return "M";
+}
+
+// Folders are always force-expanded here (the changed-file set is small and
+// status-focused), so unlike `TreeItem` there is no collapse/expand state.
+function CommitTreeItem({
+  node,
+  selectedPaths,
+  onToggleSelected,
+  onOpen,
+}: {
+  node: CommitTreeNode;
+  selectedPaths: Set<string>;
+  onToggleSelected: (path: string) => void;
+  onOpen: (path: string) => void;
+}) {
+  const Icon = iconForFile(node.name, node.isDir);
+  const indent = 8 + node.depth * 14;
+
+  if (node.isDir) {
+    return (
+      <div>
+        <div className="commit-tree-row commit-tree-row--folder" style={{ paddingLeft: indent }}>
+          <Icon size={15} />
+          <span className="commit-tree-row__name">{node.name}</span>
+        </div>
+        {node.children.map((child) => (
+          <CommitTreeItem
+            key={child.path}
+            node={child}
+            selectedPaths={selectedPaths}
+            onToggleSelected={onToggleSelected}
+            onOpen={onOpen}
+          />
+        ))}
+      </div>
+    );
+  }
+
+  const status = node.status ?? "modified";
+  const isSelected = selectedPaths.has(node.path);
+  const isDeleted = status === "deleted";
+
+  return (
+    <div className="commit-tree-row" style={{ paddingLeft: indent }}>
+      <input
+        type="checkbox"
+        checked={isSelected}
+        onChange={() => onToggleSelected(node.path)}
+        aria-label={`${isSelected ? "Deselect" : "Select"} ${node.path}`}
+      />
+      <button
+        type="button"
+        className="commit-tree-row__open"
+        disabled={isDeleted}
+        title={isDeleted ? "Deleted files can't be opened" : node.path}
+        onClick={() => onOpen(node.path)}
+      >
+        <Icon size={15} />
+        <span className="commit-tree-row__name">{node.name}</span>
+      </button>
+      <span className={`commit-tree-row__badge commit-tree-row__badge--${status}`}>
+        {commitStatusBadgeLabel(status)}
+      </span>
+    </div>
+  );
 }
 
 function mergeFileEntries(current: FileEntry[], nextEntries: FileEntry[]) {

@@ -128,6 +128,33 @@ export interface GitAttribution {
   uncommittedLines?: number[];
 }
 
+export type GitStatusAvailability = "available" | "unsupported";
+
+export type GitFileStatus = "added" | "modified" | "deleted";
+
+export interface GitStatusEntry {
+  path: string;
+  status: GitFileStatus;
+  staged: boolean;
+  unstaged: boolean;
+}
+
+export interface GitStatus {
+  status: GitStatusAvailability;
+  unsupportedReason?: string;
+  branch?: string;
+  headDetached: boolean;
+  headUnborn: boolean;
+  files: GitStatusEntry[];
+}
+
+export interface GitCommitResult {
+  sha: string;
+  shortSha: string;
+  branch?: string;
+  committedPaths: string[];
+}
+
 export interface OpenFileRequest {
   workspaceRoot: string;
   path: string;
@@ -540,6 +567,102 @@ export function writeFile(
     body: { path, contents, expectedModifiedMs },
     invokeArgs: { path, contents, expectedModifiedMs, allowExternalSymlinks },
   });
+}
+
+export function getGitStatus() {
+  return callApi<unknown>("get_git_status", "/api/git-status").then((value) => {
+    const normalized = normalizeGitStatus(value);
+    if (!normalized) {
+      throw new Error("Git status response was not valid JSON");
+    }
+    return normalized;
+  });
+}
+
+export function commitGitChanges(message: string, paths: string[]) {
+  return callApi<unknown>("git_commit", "/api/git-commit", {
+    method: "POST",
+    body: { message, paths },
+    invokeArgs: { message, paths },
+  }).then((value) => {
+    const normalized = normalizeGitCommitResult(value);
+    if (!normalized) {
+      throw new Error("Git commit response was not valid JSON");
+    }
+    return normalized;
+  });
+}
+
+export function normalizeGitStatus(value: unknown): GitStatus | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const candidate = value as Record<string, unknown>;
+  if (candidate.status !== "available" && candidate.status !== "unsupported") {
+    return undefined;
+  }
+  if (
+    typeof candidate.headDetached !== "boolean" ||
+    typeof candidate.headUnborn !== "boolean" ||
+    !Array.isArray(candidate.files)
+  ) {
+    return undefined;
+  }
+
+  const files = candidate.files
+    .map(normalizeGitStatusEntry)
+    .filter((entry): entry is GitStatusEntry => Boolean(entry));
+  if (files.length !== candidate.files.length) return undefined;
+
+  return {
+    status: candidate.status,
+    unsupportedReason:
+      typeof candidate.unsupportedReason === "string"
+        ? candidate.unsupportedReason
+        : undefined,
+    branch: typeof candidate.branch === "string" ? candidate.branch : undefined,
+    headDetached: candidate.headDetached,
+    headUnborn: candidate.headUnborn,
+    files,
+  };
+}
+
+function normalizeGitStatusEntry(value: unknown): GitStatusEntry | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const candidate = value as Record<string, unknown>;
+  if (
+    typeof candidate.path !== "string" ||
+    (candidate.status !== "added" &&
+      candidate.status !== "modified" &&
+      candidate.status !== "deleted") ||
+    typeof candidate.staged !== "boolean" ||
+    typeof candidate.unstaged !== "boolean"
+  ) {
+    return undefined;
+  }
+  return {
+    path: candidate.path,
+    status: candidate.status,
+    staged: candidate.staged,
+    unstaged: candidate.unstaged,
+  };
+}
+
+export function normalizeGitCommitResult(value: unknown): GitCommitResult | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const candidate = value as Record<string, unknown>;
+  if (
+    typeof candidate.sha !== "string" ||
+    typeof candidate.shortSha !== "string" ||
+    !Array.isArray(candidate.committedPaths) ||
+    !candidate.committedPaths.every((path): path is string => typeof path === "string")
+  ) {
+    return undefined;
+  }
+  return {
+    sha: candidate.sha,
+    shortSha: candidate.shortSha,
+    branch: typeof candidate.branch === "string" ? candidate.branch : undefined,
+    committedPaths: candidate.committedPaths,
+  };
 }
 
 export function normalizeGitAttribution(value: unknown): GitAttribution | undefined {
