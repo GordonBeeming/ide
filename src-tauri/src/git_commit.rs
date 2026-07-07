@@ -1,0 +1,1023 @@
+// Git status and commit support should use embedded gitoxide/gix APIs. Keep
+// direct `git` commands out of this service unless gix does not cover the
+// required behavior.
+use std::collections::HashMap;
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::sync::Mutex;
+
+use gix::bstr::{BStr, BString, ByteSlice};
+use gix::object::tree::EntryKind;
+use gix::status::plumbing::index_as_worktree::{
+    Change as WorktreeChange, EntryStatus as WorktreeEntryStatus,
+};
+use serde::Serialize;
+
+use crate::workspace::{normalize_path, resolve_workspace_path, WorkspaceError};
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct GitStatus {
+    pub status: GitStatusAvailability,
+    pub unsupported_reason: Option<String>,
+    pub branch: Option<String>,
+    pub head_detached: bool,
+    pub head_unborn: bool,
+    pub files: Vec<GitStatusEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) enum GitStatusAvailability {
+    Available,
+    Unsupported,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct GitStatusEntry {
+    pub path: String,
+    pub status: GitFileStatus,
+    pub staged: bool,
+    pub unstaged: bool,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) enum GitFileStatus {
+    Added,
+    Modified,
+    Deleted,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct GitCommitResult {
+    pub sha: String,
+    pub short_sha: String,
+    pub branch: Option<String>,
+    pub committed_paths: Vec<String>,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum GitCommitError {
+    #[error("workspace is not inside a Git repository")]
+    NotARepo,
+    #[error("commit message cannot be empty")]
+    EmptyMessage,
+    #[error("select at least one file to commit")]
+    EmptySelection,
+    #[error("selected files have no changes to commit")]
+    NoChanges,
+    #[error("set user.name and user.email in your Git config")]
+    AuthorUnset,
+    #[error("{0} is a directory, not a file")]
+    PathIsDirectory(String),
+    #[error("{0}")]
+    Workspace(#[from] WorkspaceError),
+    #[error("{0}")]
+    Git(String),
+}
+
+pub(crate) async fn status_for_workspace(workspace_root: &Path) -> GitStatus {
+    let workspace_root = workspace_root.to_path_buf();
+    tokio::task::spawn_blocking(move || status_for_workspace_blocking(&workspace_root))
+        .await
+        .unwrap_or_else(|_| unsupported_status("Git status task failed to complete"))
+}
+
+fn status_for_workspace_blocking(workspace_root: &Path) -> GitStatus {
+    let repo = match gix::discover(workspace_root) {
+        Ok(repo) => repo,
+        Err(_) => return unsupported_status("Workspace is not inside a Git repository"),
+    };
+    let Some(repo_workdir) = repo.workdir() else {
+        return unsupported_status("Bare Git repositories are not supported");
+    };
+    let repo_workdir = repo_workdir
+        .canonicalize()
+        .unwrap_or_else(|_| repo_workdir.to_path_buf());
+    let canonical_workspace_root = workspace_root
+        .canonicalize()
+        .unwrap_or_else(|_| workspace_root.to_path_buf());
+    let prefix = workspace_prefix(&repo_workdir, &canonical_workspace_root);
+
+    let head = match repo.head() {
+        Ok(head) => head,
+        Err(_) => return unsupported_status("Unable to read repository HEAD"),
+    };
+    let head_unborn = head.is_unborn();
+    let head_detached = head.is_detached();
+    let branch = head.referent_name().map(|name| name.shorten().to_string());
+
+    let patterns: Vec<BString> = match &prefix {
+        Some(prefix) => vec![BString::from(prefix.as_str())],
+        None => Vec::new(),
+    };
+
+    let platform = match repo.status(gix::progress::Discard) {
+        Ok(platform) => platform,
+        Err(error) => return unsupported_status(format!("Git status failed: {error}")),
+    };
+    let platform = platform
+        .untracked_files(gix::status::UntrackedFiles::Files)
+        .tree_index_track_renames(gix::status::tree_index::TrackRenames::Disabled)
+        .index_worktree_rewrites(None::<gix::diff::Rewrites>);
+
+    let iter = match platform.into_iter(patterns) {
+        Ok(iter) => iter,
+        Err(error) => return unsupported_status(format!("Git status failed: {error}")),
+    };
+
+    let mut entries: HashMap<String, GitStatusEntry> = HashMap::new();
+    for item in iter {
+        // A single failed item (e.g. a transient IO error) shouldn't blank out the
+        // whole status — skip it and keep folding the rest.
+        let Ok(item) = item else { continue };
+        match item {
+            gix::status::Item::TreeIndex(change) => {
+                fold_tree_index_change(&mut entries, &change, prefix.as_deref());
+            }
+            gix::status::Item::IndexWorktree(item) => {
+                fold_index_worktree_item(&mut entries, item, prefix.as_deref());
+            }
+        }
+    }
+
+    let mut files: Vec<GitStatusEntry> = entries.into_values().collect();
+    files.sort_by(|a, b| a.path.cmp(&b.path));
+
+    GitStatus {
+        status: GitStatusAvailability::Available,
+        unsupported_reason: None,
+        branch,
+        head_detached,
+        head_unborn,
+        files,
+    }
+}
+
+fn workspace_prefix(repo_workdir: &Path, workspace_root: &Path) -> Option<String> {
+    if workspace_root == repo_workdir {
+        return None;
+    }
+    let relative = workspace_root.strip_prefix(repo_workdir).ok()?;
+    if relative.as_os_str().is_empty() {
+        None
+    } else {
+        Some(normalize_path(relative))
+    }
+}
+
+fn workspace_relative_path(prefix: Option<&str>, repo_relative: &BStr) -> Option<String> {
+    let repo_relative = repo_relative.to_str_lossy();
+    match prefix {
+        None => Some(repo_relative.into_owned()),
+        Some(prefix) => repo_relative
+            .strip_prefix(prefix)
+            .and_then(|rest| rest.strip_prefix('/'))
+            .map(str::to_string),
+    }
+}
+
+fn fold_tree_index_change(
+    entries: &mut HashMap<String, GitStatusEntry>,
+    change: &gix::diff::index::Change,
+    prefix: Option<&str>,
+) {
+    let (location, status) = match change {
+        gix::diff::index::ChangeRef::Addition { location, .. } => (location, GitFileStatus::Added),
+        gix::diff::index::ChangeRef::Deletion { location, .. } => {
+            (location, GitFileStatus::Deleted)
+        }
+        gix::diff::index::ChangeRef::Modification { location, .. } => {
+            (location, GitFileStatus::Modified)
+        }
+        // Rename tracking is disabled for this platform, so this should not occur.
+        gix::diff::index::ChangeRef::Rewrite { .. } => return,
+    };
+    if let Some(path) = workspace_relative_path(prefix, location.as_ref()) {
+        merge_entry(entries, path, status, true, false);
+    }
+}
+
+fn fold_index_worktree_item(
+    entries: &mut HashMap<String, GitStatusEntry>,
+    item: gix::status::index_worktree::Item,
+    prefix: Option<&str>,
+) {
+    match item {
+        gix::status::index_worktree::Item::Modification {
+            rela_path, status, ..
+        } => {
+            fold_worktree_entry_status(entries, rela_path.as_bstr(), &status, prefix);
+        }
+        gix::status::index_worktree::Item::DirectoryContents { entry, .. } => {
+            // Submodules and plain directories are out of scope for v1; only
+            // individual untracked files/symlinks are surfaced as additions.
+            let is_trackable_file = matches!(
+                entry.disk_kind,
+                Some(gix::dir::entry::Kind::File) | Some(gix::dir::entry::Kind::Symlink)
+            );
+            if entry.status == gix::dir::entry::Status::Untracked && is_trackable_file {
+                if let Some(path) = workspace_relative_path(prefix, entry.rela_path.as_bstr()) {
+                    merge_entry(entries, path, GitFileStatus::Added, false, true);
+                }
+            }
+        }
+        // Rename/copy tracking is disabled, so this should not occur; skip defensively.
+        gix::status::index_worktree::Item::Rewrite { .. } => {}
+    }
+}
+
+fn fold_worktree_entry_status(
+    entries: &mut HashMap<String, GitStatusEntry>,
+    rela_path: &BStr,
+    status: &WorktreeEntryStatus<(), gix::submodule::Status>,
+    prefix: Option<&str>,
+) {
+    let file_status = match status {
+        WorktreeEntryStatus::Change(WorktreeChange::Removed) => GitFileStatus::Deleted,
+        WorktreeEntryStatus::Change(
+            WorktreeChange::Type { .. } | WorktreeChange::Modification { .. },
+        ) => GitFileStatus::Modified,
+        WorktreeEntryStatus::IntentToAdd => GitFileStatus::Added,
+        // Submodules are out of scope for v1; conflicts and stat-only refreshes
+        // carry nothing that needs to be shown as a change to commit.
+        WorktreeEntryStatus::Change(WorktreeChange::SubmoduleModification(_))
+        | WorktreeEntryStatus::NeedsUpdate(_)
+        | WorktreeEntryStatus::Conflict { .. } => return,
+    };
+    if let Some(path) = workspace_relative_path(prefix, rela_path) {
+        merge_entry(entries, path, file_status, false, true);
+    }
+}
+
+fn merge_entry(
+    entries: &mut HashMap<String, GitStatusEntry>,
+    path: String,
+    status: GitFileStatus,
+    staged: bool,
+    unstaged: bool,
+) {
+    entries
+        .entry(path.clone())
+        .and_modify(|entry| {
+            entry.status = merge_status(entry.status, status);
+            entry.staged = entry.staged || staged;
+            entry.unstaged = entry.unstaged || unstaged;
+        })
+        .or_insert(GitStatusEntry {
+            path,
+            status,
+            staged,
+            unstaged,
+        });
+}
+
+// Precedence when both status halves touch the same path: a worktree deletion
+// always wins (the file is gone regardless of what the index says), then an
+// addition (untracked/staged-new beats a mere content modification).
+fn merge_status(existing: GitFileStatus, incoming: GitFileStatus) -> GitFileStatus {
+    fn priority(status: GitFileStatus) -> u8 {
+        match status {
+            GitFileStatus::Deleted => 2,
+            GitFileStatus::Added => 1,
+            GitFileStatus::Modified => 0,
+        }
+    }
+    if priority(incoming) > priority(existing) {
+        incoming
+    } else {
+        existing
+    }
+}
+
+fn unsupported_status(reason: impl Into<String>) -> GitStatus {
+    GitStatus {
+        status: GitStatusAvailability::Unsupported,
+        unsupported_reason: Some(reason.into()),
+        branch: None,
+        head_detached: false,
+        head_unborn: false,
+        files: Vec::new(),
+    }
+}
+
+// Commits run heavy tree/index work in `spawn_blocking` and serialize behind
+// this lock so two concurrent commits can't interleave index writes.
+static COMMIT_LOCK: Mutex<()> = Mutex::new(());
+
+pub(crate) async fn commit_files(
+    workspace_root: &Path,
+    message: &str,
+    paths: &[String],
+) -> Result<GitCommitResult, GitCommitError> {
+    let workspace_root = workspace_root.to_path_buf();
+    let message = message.to_string();
+    let paths = paths.to_vec();
+    match tokio::task::spawn_blocking(move || {
+        commit_files_blocking(&workspace_root, &message, &paths)
+    })
+    .await
+    {
+        Ok(result) => result,
+        Err(_) => Err(GitCommitError::Git(
+            "commit task failed to complete".to_string(),
+        )),
+    }
+}
+
+fn commit_files_blocking(
+    workspace_root: &Path,
+    message: &str,
+    paths: &[String],
+) -> Result<GitCommitResult, GitCommitError> {
+    let repo = gix::discover(workspace_root).map_err(|_| GitCommitError::NotARepo)?;
+    commit_files_in_repo(&repo, workspace_root, message, paths)
+}
+
+// A seam so tests can drive the commit logic against a repository opened with
+// `gix::open::Options::isolated()` (e.g. to exercise the missing-author path
+// without racing real global Git config through env vars).
+fn commit_files_in_repo(
+    repo: &gix::Repository,
+    workspace_root: &Path,
+    message: &str,
+    paths: &[String],
+) -> Result<GitCommitResult, GitCommitError> {
+    let _guard = COMMIT_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+
+    let message = message.trim();
+    if message.is_empty() {
+        return Err(GitCommitError::EmptyMessage);
+    }
+    if paths.is_empty() {
+        return Err(GitCommitError::EmptySelection);
+    }
+
+    let repo_workdir = repo.workdir().ok_or(GitCommitError::NotARepo)?;
+    let repo_workdir = repo_workdir
+        .canonicalize()
+        .map_err(|error| GitCommitError::Workspace(WorkspaceError::Io(error)))?;
+
+    // Pre-check identity so a misconfigured repo gets one friendly error instead
+    // of gix's internal `commit::Error::AuthorMissing`/`CommitterMissing`.
+    let author_configured = matches!(repo.author(), Some(Ok(_)));
+    let committer_configured = matches!(repo.committer(), Some(Ok(_)));
+    if !author_configured || !committer_configured {
+        return Err(GitCommitError::AuthorUnset);
+    }
+
+    let head = repo
+        .head()
+        .map_err(|error| GitCommitError::Git(error.to_string()))?;
+    let (parents, base_tree) = if head.is_unborn() {
+        (Vec::new(), gix::ObjectId::empty_tree(repo.object_hash()))
+    } else {
+        let head_commit = repo
+            .head_commit()
+            .map_err(|error| GitCommitError::Git(error.to_string()))?;
+        let tree_id = head_commit
+            .tree_id()
+            .map_err(|error| GitCommitError::Git(error.to_string()))?
+            .detach();
+        (vec![head_commit.id], tree_id)
+    };
+    // Detached HEAD has no symbolic referent, so this is naturally `None` there —
+    // `repo.commit("HEAD", ...)` still advances HEAD directly in that case.
+    let branch = head.referent_name().map(|name| name.shorten().to_string());
+
+    let mut editor = repo
+        .edit_tree(base_tree)
+        .map_err(|error| GitCommitError::Git(error.to_string()))?;
+
+    let mut pending_updates = Vec::with_capacity(paths.len());
+    for relative in paths {
+        let absolute = resolve_workspace_path(workspace_root, relative)?;
+        let repo_relative_path = absolute
+            .strip_prefix(&repo_workdir)
+            .map_err(|_| GitCommitError::Workspace(WorkspaceError::OutsideWorkspace))?;
+        let repo_relative = BString::from(normalize_path(repo_relative_path));
+
+        match fs::symlink_metadata(&absolute) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                editor
+                    .remove(&repo_relative)
+                    .map_err(|error| GitCommitError::Git(error.to_string()))?;
+                pending_updates.push(PendingIndexUpdate {
+                    repo_relative,
+                    absolute_path: absolute,
+                    write: None,
+                });
+            }
+            Err(error) => return Err(GitCommitError::Workspace(WorkspaceError::Io(error))),
+            Ok(metadata) if metadata.is_dir() => {
+                return Err(GitCommitError::PathIsDirectory(relative.clone()));
+            }
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                let target = symlink_target_bytes(&absolute).map_err(WorkspaceError::Io)?;
+                let blob_id = repo
+                    .write_blob(target)
+                    .map_err(|error| GitCommitError::Git(error.to_string()))?
+                    .detach();
+                editor
+                    .upsert(&repo_relative, EntryKind::Link, blob_id)
+                    .map_err(|error| GitCommitError::Git(error.to_string()))?;
+                pending_updates.push(PendingIndexUpdate {
+                    repo_relative,
+                    absolute_path: absolute,
+                    write: Some((blob_id, gix::index::entry::Mode::SYMLINK)),
+                });
+            }
+            Ok(metadata) => {
+                let contents = fs::read(&absolute).map_err(WorkspaceError::Io)?;
+                let blob_id = repo
+                    .write_blob(&contents)
+                    .map_err(|error| GitCommitError::Git(error.to_string()))?
+                    .detach();
+                let executable = is_executable_file(&metadata);
+                let kind = if executable {
+                    EntryKind::BlobExecutable
+                } else {
+                    EntryKind::Blob
+                };
+                editor
+                    .upsert(&repo_relative, kind, blob_id)
+                    .map_err(|error| GitCommitError::Git(error.to_string()))?;
+                let mode = if executable {
+                    gix::index::entry::Mode::FILE_EXECUTABLE
+                } else {
+                    gix::index::entry::Mode::FILE
+                };
+                pending_updates.push(PendingIndexUpdate {
+                    repo_relative,
+                    absolute_path: absolute,
+                    write: Some((blob_id, mode)),
+                });
+            }
+        }
+    }
+
+    let new_tree = editor
+        .write()
+        .map_err(|error| GitCommitError::Git(error.to_string()))?;
+    if !parents.is_empty() && new_tree.detach() == base_tree {
+        return Err(GitCommitError::NoChanges);
+    }
+
+    let commit_id = repo
+        .commit("HEAD", message, new_tree.detach(), parents)
+        .map_err(|error| GitCommitError::Git(error.to_string()))?;
+    let sha = commit_id.to_string();
+    let short_sha = commit_id.shorten_or_id().to_string();
+
+    reconcile_index(repo, &pending_updates)?;
+
+    let mut committed_paths = paths.to_vec();
+    committed_paths.sort();
+
+    Ok(GitCommitResult {
+        sha,
+        short_sha,
+        branch,
+        committed_paths,
+    })
+}
+
+struct PendingIndexUpdate {
+    repo_relative: BString,
+    absolute_path: PathBuf,
+    // `None` for a deletion; `Some((blob, mode))` for anything written to the tree.
+    write: Option<(gix::ObjectId, gix::index::entry::Mode)>,
+}
+
+// Updates/removes/inserts index entries for exactly the committed paths, then
+// writes the index back — this is what stops a terminal `git status` from
+// showing phantom staged changes after the commit. Unselected paths are never
+// touched, so other in-flight dirty/staged work survives untouched.
+fn reconcile_index(
+    repo: &gix::Repository,
+    updates: &[PendingIndexUpdate],
+) -> Result<(), GitCommitError> {
+    let mut index = match repo.open_index() {
+        Ok(index) => index,
+        Err(gix::worktree::open_index::Error::IndexFile(gix::index::file::init::Error::Io(
+            io_error,
+        ))) if io_error.kind() == std::io::ErrorKind::NotFound => gix::index::File::from_state(
+            gix::index::State::new(repo.object_hash()),
+            repo.index_path(),
+        ),
+        Err(error) => return Err(GitCommitError::Git(error.to_string())),
+    };
+
+    let mut needs_sort = false;
+    for update in updates {
+        let Some((blob_id, mode)) = update.write else {
+            let target = update.repo_relative.clone();
+            index.remove_entries(|_, path, _| path == target.as_bstr());
+            continue;
+        };
+
+        let fs_metadata = gix::index::fs::Metadata::from_path_no_follow(&update.absolute_path)
+            .map_err(|error| GitCommitError::Workspace(WorkspaceError::Io(error)))?;
+        let stat = gix::index::entry::Stat::from_fs(&fs_metadata)
+            .map_err(|error| GitCommitError::Git(error.to_string()))?;
+
+        if let Some(existing) = index.entry_index_by_path_and_stage(
+            update.repo_relative.as_bstr(),
+            gix::index::entry::Stage::Unconflicted,
+        ) {
+            let entry = &mut index.entries_mut()[existing];
+            entry.id = blob_id;
+            entry.stat = stat;
+            entry.mode = mode;
+        } else {
+            index.dangerously_push_entry(
+                stat,
+                blob_id,
+                gix::index::entry::Flags::empty(),
+                mode,
+                update.repo_relative.as_bstr(),
+            );
+            needs_sort = true;
+        }
+    }
+
+    if needs_sort {
+        index.sort_entries();
+    }
+    index
+        .verify_entries()
+        .map_err(|error| GitCommitError::Git(error.to_string()))?;
+    index
+        .write(gix::index::write::Options::default())
+        .map_err(|error| GitCommitError::Git(error.to_string()))?;
+    Ok(())
+}
+
+#[cfg(unix)]
+fn is_executable_file(metadata: &fs::Metadata) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    metadata.permissions().mode() & 0o111 != 0
+}
+
+#[cfg(not(unix))]
+fn is_executable_file(_metadata: &fs::Metadata) -> bool {
+    false
+}
+
+#[cfg(unix)]
+fn symlink_target_bytes(path: &Path) -> std::io::Result<Vec<u8>> {
+    use std::os::unix::ffi::OsStrExt;
+    Ok(fs::read_link(path)?.as_os_str().as_bytes().to_vec())
+}
+
+#[cfg(not(unix))]
+fn symlink_target_bytes(path: &Path) -> std::io::Result<Vec<u8>> {
+    Ok(fs::read_link(path)?
+        .to_string_lossy()
+        .into_owned()
+        .into_bytes())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::ffi::OsStr;
+    use std::process::Command as StdCommand;
+    use tempfile::tempdir;
+
+    #[tokio::test]
+    async fn status_reports_not_a_repo_for_plain_directory() {
+        let dir = tempdir().unwrap();
+
+        let status = status_for_workspace(dir.path()).await;
+
+        assert_eq!(status.status, GitStatusAvailability::Unsupported);
+        assert!(status.files.is_empty());
+    }
+
+    #[tokio::test]
+    async fn status_lists_untracked_modified_deleted_and_staged() {
+        let dir = tempdir().unwrap();
+        init_repo(dir.path());
+        fs::write(dir.path().join("committed.txt"), "one\n").unwrap();
+        fs::write(dir.path().join("to-delete.txt"), "two\n").unwrap();
+        commit_all(dir.path(), "Initial commit");
+
+        fs::write(dir.path().join("committed.txt"), "one changed\n").unwrap();
+        fs::remove_file(dir.path().join("to-delete.txt")).unwrap();
+        fs::write(dir.path().join("untracked.txt"), "new\n").unwrap();
+        run_git(dir.path(), ["add", "committed.txt"]);
+
+        let status = status_for_workspace(dir.path()).await;
+
+        assert_eq!(status.status, GitStatusAvailability::Available);
+        let by_path: HashMap<_, _> = status
+            .files
+            .iter()
+            .map(|entry| (entry.path.clone(), entry.clone()))
+            .collect();
+
+        let committed = by_path.get("committed.txt").unwrap();
+        assert_eq!(committed.status, GitFileStatus::Modified);
+        assert!(committed.staged);
+
+        let deleted = by_path.get("to-delete.txt").unwrap();
+        assert_eq!(deleted.status, GitFileStatus::Deleted);
+        assert!(deleted.unstaged);
+
+        let untracked = by_path.get("untracked.txt").unwrap();
+        assert_eq!(untracked.status, GitFileStatus::Added);
+        assert!(untracked.unstaged);
+    }
+
+    #[tokio::test]
+    async fn status_respects_gitignore() {
+        let dir = tempdir().unwrap();
+        init_repo(dir.path());
+        fs::write(dir.path().join(".gitignore"), "ignored.txt\n").unwrap();
+        commit_all(dir.path(), "Add gitignore");
+        fs::write(dir.path().join("ignored.txt"), "secret\n").unwrap();
+
+        let status = status_for_workspace(dir.path()).await;
+
+        assert!(!status.files.iter().any(|entry| entry.path == "ignored.txt"));
+    }
+
+    #[tokio::test]
+    async fn status_scopes_to_workspace_subdirectory() {
+        let dir = tempdir().unwrap();
+        init_repo(dir.path());
+        fs::create_dir(dir.path().join("sub")).unwrap();
+        fs::write(dir.path().join("sub/inside.txt"), "one\n").unwrap();
+        fs::write(dir.path().join("outside.txt"), "two\n").unwrap();
+        commit_all(dir.path(), "Initial commit");
+        fs::write(dir.path().join("sub/inside.txt"), "one changed\n").unwrap();
+        fs::write(dir.path().join("outside.txt"), "two changed\n").unwrap();
+
+        let status = status_for_workspace(&dir.path().join("sub")).await;
+
+        assert_eq!(status.status, GitStatusAvailability::Available);
+        let paths: Vec<_> = status
+            .files
+            .iter()
+            .map(|entry| entry.path.as_str())
+            .collect();
+        assert_eq!(paths, vec!["inside.txt"]);
+    }
+
+    #[tokio::test]
+    async fn status_reports_unborn_head_with_untracked_files() {
+        let dir = tempdir().unwrap();
+        init_repo(dir.path());
+        fs::write(dir.path().join("new.txt"), "fresh\n").unwrap();
+
+        let status = status_for_workspace(dir.path()).await;
+
+        assert_eq!(status.status, GitStatusAvailability::Available);
+        assert!(status.head_unborn);
+        assert_eq!(status.files.len(), 1);
+        assert_eq!(status.files[0].path, "new.txt");
+        assert_eq!(status.files[0].status, GitFileStatus::Added);
+    }
+
+    #[tokio::test]
+    async fn commit_modified_file_advances_head_and_cleans_status() {
+        let dir = tempdir().unwrap();
+        init_repo(dir.path());
+        configure_identity(dir.path());
+        fs::write(dir.path().join("file.txt"), "before\n").unwrap();
+        commit_all(dir.path(), "Initial commit");
+        fs::write(dir.path().join("file.txt"), "after\n").unwrap();
+
+        let result = commit_files(dir.path(), "Update file", &["file.txt".to_string()])
+            .await
+            .unwrap();
+
+        assert!(result.branch.is_some());
+        assert_eq!(
+            git_stdout(dir.path(), ["show", "HEAD:file.txt"]).unwrap(),
+            "after\n"
+        );
+        assert_eq!(
+            git_stdout(dir.path(), ["log", "-1", "--pretty=%s"])
+                .unwrap()
+                .trim(),
+            "Update file"
+        );
+        assert_eq!(
+            git_stdout(dir.path(), ["status", "--porcelain"]).unwrap(),
+            ""
+        );
+    }
+
+    #[tokio::test]
+    async fn commit_new_file_in_subdirectory() {
+        let dir = tempdir().unwrap();
+        init_repo(dir.path());
+        configure_identity(dir.path());
+        commit_all(dir.path(), "Initial commit");
+        fs::create_dir(dir.path().join("nested")).unwrap();
+        fs::write(dir.path().join("nested/new.txt"), "hello\n").unwrap();
+
+        commit_files(
+            dir.path(),
+            "Add nested file",
+            &["nested/new.txt".to_string()],
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            git_stdout(dir.path(), ["show", "HEAD:nested/new.txt"]).unwrap(),
+            "hello\n"
+        );
+        assert_eq!(
+            git_stdout(dir.path(), ["status", "--porcelain"]).unwrap(),
+            ""
+        );
+    }
+
+    #[tokio::test]
+    async fn commit_deleted_file() {
+        let dir = tempdir().unwrap();
+        init_repo(dir.path());
+        configure_identity(dir.path());
+        fs::write(dir.path().join("gone.txt"), "bye\n").unwrap();
+        commit_all(dir.path(), "Initial commit");
+        fs::remove_file(dir.path().join("gone.txt")).unwrap();
+
+        commit_files(dir.path(), "Delete file", &["gone.txt".to_string()])
+            .await
+            .unwrap();
+
+        assert!(git_stdout(dir.path(), ["show", "HEAD:gone.txt"]).is_err());
+        assert_eq!(
+            git_stdout(dir.path(), ["status", "--porcelain"]).unwrap(),
+            ""
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn commit_preserves_executable_bit() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempdir().unwrap();
+        init_repo(dir.path());
+        configure_identity(dir.path());
+        commit_all(dir.path(), "Initial commit");
+        let script_path = dir.path().join("run.sh");
+        fs::write(&script_path, "#!/bin/sh\necho hi\n").unwrap();
+        fs::set_permissions(&script_path, fs::Permissions::from_mode(0o755)).unwrap();
+
+        commit_files(dir.path(), "Add script", &["run.sh".to_string()])
+            .await
+            .unwrap();
+
+        let ls_tree = git_stdout(dir.path(), ["ls-tree", "HEAD", "run.sh"]).unwrap();
+        assert!(ls_tree.starts_with("100755"), "unexpected mode: {ls_tree}");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn commit_preserves_symlink() {
+        use std::os::unix::fs::symlink;
+
+        let dir = tempdir().unwrap();
+        init_repo(dir.path());
+        configure_identity(dir.path());
+        commit_all(dir.path(), "Initial commit");
+        symlink("target.txt", dir.path().join("link.txt")).unwrap();
+
+        commit_files(dir.path(), "Add symlink", &["link.txt".to_string()])
+            .await
+            .unwrap();
+
+        let ls_tree = git_stdout(dir.path(), ["ls-tree", "HEAD", "link.txt"]).unwrap();
+        assert!(ls_tree.starts_with("120000"), "unexpected mode: {ls_tree}");
+        assert_eq!(
+            git_stdout(dir.path(), ["show", "HEAD:link.txt"]).unwrap(),
+            "target.txt"
+        );
+    }
+
+    #[tokio::test]
+    async fn commit_creates_initial_commit_on_unborn_head() {
+        let dir = tempdir().unwrap();
+        init_repo(dir.path());
+        configure_identity(dir.path());
+        fs::write(dir.path().join("first.txt"), "hello\n").unwrap();
+
+        let result = commit_files(dir.path(), "Initial commit", &["first.txt".to_string()])
+            .await
+            .unwrap();
+
+        assert!(result.branch.is_some());
+        assert_eq!(
+            git_stdout(dir.path(), ["rev-list", "--count", "HEAD"])
+                .unwrap()
+                .trim(),
+            "1"
+        );
+    }
+
+    #[tokio::test]
+    async fn commit_on_detached_head_advances_head_only() {
+        let dir = tempdir().unwrap();
+        init_repo(dir.path());
+        configure_identity(dir.path());
+        fs::write(dir.path().join("file.txt"), "one\n").unwrap();
+        commit_all(dir.path(), "Initial commit");
+        let head_sha = git_stdout(dir.path(), ["rev-parse", "HEAD"])
+            .unwrap()
+            .trim()
+            .to_string();
+        run_git(dir.path(), ["checkout", "--detach", &head_sha]);
+        fs::write(dir.path().join("file.txt"), "two\n").unwrap();
+
+        let result = commit_files(dir.path(), "Detached commit", &["file.txt".to_string()])
+            .await
+            .unwrap();
+
+        assert_eq!(result.branch, None);
+        // The branch ref must not have moved; only the detached HEAD did.
+        let main_sha = git_stdout(dir.path(), ["rev-parse", "refs/heads/main"]).unwrap();
+        assert_eq!(main_sha.trim(), head_sha);
+        let head_after = git_stdout(dir.path(), ["rev-parse", "HEAD"]).unwrap();
+        assert_ne!(head_after.trim(), head_sha);
+    }
+
+    #[tokio::test]
+    async fn commit_leaves_unselected_dirty_files_untouched() {
+        let dir = tempdir().unwrap();
+        init_repo(dir.path());
+        configure_identity(dir.path());
+        fs::write(dir.path().join("a.txt"), "a\n").unwrap();
+        fs::write(dir.path().join("b.txt"), "b\n").unwrap();
+        commit_all(dir.path(), "Initial commit");
+        fs::write(dir.path().join("a.txt"), "a changed\n").unwrap();
+        fs::write(dir.path().join("b.txt"), "b changed\n").unwrap();
+
+        commit_files(dir.path(), "Update a only", &["a.txt".to_string()])
+            .await
+            .unwrap();
+
+        let porcelain = git_stdout(dir.path(), ["status", "--porcelain"]).unwrap();
+        assert_eq!(porcelain.trim(), "M b.txt");
+        assert_eq!(
+            git_stdout(dir.path(), ["show", "HEAD:b.txt"]).unwrap(),
+            "b\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn commit_rejects_empty_message_and_empty_selection() {
+        let dir = tempdir().unwrap();
+        init_repo(dir.path());
+        configure_identity(dir.path());
+        fs::write(dir.path().join("a.txt"), "a\n").unwrap();
+
+        let empty_message = commit_files(dir.path(), "   ", &["a.txt".to_string()]).await;
+        assert!(matches!(empty_message, Err(GitCommitError::EmptyMessage)));
+
+        let empty_selection = commit_files(dir.path(), "message", &[]).await;
+        assert!(matches!(
+            empty_selection,
+            Err(GitCommitError::EmptySelection)
+        ));
+    }
+
+    #[tokio::test]
+    async fn commit_rejects_path_traversal() {
+        let dir = tempdir().unwrap();
+        init_repo(dir.path());
+        configure_identity(dir.path());
+
+        let result = commit_files(dir.path(), "message", &["../outside.txt".to_string()]).await;
+
+        assert!(matches!(
+            result,
+            Err(GitCommitError::Workspace(WorkspaceError::InvalidPath))
+        ));
+    }
+
+    #[tokio::test]
+    async fn commit_rejects_missing_author() {
+        let dir = tempdir().unwrap();
+        init_repo(dir.path());
+        fs::write(dir.path().join("a.txt"), "a\n").unwrap();
+
+        // Isolated: ignores system/global config and env vars, so this repo's
+        // unset local identity is what gets exercised — no env-var races.
+        let repo = gix::open_opts(dir.path(), gix::open::Options::isolated()).unwrap();
+        let result = commit_files_in_repo(&repo, dir.path(), "message", &["a.txt".to_string()]);
+
+        assert!(matches!(result, Err(GitCommitError::AuthorUnset)));
+    }
+
+    #[tokio::test]
+    async fn commit_workspace_subdir_maps_paths_to_repo_relative() {
+        let dir = tempdir().unwrap();
+        init_repo(dir.path());
+        configure_identity(dir.path());
+        fs::create_dir(dir.path().join("sub")).unwrap();
+        commit_all(dir.path(), "Initial commit");
+        fs::write(dir.path().join("sub/file.txt"), "hello\n").unwrap();
+
+        commit_files(
+            &dir.path().join("sub"),
+            "Add file",
+            &["file.txt".to_string()],
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            git_stdout(dir.path(), ["show", "HEAD:sub/file.txt"]).unwrap(),
+            "hello\n"
+        );
+    }
+
+    fn init_repo(cwd: &Path) {
+        run_git(cwd, ["init"]);
+        run_git(cwd, ["symbolic-ref", "HEAD", "refs/heads/main"]);
+    }
+
+    // Sets a local (repo-only) identity so `commit_files` (which reads the
+    // repo's normal, non-isolated config) finds an author/committer regardless
+    // of what the host machine or CI runner has configured globally.
+    fn configure_identity(cwd: &Path) {
+        run_git(cwd, ["config", "user.name", "Test User"]);
+        run_git(cwd, ["config", "user.email", "test@example.com"]);
+    }
+
+    // Builds setup commits via plumbing (write-tree/commit-tree/update-ref) so
+    // these never touch commit signing or depend on repo-local identity config —
+    // same approach as git_attribution.rs's harness.
+    fn commit_all(cwd: &Path, message: &'static str) {
+        run_git(cwd, ["add", "."]);
+        let tree = git_stdout(cwd, ["write-tree"]).expect("write-tree should succeed");
+        let parent = git_stdout(cwd, ["rev-parse", "--verify", "HEAD"]).ok();
+        let mut args = vec!["commit-tree", tree.trim()];
+        if let Some(parent) = parent.as_ref() {
+            args.extend(["-p", parent.trim()]);
+        }
+        args.extend(["-m", message]);
+        let commit = git_stdout_with_env(
+            cwd,
+            args,
+            [
+                ("GIT_AUTHOR_NAME", "Test User"),
+                ("GIT_AUTHOR_EMAIL", "test@example.com"),
+                ("GIT_AUTHOR_DATE", "1700000000 +0000"),
+                ("GIT_COMMITTER_NAME", "Test User"),
+                ("GIT_COMMITTER_EMAIL", "test@example.com"),
+                ("GIT_COMMITTER_DATE", "1700000000 +0000"),
+            ],
+        )
+        .expect("commit-tree should succeed");
+        let branch =
+            git_stdout(cwd, ["symbolic-ref", "HEAD"]).expect("symbolic-ref should succeed");
+        run_git(cwd, ["update-ref", branch.trim(), commit.trim()]);
+    }
+
+    fn run_git<I, S>(cwd: &Path, args: I)
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<OsStr>,
+    {
+        git_stdout(cwd, args).expect("git should succeed");
+    }
+
+    fn git_stdout<I, S>(cwd: &Path, args: I) -> Result<String, String>
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<OsStr>,
+    {
+        git_stdout_with_env(cwd, args, std::iter::empty::<(&str, &str)>())
+    }
+
+    fn git_stdout_with_env<I, S, E>(cwd: &Path, args: I, envs: E) -> Result<String, String>
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<OsStr>,
+        E: IntoIterator<Item = (&'static str, &'static str)>,
+    {
+        let output = StdCommand::new("git")
+            .args(args)
+            .envs(envs)
+            .current_dir(cwd)
+            .output()
+            .unwrap();
+        if output.status.success() {
+            Ok(String::from_utf8_lossy(&output.stdout).to_string())
+        } else {
+            Err(String::from_utf8_lossy(&output.stderr).to_string())
+        }
+    }
+}

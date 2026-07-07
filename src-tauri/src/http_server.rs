@@ -26,7 +26,9 @@ use crate::workspace::{
     WorkspaceSearch,
 };
 use crate::workspace_index::{advance_workspace_index, WorkspaceIndex, WorkspaceIndexAdvanceError};
-use crate::{git_attribution, workspace_root_hash, AgentContext, WorkspaceSessionState};
+use crate::{
+    git_attribution, git_commit, workspace_root_hash, AgentContext, WorkspaceSessionState,
+};
 
 #[derive(Clone)]
 pub struct HttpServerState {
@@ -146,6 +148,13 @@ struct WriteFileRequest {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct GitCommitRequest {
+    message: String,
+    paths: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct DeleteFileRequest {
     path: String,
 }
@@ -247,6 +256,11 @@ pub async fn start_http_server(config: HttpServerConfig) -> Result<HttpServerInf
         )
         .route("/api/file-metadata", get(stat_file))
         .route("/api/git-attribution", get(get_git_attribution))
+        .route("/api/git-status", get(get_git_status))
+        .route(
+            "/api/git-commit",
+            post(post_git_commit).options(cors_preflight),
+        )
         .route("/api/folder", post(create_folder).options(cors_preflight))
         .route(
             "/api/open-path",
@@ -735,6 +749,26 @@ async fn get_git_attribution(
 ) -> Json<git_attribution::GitAttribution> {
     let workspace_root = resolved.workspace_root.read().await.clone();
     Json(git_attribution::attribution_for_file(&workspace_root, &query.path).await)
+}
+
+async fn get_git_status(
+    Extension(resolved): Extension<ResolvedWorkspace>,
+) -> Json<git_commit::GitStatus> {
+    let workspace_root = resolved.workspace_root.read().await.clone();
+    Json(git_commit::status_for_workspace(&workspace_root).await)
+}
+
+async fn post_git_commit(
+    State(state): State<HttpServerState>,
+    Extension(resolved): Extension<ResolvedWorkspace>,
+    headers: HeaderMap,
+    Json(request): Json<GitCommitRequest>,
+) -> Result<Json<git_commit::GitCommitResult>, ApiError> {
+    require_bearer_auth(&headers, &state.mcp_token)?;
+    let workspace_root = resolved.workspace_root.read().await.clone();
+    let result =
+        git_commit::commit_files(&workspace_root, &request.message, &request.paths).await?;
+    Ok(Json(result))
 }
 
 async fn write_file(
@@ -1511,6 +1545,25 @@ impl From<WorkspaceIndexAdvanceError> for ApiError {
         match value {
             WorkspaceIndexAdvanceError::Index(error) => ApiError::from(error),
             WorkspaceIndexAdvanceError::Workspace(error) => ApiError::from(error),
+        }
+    }
+}
+
+impl From<git_commit::GitCommitError> for ApiError {
+    fn from(value: git_commit::GitCommitError) -> Self {
+        let status = match &value {
+            git_commit::GitCommitError::EmptyMessage
+            | git_commit::GitCommitError::EmptySelection
+            | git_commit::GitCommitError::NoChanges
+            | git_commit::GitCommitError::PathIsDirectory(_)
+            | git_commit::GitCommitError::NotARepo
+            | git_commit::GitCommitError::Workspace(_) => StatusCode::BAD_REQUEST,
+            git_commit::GitCommitError::AuthorUnset => StatusCode::CONFLICT,
+            git_commit::GitCommitError::Git(_) => StatusCode::INTERNAL_SERVER_ERROR,
+        };
+        Self {
+            status,
+            message: value.to_string(),
         }
     }
 }

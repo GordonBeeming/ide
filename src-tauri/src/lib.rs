@@ -1,5 +1,6 @@
 mod claude_bridge;
 mod git_attribution;
+mod git_commit;
 mod http_server;
 mod lsp;
 mod workspace;
@@ -233,7 +234,7 @@ impl Default for PersistedViewSettings {
 // Flag ids the app currently knows about. Persisted overrides for any id not in
 // this list are pruned on load, so retiring a flag is just removing it here (and
 // from the frontend registry). Keep in sync with src/featureFlags.ts.
-const KNOWN_FEATURE_FLAGS: &[&str] = &["gitAttribution"];
+const KNOWN_FEATURE_FLAGS: &[&str] = &["gitAttribution", "gitCommit"];
 
 fn default_show_gitignored_files() -> bool {
     false
@@ -497,6 +498,8 @@ enum CommandError {
     WorkspaceIndex(#[from] workspace_index::WorkspaceIndexError),
     #[error("workspace index failed: {0}")]
     WorkspaceIndexAdvance(#[from] workspace_index::WorkspaceIndexAdvanceError),
+    #[error("{0}")]
+    GitCommit(#[from] git_commit::GitCommitError),
 }
 
 impl serde::Serialize for CommandError {
@@ -883,6 +886,28 @@ async fn get_git_attribution(
 ) -> Result<git_attribution::GitAttribution, CommandError> {
     let workspace_root = workspace_root_for_window(&state, &window).await;
     Ok(git_attribution::attribution_for_file(&workspace_root, &path).await)
+}
+
+#[tauri::command]
+async fn get_git_status(
+    window: tauri::Window,
+    state: State<'_, AppState>,
+) -> Result<git_commit::GitStatus, CommandError> {
+    let workspace_root = workspace_root_for_window(&state, &window).await;
+    Ok(git_commit::status_for_workspace(&workspace_root).await)
+}
+
+#[tauri::command]
+async fn git_commit(
+    window: tauri::Window,
+    state: State<'_, AppState>,
+    message: String,
+    paths: Vec<String>,
+) -> Result<git_commit::GitCommitResult, CommandError> {
+    let workspace_root = workspace_root_for_window(&state, &window).await;
+    git_commit::commit_files(&workspace_root, &message, &paths)
+        .await
+        .map_err(CommandError::from)
 }
 
 #[tauri::command]
@@ -1858,6 +1883,8 @@ pub fn run() {
             read_file,
             stat_file,
             get_git_attribution,
+            get_git_status,
+            git_commit,
             write_file,
             create_file,
             create_folder,
