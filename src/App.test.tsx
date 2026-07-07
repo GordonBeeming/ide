@@ -88,6 +88,7 @@ const tauriMocks = vi.hoisted(() => ({
   getGitAttribution: vi.fn(),
   getGitStatus: vi.fn(),
   commitGitChanges: vi.fn(),
+  loadGitFileDiff: vi.fn(),
 }));
 
 const appWindowMocks = vi.hoisted(() => ({
@@ -155,6 +156,7 @@ vi.mock("./tauri", async () => {
     getGitAttribution: tauriMocks.getGitAttribution,
     getGitStatus: tauriMocks.getGitStatus,
     commitGitChanges: tauriMocks.commitGitChanges,
+    loadGitFileDiff: tauriMocks.loadGitFileDiff,
   };
 });
 

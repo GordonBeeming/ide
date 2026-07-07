@@ -79,6 +79,30 @@ pub(crate) enum GitCommitError {
     Git(String),
 }
 
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct GitFileDiff {
+    pub original: String,
+    pub modified: String,
+    pub status: GitFileStatus,
+    pub is_binary: bool,
+    pub is_too_large: bool,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum GitFileDiffError {
+    #[error("workspace is not inside a Git repository")]
+    NotARepo,
+    #[error("{0} is a directory, not a file")]
+    PathIsDirectory(String),
+    #[error("path is not present in HEAD or on disk")]
+    NotFound,
+    #[error("{0}")]
+    Workspace(#[from] WorkspaceError),
+    #[error("{0}")]
+    Git(String),
+}
+
 pub(crate) async fn status_for_workspace(workspace_root: &Path) -> GitStatus {
     let workspace_root = workspace_root.to_path_buf();
     tokio::task::spawn_blocking(move || status_for_workspace_blocking(&workspace_root))
@@ -583,6 +607,118 @@ fn symlink_target_bytes(path: &Path) -> std::io::Result<Vec<u8>> {
         .into_bytes())
 }
 
+/// A worktree-vs-HEAD diff for one path, read-only. `max_bytes` is the app's
+/// existing large-file cap (the same one `read_file` enforces), passed in by
+/// the caller rather than hardcoded here.
+pub(crate) async fn file_diff(
+    workspace_root: &Path,
+    relative: &str,
+    max_bytes: u64,
+) -> Result<GitFileDiff, GitFileDiffError> {
+    let workspace_root = workspace_root.to_path_buf();
+    let relative = relative.to_string();
+    match tokio::task::spawn_blocking(move || {
+        file_diff_blocking(&workspace_root, &relative, max_bytes)
+    })
+    .await
+    {
+        Ok(result) => result,
+        Err(_) => Err(GitFileDiffError::Git(
+            "diff task failed to complete".to_string(),
+        )),
+    }
+}
+
+fn file_diff_blocking(
+    workspace_root: &Path,
+    relative: &str,
+    max_bytes: u64,
+) -> Result<GitFileDiff, GitFileDiffError> {
+    let repo = gix::discover(workspace_root).map_err(|_| GitFileDiffError::NotARepo)?;
+    let repo_workdir = repo.workdir().ok_or(GitFileDiffError::NotARepo)?;
+    let repo_workdir = repo_workdir
+        .canonicalize()
+        .map_err(|error| GitFileDiffError::Workspace(WorkspaceError::Io(error)))?;
+
+    let absolute = resolve_workspace_path(workspace_root, relative)?;
+    let repo_relative_path = absolute
+        .strip_prefix(&repo_workdir)
+        .map_err(|_| GitFileDiffError::Workspace(WorkspaceError::OutsideWorkspace))?;
+    let repo_relative = normalize_path(repo_relative_path);
+
+    // Unborn HEAD (nothing committed yet) means every tracked-looking path is
+    // effectively absent from HEAD, same as any other untracked/new file.
+    let head_bytes = match repo.head_commit() {
+        Ok(head_commit) => head_blob_bytes(&head_commit, &repo_relative)?,
+        Err(_) => None,
+    };
+
+    // `fs::metadata` follows symlinks so a symlinked file diffs its target's
+    // content, matching how the rest of this module treats readable content.
+    let disk_bytes = match fs::metadata(&absolute) {
+        Ok(metadata) if metadata.is_dir() => {
+            return Err(GitFileDiffError::PathIsDirectory(relative.to_string()));
+        }
+        Ok(_) => Some(fs::read(&absolute).map_err(WorkspaceError::Io)?),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => return Err(GitFileDiffError::Workspace(WorkspaceError::Io(error))),
+    };
+
+    let status = match (&head_bytes, &disk_bytes) {
+        (None, None) => return Err(GitFileDiffError::NotFound),
+        (None, Some(_)) => GitFileStatus::Added,
+        (Some(_), None) => GitFileStatus::Deleted,
+        (Some(_), Some(_)) => GitFileStatus::Modified,
+    };
+
+    let original_raw = head_bytes.unwrap_or_default();
+    let modified_raw = disk_bytes.unwrap_or_default();
+    let is_too_large =
+        original_raw.len() as u64 > max_bytes || modified_raw.len() as u64 > max_bytes;
+    let original_text = String::from_utf8(original_raw);
+    let modified_text = String::from_utf8(modified_raw);
+    let is_binary = original_text.is_err() || modified_text.is_err();
+
+    let (original, modified) = if is_binary || is_too_large {
+        (String::new(), String::new())
+    } else {
+        (
+            original_text.unwrap_or_default(),
+            modified_text.unwrap_or_default(),
+        )
+    };
+
+    Ok(GitFileDiff {
+        original,
+        modified,
+        status,
+        is_binary,
+        is_too_large,
+    })
+}
+
+fn head_blob_bytes(
+    head_commit: &gix::Commit<'_>,
+    repo_relative_path: &str,
+) -> Result<Option<Vec<u8>>, GitFileDiffError> {
+    let tree = head_commit
+        .tree()
+        .map_err(|error| GitFileDiffError::Git(error.to_string()))?;
+    let Some(entry) = tree
+        .lookup_entry_by_path(repo_relative_path)
+        .map_err(|error| GitFileDiffError::Git(error.to_string()))?
+    else {
+        return Ok(None);
+    };
+    let object = entry
+        .object()
+        .map_err(|error| GitFileDiffError::Git(error.to_string()))?;
+    let blob = object
+        .try_into_blob()
+        .map_err(|error| GitFileDiffError::Git(error.to_string()))?;
+    Ok(Some(blob.data.clone()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -941,6 +1077,103 @@ mod tests {
             git_stdout(dir.path(), ["show", "HEAD:sub/file.txt"]).unwrap(),
             "hello\n"
         );
+    }
+
+    const TEST_MAX_BYTES: u64 = 1024 * 1024;
+
+    #[tokio::test]
+    async fn file_diff_reports_modified_file() {
+        let dir = tempdir().unwrap();
+        init_repo(dir.path());
+        fs::write(dir.path().join("file.txt"), "before\n").unwrap();
+        commit_all(dir.path(), "Initial commit");
+        fs::write(dir.path().join("file.txt"), "after\n").unwrap();
+
+        let diff = file_diff(dir.path(), "file.txt", TEST_MAX_BYTES)
+            .await
+            .unwrap();
+
+        assert_eq!(diff.status, GitFileStatus::Modified);
+        assert_eq!(diff.original, "before\n");
+        assert_eq!(diff.modified, "after\n");
+        assert!(!diff.is_binary);
+        assert!(!diff.is_too_large);
+    }
+
+    #[tokio::test]
+    async fn file_diff_reports_added_file() {
+        let dir = tempdir().unwrap();
+        init_repo(dir.path());
+        commit_all(dir.path(), "Initial commit");
+        fs::write(dir.path().join("new.txt"), "fresh\n").unwrap();
+
+        let diff = file_diff(dir.path(), "new.txt", TEST_MAX_BYTES)
+            .await
+            .unwrap();
+
+        assert_eq!(diff.status, GitFileStatus::Added);
+        assert_eq!(diff.original, "");
+        assert_eq!(diff.modified, "fresh\n");
+    }
+
+    #[tokio::test]
+    async fn file_diff_reports_deleted_file() {
+        let dir = tempdir().unwrap();
+        init_repo(dir.path());
+        fs::write(dir.path().join("gone.txt"), "bye\n").unwrap();
+        commit_all(dir.path(), "Initial commit");
+        fs::remove_file(dir.path().join("gone.txt")).unwrap();
+
+        let diff = file_diff(dir.path(), "gone.txt", TEST_MAX_BYTES)
+            .await
+            .unwrap();
+
+        assert_eq!(diff.status, GitFileStatus::Deleted);
+        assert_eq!(diff.original, "bye\n");
+        assert_eq!(diff.modified, "");
+    }
+
+    #[tokio::test]
+    async fn file_diff_flags_binary_content() {
+        let dir = tempdir().unwrap();
+        init_repo(dir.path());
+        fs::write(dir.path().join("image.bin"), [0u8, 159, 146, 150]).unwrap();
+        commit_all(dir.path(), "Initial commit");
+        fs::write(dir.path().join("image.bin"), [0u8, 159, 146, 151]).unwrap();
+
+        let diff = file_diff(dir.path(), "image.bin", TEST_MAX_BYTES)
+            .await
+            .unwrap();
+
+        assert!(diff.is_binary);
+        assert_eq!(diff.original, "");
+        assert_eq!(diff.modified, "");
+    }
+
+    #[tokio::test]
+    async fn file_diff_flags_too_large_content() {
+        let dir = tempdir().unwrap();
+        init_repo(dir.path());
+        fs::write(dir.path().join("big.txt"), "before\n").unwrap();
+        commit_all(dir.path(), "Initial commit");
+        fs::write(dir.path().join("big.txt"), "a".repeat(64)).unwrap();
+
+        let diff = file_diff(dir.path(), "big.txt", 32).await.unwrap();
+
+        assert!(diff.is_too_large);
+        assert_eq!(diff.original, "");
+        assert_eq!(diff.modified, "");
+    }
+
+    #[tokio::test]
+    async fn file_diff_rejects_path_absent_from_head_and_disk() {
+        let dir = tempdir().unwrap();
+        init_repo(dir.path());
+        commit_all(dir.path(), "Initial commit");
+
+        let result = file_diff(dir.path(), "never-existed.txt", TEST_MAX_BYTES).await;
+
+        assert!(matches!(result, Err(GitFileDiffError::NotFound)));
     }
 
     fn init_repo(cwd: &Path) {

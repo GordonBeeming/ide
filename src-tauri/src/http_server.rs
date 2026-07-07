@@ -257,6 +257,7 @@ pub async fn start_http_server(config: HttpServerConfig) -> Result<HttpServerInf
         .route("/api/file-metadata", get(stat_file))
         .route("/api/git-attribution", get(get_git_attribution))
         .route("/api/git-status", get(get_git_status))
+        .route("/api/git-file-diff", get(get_git_file_diff))
         .route(
             "/api/git-commit",
             post(post_git_commit).options(cors_preflight),
@@ -717,8 +718,19 @@ async fn read_file(
     Query(query): Query<FileQuery>,
 ) -> Result<String, ApiError> {
     let workspace_root = resolved.workspace_root.read().await.clone();
-    let max_open_bytes = query
-        .max_open_bytes
+    let max_open_bytes = resolve_max_open_bytes(&state, query.max_open_bytes);
+    Ok(read_workspace_file(
+        &workspace_root,
+        &query.path,
+        max_open_bytes,
+        false,
+    )?)
+}
+
+// Shared by `read_file` and `get_git_file_diff` — same large-file cap, same
+// fallback-to-configured-default-then-clamp resolution.
+fn resolve_max_open_bytes(state: &HttpServerState, max_open_bytes: Option<u64>) -> u64 {
+    max_open_bytes
         .unwrap_or_else(|| {
             state
                 .max_open_file_bytes
@@ -726,13 +738,7 @@ async fn read_file(
                 .map(|limit| *limit)
                 .unwrap_or(5_120 * 1024)
         })
-        .clamp(64 * 1024, 65_536 * 1024);
-    Ok(read_workspace_file(
-        &workspace_root,
-        &query.path,
-        max_open_bytes,
-        false,
-    )?)
+        .clamp(64 * 1024, 65_536 * 1024)
 }
 
 async fn stat_file(
@@ -756,6 +762,17 @@ async fn get_git_status(
 ) -> Json<git_commit::GitStatus> {
     let workspace_root = resolved.workspace_root.read().await.clone();
     Json(git_commit::status_for_workspace(&workspace_root).await)
+}
+
+async fn get_git_file_diff(
+    State(state): State<HttpServerState>,
+    Extension(resolved): Extension<ResolvedWorkspace>,
+    Query(query): Query<FileQuery>,
+) -> Result<Json<git_commit::GitFileDiff>, ApiError> {
+    let workspace_root = resolved.workspace_root.read().await.clone();
+    let max_open_bytes = resolve_max_open_bytes(&state, query.max_open_bytes);
+    let diff = git_commit::file_diff(&workspace_root, &query.path, max_open_bytes).await?;
+    Ok(Json(diff))
 }
 
 async fn post_git_commit(
@@ -1560,6 +1577,22 @@ impl From<git_commit::GitCommitError> for ApiError {
             | git_commit::GitCommitError::Workspace(_) => StatusCode::BAD_REQUEST,
             git_commit::GitCommitError::AuthorUnset => StatusCode::CONFLICT,
             git_commit::GitCommitError::Git(_) => StatusCode::INTERNAL_SERVER_ERROR,
+        };
+        Self {
+            status,
+            message: value.to_string(),
+        }
+    }
+}
+
+impl From<git_commit::GitFileDiffError> for ApiError {
+    fn from(value: git_commit::GitFileDiffError) -> Self {
+        let status = match &value {
+            git_commit::GitFileDiffError::NotARepo
+            | git_commit::GitFileDiffError::PathIsDirectory(_)
+            | git_commit::GitFileDiffError::Workspace(_) => StatusCode::BAD_REQUEST,
+            git_commit::GitFileDiffError::NotFound => StatusCode::NOT_FOUND,
+            git_commit::GitFileDiffError::Git(_) => StatusCode::INTERNAL_SERVER_ERROR,
         };
         Self {
             status,

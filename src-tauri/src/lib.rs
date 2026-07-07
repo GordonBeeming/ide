@@ -500,6 +500,8 @@ enum CommandError {
     WorkspaceIndexAdvance(#[from] workspace_index::WorkspaceIndexAdvanceError),
     #[error("{0}")]
     GitCommit(#[from] git_commit::GitCommitError),
+    #[error("{0}")]
+    GitFileDiff(#[from] git_commit::GitFileDiffError),
 }
 
 impl serde::Serialize for CommandError {
@@ -847,18 +849,7 @@ async fn read_file(
     allow_external_symlinks: Option<bool>,
 ) -> Result<String, CommandError> {
     let workspace_root = workspace_root_for_window(&state, &window).await;
-    let max_open_bytes = max_open_bytes
-        .unwrap_or_else(|| {
-            state
-                .max_open_file_bytes
-                .read()
-                .map(|limit| *limit)
-                .unwrap_or_else(|_| default_max_open_file_kb().saturating_mul(1024))
-        })
-        .clamp(
-            MIN_MAX_OPEN_FILE_KB.saturating_mul(1024),
-            MAX_MAX_OPEN_FILE_KB.saturating_mul(1024),
-        );
+    let max_open_bytes = resolve_max_open_file_bytes(&state, max_open_bytes);
     read_workspace_file(
         &workspace_root,
         &path,
@@ -908,6 +899,38 @@ async fn git_commit(
     git_commit::commit_files(&workspace_root, &message, &paths)
         .await
         .map_err(CommandError::from)
+}
+
+#[tauri::command]
+async fn git_file_diff(
+    window: tauri::Window,
+    state: State<'_, AppState>,
+    path: String,
+    max_open_bytes: Option<u64>,
+) -> Result<git_commit::GitFileDiff, CommandError> {
+    let workspace_root = workspace_root_for_window(&state, &window).await;
+    let max_open_bytes = resolve_max_open_file_bytes(&state, max_open_bytes);
+    git_commit::file_diff(&workspace_root, &path, max_open_bytes)
+        .await
+        .map_err(CommandError::from)
+}
+
+// Shared by `read_file` and `git_file_diff` — the frontend passes its
+// `maxOpenFileKb` setting explicitly; absent that, fall back to the app's
+// configured default and clamp to the same bounds either way.
+fn resolve_max_open_file_bytes(state: &AppState, max_open_bytes: Option<u64>) -> u64 {
+    max_open_bytes
+        .unwrap_or_else(|| {
+            state
+                .max_open_file_bytes
+                .read()
+                .map(|limit| *limit)
+                .unwrap_or_else(|_| default_max_open_file_kb().saturating_mul(1024))
+        })
+        .clamp(
+            MIN_MAX_OPEN_FILE_KB.saturating_mul(1024),
+            MAX_MAX_OPEN_FILE_KB.saturating_mul(1024),
+        )
 }
 
 #[tauri::command]
@@ -1885,6 +1908,7 @@ pub fn run() {
             get_git_attribution,
             get_git_status,
             git_commit,
+            git_file_diff,
             write_file,
             create_file,
             create_folder,
