@@ -230,6 +230,35 @@ vi.mock("./EditorPane", () => ({
   ),
 }));
 
+vi.mock("./DiffPane", () => ({
+  default: ({
+    filePath,
+    original,
+    modified,
+    isBinary,
+    isTooLarge,
+  }: {
+    filePath: string;
+    original: string;
+    modified: string;
+    isBinary: boolean;
+    isTooLarge: boolean;
+  }) => (
+    <div aria-label={`Diff ${filePath}`}>
+      {isBinary ? (
+        <span>Binary diff</span>
+      ) : isTooLarge ? (
+        <span>Diff too large</span>
+      ) : (
+        <>
+          <span>original: {original}</span>
+          <span>modified: {modified}</span>
+        </>
+      )}
+    </div>
+  ),
+}));
+
 describe("App shell interactions", () => {
   beforeEach(() => {
     for (const mock of Object.values(tauriMocks)) {
@@ -364,6 +393,13 @@ describe("App shell interactions", () => {
       shortSha: "abc1234",
       branch: "main",
       committedPaths: ["README.md"],
+    });
+    tauriMocks.loadGitFileDiff.mockResolvedValue({
+      original: "before\n",
+      modified: "after\n",
+      status: "modified",
+      isBinary: false,
+      isTooLarge: false,
     });
   });
 
@@ -3900,28 +3936,28 @@ describe("Git commit sidebar", () => {
     expect(await treeButton("README.md")).toBeInTheDocument();
   });
 
-  it("selects all changed files by default and supports select all/deselect all", async () => {
+  it("selects all changed files by default and supports the master tri-state checkbox", async () => {
     render(<App />);
 
     expect(await treeButton("README.md")).toBeInTheDocument();
     fireEvent.click(screen.getByTitle("Commit changes"));
 
     const panel = await screen.findByLabelText("Git commit panel");
-    await waitFor(() => expect(within(panel).getByText("2 / 2 selected")).toBeInTheDocument());
+    await waitFor(() => expect(within(panel).getByText("2 / 2")).toBeInTheDocument());
     const checkboxes = within(panel).getAllByRole("checkbox") as HTMLInputElement[];
-    expect(checkboxes).toHaveLength(2);
+    expect(checkboxes).toHaveLength(4); // master + folder(src) + 2 files
     expect(checkboxes.every((checkbox) => checkbox.checked)).toBe(true);
 
-    fireEvent.click(within(panel).getByText("Deselect all"));
-    await waitFor(() => expect(within(panel).getByText("0 / 2 selected")).toBeInTheDocument());
+    fireEvent.click(within(panel).getByLabelText("Deselect all changes"));
+    await waitFor(() => expect(within(panel).getByText("0 / 2")).toBeInTheDocument());
     expect(
       (within(panel).getAllByRole("checkbox") as HTMLInputElement[]).every(
         (checkbox) => !checkbox.checked,
       ),
     ).toBe(true);
 
-    fireEvent.click(within(panel).getByText("Select all"));
-    await waitFor(() => expect(within(panel).getByText("2 / 2 selected")).toBeInTheDocument());
+    fireEvent.click(within(panel).getByLabelText("Select all changes"));
+    await waitFor(() => expect(within(panel).getByText("2 / 2")).toBeInTheDocument());
   });
 
   it("disables the Commit button until a message and a selection both exist", async () => {
@@ -3931,8 +3967,8 @@ describe("Git commit sidebar", () => {
     fireEvent.click(screen.getByTitle("Commit changes"));
 
     const panel = await screen.findByLabelText("Git commit panel");
-    await waitFor(() => expect(within(panel).getByText("2 / 2 selected")).toBeInTheDocument());
-    const commitButton = within(panel).getByRole("button", { name: "Commit" });
+    await waitFor(() => expect(within(panel).getByText("2 / 2")).toBeInTheDocument());
+    const commitButton = within(panel).getByRole("button", { name: /^Commit/ });
     expect(commitButton).toBeDisabled();
 
     fireEvent.change(within(panel).getByPlaceholderText("Commit message"), {
@@ -3940,7 +3976,7 @@ describe("Git commit sidebar", () => {
     });
     expect(commitButton).not.toBeDisabled();
 
-    fireEvent.click(within(panel).getByText("Deselect all"));
+    fireEvent.click(within(panel).getByLabelText("Deselect all changes"));
     expect(commitButton).toBeDisabled();
   });
 
@@ -3951,11 +3987,10 @@ describe("Git commit sidebar", () => {
     fireEvent.click(screen.getByTitle("Commit changes"));
 
     const panel = await screen.findByLabelText("Git commit panel");
-    await waitFor(() => expect(within(panel).getByText("2 / 2 selected")).toBeInTheDocument());
+    await waitFor(() => expect(within(panel).getByText("2 / 2")).toBeInTheDocument());
 
-    const readmeCheckbox = within(panel).getByLabelText("Deselect src/App.tsx");
-    fireEvent.click(readmeCheckbox);
-    await waitFor(() => expect(within(panel).getByText("1 / 2 selected")).toBeInTheDocument());
+    fireEvent.click(within(panel).getByLabelText("Deselect src/App.tsx"));
+    await waitFor(() => expect(within(panel).getByText("1 / 2")).toBeInTheDocument());
 
     fireEvent.change(within(panel).getByPlaceholderText("Commit message"), {
       target: { value: "Update readme" },
@@ -3969,7 +4004,7 @@ describe("Git commit sidebar", () => {
       files: [{ path: "src/App.tsx", status: "modified", staged: false, unstaged: true }],
     });
 
-    fireEvent.click(within(panel).getByRole("button", { name: "Commit" }));
+    fireEvent.click(within(panel).getByRole("button", { name: /^Commit/ }));
 
     await waitFor(() =>
       expect(tauriMocks.commitGitChanges).toHaveBeenCalledWith("Update readme", ["README.md"]),
@@ -3979,8 +4014,121 @@ describe("Git commit sidebar", () => {
     );
     // src/App.tsx had been deselected before the commit, so the refreshed list
     // (now missing the just-committed README.md) still shows it unselected.
-    await waitFor(() => expect(within(panel).getByText("0 / 1 selected")).toBeInTheDocument());
+    await waitFor(() => expect(within(panel).getByText("0 / 1")).toBeInTheDocument());
     expect(within(panel).getByPlaceholderText("Commit message")).toHaveValue("");
+  });
+
+  it("commits when Cmd/Ctrl+Enter is pressed in the message textarea", async () => {
+    render(<App />);
+
+    expect(await treeButton("README.md")).toBeInTheDocument();
+    fireEvent.click(screen.getByTitle("Commit changes"));
+
+    const panel = await screen.findByLabelText("Git commit panel");
+    await waitFor(() => expect(within(panel).getByText("2 / 2")).toBeInTheDocument());
+
+    const message = within(panel).getByPlaceholderText("Commit message");
+    fireEvent.change(message, { target: { value: "Quick commit" } });
+    fireEvent.keyDown(message, { key: "Enter", metaKey: true });
+
+    await waitFor(() =>
+      expect(tauriMocks.commitGitChanges).toHaveBeenCalledWith("Quick commit", [
+        "README.md",
+        "src/App.tsx",
+      ]),
+    );
+  });
+
+  it("gives a folder checkbox tri-state selection over its descendant files", async () => {
+    tauriMocks.getGitStatus.mockResolvedValueOnce({
+      status: "available",
+      branch: "main",
+      headDetached: false,
+      headUnborn: false,
+      files: [
+        { path: "src/a.ts", status: "modified", staged: false, unstaged: true },
+        { path: "src/b.ts", status: "modified", staged: false, unstaged: true },
+      ],
+    });
+    render(<App />);
+
+    expect(await treeButton("README.md")).toBeInTheDocument();
+    fireEvent.click(screen.getByTitle("Commit changes"));
+
+    const panel = await screen.findByLabelText("Git commit panel");
+    await waitFor(() => expect(within(panel).getByText("2 / 2")).toBeInTheDocument());
+    const folderCheckbox = within(panel).getByLabelText(
+      "Deselect folder src",
+    ) as HTMLInputElement;
+    expect(folderCheckbox.checked).toBe(true);
+
+    fireEvent.click(within(panel).getByLabelText("Deselect src/a.ts"));
+    await waitFor(() => expect(within(panel).getByText("1 / 2")).toBeInTheDocument());
+    const partialFolderCheckbox = within(panel).getByLabelText(
+      "Select folder src",
+    ) as HTMLInputElement;
+    expect(partialFolderCheckbox.checked).toBe(false);
+    expect(partialFolderCheckbox.indeterminate).toBe(true);
+
+    fireEvent.click(partialFolderCheckbox);
+    await waitFor(() => expect(within(panel).getByText("2 / 2")).toBeInTheDocument());
+  });
+
+  it("opens a diff tab for a changed file, including deleted rows", async () => {
+    tauriMocks.getGitStatus.mockResolvedValueOnce({
+      status: "available",
+      branch: "main",
+      headDetached: false,
+      headUnborn: false,
+      files: [{ path: "gone.txt", status: "deleted", staged: false, unstaged: true }],
+    });
+    tauriMocks.loadGitFileDiff.mockResolvedValueOnce({
+      original: "bye\n",
+      modified: "",
+      status: "deleted",
+      isBinary: false,
+      isTooLarge: false,
+    });
+    render(<App />);
+
+    expect(await treeButton("README.md")).toBeInTheDocument();
+    fireEvent.click(screen.getByTitle("Commit changes"));
+
+    const panel = await screen.findByLabelText("Git commit panel");
+    const row = await within(panel).findByText("gone.txt");
+    fireEvent.click(row.closest("button")!);
+
+    await waitFor(() =>
+      expect(tauriMocks.loadGitFileDiff).toHaveBeenCalledWith("gone.txt", 5120 * 1024),
+    );
+    expect(await screen.findByLabelText("Diff gone.txt")).toBeInTheDocument();
+  });
+
+  it("closes unpinned diff tabs on leaving commit mode but keeps pinned ones", async () => {
+    render(<App />);
+
+    expect(await treeButton("README.md")).toBeInTheDocument();
+    fireEvent.click(screen.getByTitle("Commit changes"));
+
+    const panel = await screen.findByLabelText("Git commit panel");
+    const readmeRow = await within(panel).findByText("README.md");
+    fireEvent.click(readmeRow.closest("button")!);
+    await screen.findByLabelText("Diff README.md");
+    // Pin the README diff before opening another one — an unpinned preview
+    // diff tab is replaced by the next one opened, same as a file preview tab.
+    const pinnedTab = screen.getByText("README.md (Working Tree)").closest("button")!;
+    fireEvent.doubleClick(pinnedTab);
+
+    const appRow = await within(panel).findByText("App.tsx");
+    fireEvent.click(appRow.closest("button")!);
+    await screen.findByLabelText("Diff src/App.tsx");
+
+    fireEvent.click(screen.getByTitle("Commit changes"));
+
+    await waitFor(() =>
+      expect(screen.queryByText("src/App.tsx (Working Tree)")).not.toBeInTheDocument(),
+    );
+    expect(screen.getByText("README.md (Working Tree)")).toBeInTheDocument();
   });
 });
 

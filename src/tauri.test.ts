@@ -1126,3 +1126,60 @@ describe("Git commit response normalization", () => {
     ).toBeUndefined();
   });
 });
+
+describe("Git file diff response normalization", () => {
+  it("normalizes a modified-file diff", async () => {
+    const { normalizeGitFileDiff } = await import("./tauri");
+
+    expect(
+      normalizeGitFileDiff({
+        original: "before\n",
+        modified: "after\n",
+        status: "modified",
+        isBinary: false,
+        isTooLarge: false,
+      }),
+    ).toEqual({
+      original: "before\n",
+      modified: "after\n",
+      status: "modified",
+      isBinary: false,
+      isTooLarge: false,
+    });
+  });
+
+  it("normalizes a binary diff with empty text sides", async () => {
+    const { normalizeGitFileDiff } = await import("./tauri");
+
+    expect(
+      normalizeGitFileDiff({
+        original: "",
+        modified: "",
+        status: "added",
+        isBinary: true,
+        isTooLarge: false,
+      }),
+    ).toEqual({
+      original: "",
+      modified: "",
+      status: "added",
+      isBinary: true,
+      isTooLarge: false,
+    });
+  });
+
+  it("rejects malformed diff payloads", async () => {
+    const { normalizeGitFileDiff } = await import("./tauri");
+
+    expect(normalizeGitFileDiff({ original: "a", modified: "b" })).toBeUndefined();
+    expect(
+      normalizeGitFileDiff({
+        original: "a",
+        modified: "b",
+        status: "renamed",
+        isBinary: false,
+        isTooLarge: false,
+      }),
+    ).toBeUndefined();
+  });
+});
