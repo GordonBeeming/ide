@@ -86,6 +86,8 @@ const tauriMocks = vi.hoisted(() => ({
   getClaudeBridgeStatus: vi.fn(),
   getCodexMcpStatus: vi.fn(),
   getGitAttribution: vi.fn(),
+  getGitStatus: vi.fn(),
+  commitGitChanges: vi.fn(),
 }));
 
 const appWindowMocks = vi.hoisted(() => ({
@@ -151,6 +153,8 @@ vi.mock("./tauri", async () => {
     getClaudeBridgeStatus: tauriMocks.getClaudeBridgeStatus,
     getCodexMcpStatus: tauriMocks.getCodexMcpStatus,
     getGitAttribution: tauriMocks.getGitAttribution,
+    getGitStatus: tauriMocks.getGitStatus,
+    commitGitChanges: tauriMocks.commitGitChanges,
   };
 });
 
@@ -342,6 +346,22 @@ describe("App shell interactions", () => {
       status: "unsupported",
       unsupportedReason: "File is not tracked by Git",
       lines: [],
+    });
+    tauriMocks.getGitStatus.mockResolvedValue({
+      status: "available",
+      branch: "main",
+      headDetached: false,
+      headUnborn: false,
+      files: [
+        { path: "README.md", status: "modified", staged: false, unstaged: true },
+        { path: "src/App.tsx", status: "modified", staged: true, unstaged: false },
+      ],
+    });
+    tauriMocks.commitGitChanges.mockResolvedValue({
+      sha: "abc123456789",
+      shortSha: "abc1234",
+      branch: "main",
+      committedPaths: ["README.md"],
     });
   });
 
@@ -3857,6 +3877,108 @@ describe("App shell interactions", () => {
 
     await screen.findByText("Error: permission denied");
     expect(screen.getByRole("alertdialog", { name: "Delete file?" })).toBeInTheDocument();
+  });
+});
+
+describe("Git commit sidebar", () => {
+  it("toggles the commit panel open and closed", async () => {
+    render(<App />);
+
+    expect(await treeButton("README.md")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Git commit panel")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByTitle("Commit changes"));
+    expect(await screen.findByLabelText("Git commit panel")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Workspace files")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByTitle("Commit changes"));
+    await waitFor(() =>
+      expect(screen.queryByLabelText("Git commit panel")).not.toBeInTheDocument(),
+    );
+    expect(await treeButton("README.md")).toBeInTheDocument();
+  });
+
+  it("selects all changed files by default and supports select all/deselect all", async () => {
+    render(<App />);
+
+    expect(await treeButton("README.md")).toBeInTheDocument();
+    fireEvent.click(screen.getByTitle("Commit changes"));
+
+    const panel = await screen.findByLabelText("Git commit panel");
+    await waitFor(() => expect(within(panel).getByText("2 / 2 selected")).toBeInTheDocument());
+    const checkboxes = within(panel).getAllByRole("checkbox") as HTMLInputElement[];
+    expect(checkboxes).toHaveLength(2);
+    expect(checkboxes.every((checkbox) => checkbox.checked)).toBe(true);
+
+    fireEvent.click(within(panel).getByText("Deselect all"));
+    await waitFor(() => expect(within(panel).getByText("0 / 2 selected")).toBeInTheDocument());
+    expect(
+      (within(panel).getAllByRole("checkbox") as HTMLInputElement[]).every(
+        (checkbox) => !checkbox.checked,
+      ),
+    ).toBe(true);
+
+    fireEvent.click(within(panel).getByText("Select all"));
+    await waitFor(() => expect(within(panel).getByText("2 / 2 selected")).toBeInTheDocument());
+  });
+
+  it("disables the Commit button until a message and a selection both exist", async () => {
+    render(<App />);
+
+    expect(await treeButton("README.md")).toBeInTheDocument();
+    fireEvent.click(screen.getByTitle("Commit changes"));
+
+    const panel = await screen.findByLabelText("Git commit panel");
+    await waitFor(() => expect(within(panel).getByText("2 / 2 selected")).toBeInTheDocument());
+    const commitButton = within(panel).getByRole("button", { name: "Commit" });
+    expect(commitButton).toBeDisabled();
+
+    fireEvent.change(within(panel).getByPlaceholderText("Commit message"), {
+      target: { value: "Update readme" },
+    });
+    expect(commitButton).not.toBeDisabled();
+
+    fireEvent.click(within(panel).getByText("Deselect all"));
+    expect(commitButton).toBeDisabled();
+  });
+
+  it("commits only the selected paths and refreshes the status afterward", async () => {
+    render(<App />);
+
+    expect(await treeButton("README.md")).toBeInTheDocument();
+    fireEvent.click(screen.getByTitle("Commit changes"));
+
+    const panel = await screen.findByLabelText("Git commit panel");
+    await waitFor(() => expect(within(panel).getByText("2 / 2 selected")).toBeInTheDocument());
+
+    const readmeCheckbox = within(panel).getByLabelText("Deselect src/App.tsx");
+    fireEvent.click(readmeCheckbox);
+    await waitFor(() => expect(within(panel).getByText("1 / 2 selected")).toBeInTheDocument());
+
+    fireEvent.change(within(panel).getByPlaceholderText("Commit message"), {
+      target: { value: "Update readme" },
+    });
+
+    tauriMocks.getGitStatus.mockResolvedValueOnce({
+      status: "available",
+      branch: "main",
+      headDetached: false,
+      headUnborn: false,
+      files: [{ path: "src/App.tsx", status: "modified", staged: false, unstaged: true }],
+    });
+
+    fireEvent.click(within(panel).getByRole("button", { name: "Commit" }));
+
+    await waitFor(() =>
+      expect(tauriMocks.commitGitChanges).toHaveBeenCalledWith("Update readme", ["README.md"]),
+    );
+    await waitFor(() =>
+      expect(within(panel).getByText(/Committed 1 file\(s\) as abc1234/)).toBeInTheDocument(),
+    );
+    // src/App.tsx had been deselected before the commit, so the refreshed list
+    // (now missing the just-committed README.md) still shows it unselected.
+    await waitFor(() => expect(within(panel).getByText("0 / 1 selected")).toBeInTheDocument());
+    expect(within(panel).getByPlaceholderText("Commit message")).toHaveValue("");
   });
 });
 

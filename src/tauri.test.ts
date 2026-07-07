@@ -1010,3 +1010,119 @@ describe("Git attribution response normalization", () => {
     ).toBeUndefined();
   });
 });
+
+describe("Git status response normalization", () => {
+  it("normalizes an available status with mixed file states", async () => {
+    const { normalizeGitStatus } = await import("./tauri");
+
+    expect(
+      normalizeGitStatus({
+        status: "available",
+        branch: "main",
+        headDetached: false,
+        headUnborn: false,
+        files: [
+          { path: "a.txt", status: "modified", staged: true, unstaged: false },
+          { path: "b.txt", status: "deleted", staged: false, unstaged: true },
+          { path: "c.txt", status: "added", staged: false, unstaged: true },
+        ],
+      }),
+    ).toEqual({
+      status: "available",
+      unsupportedReason: undefined,
+      branch: "main",
+      headDetached: false,
+      headUnborn: false,
+      files: [
+        { path: "a.txt", status: "modified", staged: true, unstaged: false },
+        { path: "b.txt", status: "deleted", staged: false, unstaged: true },
+        { path: "c.txt", status: "added", staged: false, unstaged: true },
+      ],
+    });
+  });
+
+  it("normalizes an unsupported status without a branch", async () => {
+    const { normalizeGitStatus } = await import("./tauri");
+
+    expect(
+      normalizeGitStatus({
+        status: "unsupported",
+        unsupportedReason: "Workspace is not inside a Git repository",
+        headDetached: false,
+        headUnborn: false,
+        files: [],
+      }),
+    ).toEqual({
+      status: "unsupported",
+      unsupportedReason: "Workspace is not inside a Git repository",
+      branch: undefined,
+      headDetached: false,
+      headUnborn: false,
+      files: [],
+    });
+  });
+
+  it("rejects malformed status payloads", async () => {
+    const { normalizeGitStatus } = await import("./tauri");
+
+    expect(normalizeGitStatus({ status: "available" })).toBeUndefined();
+    expect(
+      normalizeGitStatus({
+        status: "available",
+        headDetached: false,
+        headUnborn: false,
+        files: [{ path: "a.txt", status: "renamed", staged: true, unstaged: false }],
+      }),
+    ).toBeUndefined();
+  });
+});
+
+describe("Git commit response normalization", () => {
+  it("normalizes a commit result", async () => {
+    const { normalizeGitCommitResult } = await import("./tauri");
+
+    expect(
+      normalizeGitCommitResult({
+        sha: "abc123456789",
+        shortSha: "abc12345",
+        branch: "main",
+        committedPaths: ["a.txt", "b.txt"],
+      }),
+    ).toEqual({
+      sha: "abc123456789",
+      shortSha: "abc12345",
+      branch: "main",
+      committedPaths: ["a.txt", "b.txt"],
+    });
+  });
+
+  it("normalizes a detached-HEAD commit result without a branch", async () => {
+    const { normalizeGitCommitResult } = await import("./tauri");
+
+    expect(
+      normalizeGitCommitResult({
+        sha: "abc123456789",
+        shortSha: "abc12345",
+        committedPaths: [],
+      }),
+    ).toEqual({
+      sha: "abc123456789",
+      shortSha: "abc12345",
+      branch: undefined,
+      committedPaths: [],
+    });
+  });
+
+  it("rejects malformed commit result payloads", async () => {
+    const { normalizeGitCommitResult } = await import("./tauri");
+
+    expect(normalizeGitCommitResult({ sha: "abc" })).toBeUndefined();
+    expect(
+      normalizeGitCommitResult({
+        sha: "abc",
+        shortSha: "abc",
+        committedPaths: [1, 2],
+      }),
+    ).toBeUndefined();
+  });
+});
