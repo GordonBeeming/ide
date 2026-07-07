@@ -155,6 +155,14 @@ export interface GitCommitResult {
   committedPaths: string[];
 }
 
+export interface GitFileDiff {
+  original: string;
+  modified: string;
+  status: GitFileStatus;
+  isBinary: boolean;
+  isTooLarge: boolean;
+}
+
 export interface OpenFileRequest {
   workspaceRoot: string;
   path: string;
@@ -593,6 +601,26 @@ export function commitGitChanges(message: string, paths: string[]) {
   });
 }
 
+export function loadGitFileDiff(path: string, maxOpenBytes?: number) {
+  const params = new URLSearchParams({ path });
+  if (maxOpenBytes !== undefined) {
+    params.set("maxOpenBytes", String(maxOpenBytes));
+  }
+  return callApi<unknown>("git_file_diff", `/api/git-file-diff?${params.toString()}`, {
+    method: "GET",
+    invokeArgs: {
+      path,
+      ...(maxOpenBytes === undefined ? {} : { maxOpenBytes }),
+    },
+  }).then((value) => {
+    const normalized = normalizeGitFileDiff(value);
+    if (!normalized) {
+      throw new Error("Git file diff response was not valid JSON");
+    }
+    return normalized;
+  });
+}
+
 export function normalizeGitStatus(value: unknown): GitStatus | undefined {
   if (!value || typeof value !== "object") return undefined;
   const candidate = value as Record<string, unknown>;
@@ -625,14 +653,16 @@ export function normalizeGitStatus(value: unknown): GitStatus | undefined {
   };
 }
 
+function isGitFileStatus(value: unknown): value is GitFileStatus {
+  return value === "added" || value === "modified" || value === "deleted";
+}
+
 function normalizeGitStatusEntry(value: unknown): GitStatusEntry | undefined {
   if (!value || typeof value !== "object") return undefined;
   const candidate = value as Record<string, unknown>;
   if (
     typeof candidate.path !== "string" ||
-    (candidate.status !== "added" &&
-      candidate.status !== "modified" &&
-      candidate.status !== "deleted") ||
+    !isGitFileStatus(candidate.status) ||
     typeof candidate.staged !== "boolean" ||
     typeof candidate.unstaged !== "boolean"
   ) {
@@ -643,6 +673,27 @@ function normalizeGitStatusEntry(value: unknown): GitStatusEntry | undefined {
     status: candidate.status,
     staged: candidate.staged,
     unstaged: candidate.unstaged,
+  };
+}
+
+export function normalizeGitFileDiff(value: unknown): GitFileDiff | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const candidate = value as Record<string, unknown>;
+  if (
+    typeof candidate.original !== "string" ||
+    typeof candidate.modified !== "string" ||
+    !isGitFileStatus(candidate.status) ||
+    typeof candidate.isBinary !== "boolean" ||
+    typeof candidate.isTooLarge !== "boolean"
+  ) {
+    return undefined;
+  }
+  return {
+    original: candidate.original,
+    modified: candidate.modified,
+    status: candidate.status,
+    isBinary: candidate.isBinary,
+    isTooLarge: candidate.isTooLarge,
   };
 }
 

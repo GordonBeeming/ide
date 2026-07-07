@@ -14,6 +14,7 @@
   --accent-contrast: oklch(97% 0.006 230);
   --warning: oklch(69% 0.14 78);
   --danger: oklch(58% 0.19 28);
+  --commit-added-fg: oklch(52% 0.15 150);
   --editor-bg: oklch(96% 0.006 230);
   --editor-text: oklch(18% 0.02 230);
   --editor-gutter-bg: oklch(93% 0.008 230);
@@ -42,6 +43,7 @@
   --accent-contrast: oklch(97% 0.006 230);
   --warning: oklch(69% 0.14 78);
   --danger: oklch(58% 0.19 28);
+  --commit-added-fg: oklch(52% 0.15 150);
   --editor-bg: oklch(96% 0.006 230);
   --editor-text: oklch(18% 0.02 230);
   --editor-gutter-bg: oklch(93% 0.008 230);
@@ -65,6 +67,7 @@
   --accent-contrast: oklch(97% 0.006 230);
   --warning: oklch(76% 0.13 78);
   --danger: oklch(67% 0.18 28);
+  --commit-added-fg: oklch(72% 0.16 150);
   --editor-bg: oklch(15% 0.012 230);
   --editor-text: oklch(93% 0.01 230);
   --editor-gutter-bg: oklch(19% 0.014 230);
@@ -88,6 +91,7 @@
     --accent-contrast: oklch(97% 0.006 230);
     --warning: oklch(76% 0.13 78);
     --danger: oklch(67% 0.18 28);
+    --commit-added-fg: oklch(72% 0.16 150);
     --editor-bg: oklch(15% 0.012 230);
     --editor-text: oklch(93% 0.01 230);
     --editor-gutter-bg: oklch(19% 0.014 230);
@@ -513,79 +517,126 @@ button {
   flex-direction: column;
 }
 
-.commit-panel__empty {
-  padding: 14px 12px;
+/* Loading / empty / unsupported all share this centered treatment. */
+.commit-panel__state {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 24px 16px;
   color: var(--muted);
   font-size: 12px;
+  text-align: center;
+}
+
+.commit-panel__state svg {
+  opacity: 0.5;
 }
 
 .commit-panel__header {
-  display: flex;
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
   align-items: center;
-  justify-content: space-between;
   gap: 8px;
-  padding: 8px 10px 6px;
+  min-height: 32px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
 }
 
-.commit-panel__select-actions {
-  display: flex;
-  gap: 6px;
+.commit-panel__title {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .commit-panel__count {
   color: var(--muted);
   font-size: 11px;
+  font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
 
 .commit-panel__tree {
   flex: 1;
   min-height: 0;
-  overflow: auto;
-  padding: 2px 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding: 4px 0;
 }
 
+/* Three real grid columns for three DOM children: checkbox | open-button |
+   status glyph. The open-button owns icon+name via its own inner grid, so the
+   name column is the one carrying minmax(0,1fr) and can ellipsis. */
 .commit-tree-row {
   display: grid;
-  grid-template-columns: 16px 18px minmax(0, 1fr) auto;
-  width: 100%;
-  min-height: 28px;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
   align-items: center;
   gap: 6px;
-  padding: 0 10px;
+  min-height: 28px;
+  padding-left: var(--commit-indent, 8px);
+  padding-right: 10px;
   color: var(--muted);
 }
 
 .commit-tree-row--folder {
-  grid-template-columns: 18px minmax(0, 1fr);
+  grid-template-columns: 16px minmax(0, 1fr);
 }
 
-.commit-tree-row input[type="checkbox"] {
+.commit-tree-row:hover {
+  background: var(--accent-weak);
+}
+
+.commit-tree-row__check {
+  width: 14px;
+  height: 14px;
   margin: 0;
+  cursor: pointer;
 }
 
-.commit-tree-row__open {
+.commit-tree-row__open,
+.commit-tree-row__label {
   display: grid;
-  grid-template-columns: 15px minmax(0, 1fr);
-  min-width: 0;
+  grid-template-columns: 16px minmax(0, 1fr);
   align-items: center;
   gap: 6px;
+  min-width: 0;
   border: 0;
   background: transparent;
   color: var(--text);
   cursor: pointer;
+  font: inherit;
   text-align: left;
 }
 
+.commit-tree-row__label {
+  color: var(--muted);
+}
+
 .commit-tree-row__open:hover,
-.commit-tree-row__open:focus-visible {
+.commit-tree-row__open:focus-visible,
+.commit-tree-row__label:hover,
+.commit-tree-row__label:focus-visible {
   color: var(--accent);
   outline: 0;
 }
 
-.commit-tree-row__open:disabled {
+.commit-tree-row__open:focus-visible,
+.commit-tree-row__label:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+  border-radius: 4px;
+}
+
+.commit-tree-row__icon {
+  flex: none;
   color: var(--muted);
-  cursor: not-allowed;
 }
 
 .commit-tree-row__name {
@@ -594,48 +645,68 @@ button {
   white-space: nowrap;
 }
 
+/* Deleted files stay selectable and openable (as an all-red diff), but read
+   as gone. */
+.commit-tree-row--deleted .commit-tree-row__name {
+  color: var(--muted);
+  text-decoration: line-through;
+}
+
+.commit-tree-row--deleted .commit-tree-row__icon {
+  opacity: 0.6;
+}
+
+/* Quiet status: a single colored letter, right-aligned, no fill — the file
+   name reads first and status is a peripheral cue, never the row's focus. */
 .commit-tree-row__badge {
-  display: inline-flex;
-  min-width: 16px;
-  height: 16px;
-  align-items: center;
-  justify-content: center;
-  border-radius: 4px;
-  font-size: 10px;
-  font-weight: 650;
+  justify-self: end;
+  width: 14px;
+  font-size: 11px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  text-align: center;
 }
 
 .commit-tree-row__badge--added {
-  background: color-mix(in oklch, oklch(71% 0.16 145) 20%, var(--panel));
-  color: oklch(71% 0.16 145);
+  color: var(--commit-added-fg);
 }
 
 .commit-tree-row__badge--modified {
-  background: color-mix(in oklch, var(--accent) 18%, var(--panel));
   color: var(--accent);
 }
 
 .commit-tree-row__badge--deleted {
-  background: color-mix(in oklch, var(--danger) 18%, var(--panel));
   color: var(--danger);
 }
 
 .commit-panel__footer {
   display: grid;
-  gap: 6px;
+  gap: 8px;
   padding: 8px 10px 10px;
   border-top: 1px solid var(--border);
 }
 
 .commit-panel__message {
   min-height: 56px;
+  max-height: 160px;
   padding: 7px 9px;
   border: 1px solid var(--border);
   border-radius: 6px;
   background: var(--bg);
   color: var(--text);
   font: inherit;
+  line-height: 1.4;
   resize: vertical;
+}
+
+.commit-panel__message:focus-visible {
+  border-color: var(--accent);
+  outline: 0;
+}
+
+.commit-panel__commit {
+  width: 100%;
 }
 
 .commit-panel__notice {
@@ -652,9 +723,41 @@ button {
 }
 
 .commit-panel__notice--success {
-  border: 1px solid color-mix(in oklch, oklch(71% 0.16 145) 42%, var(--border));
-  background: color-mix(in oklch, oklch(71% 0.16 145) 8%, var(--panel));
+  border: 1px solid color-mix(in oklch, var(--commit-added-fg) 42%, var(--border));
+  background: color-mix(in oklch, var(--commit-added-fg) 8%, var(--panel));
   color: var(--text);
+}
+
+.diff-host {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.diff-host .cm-editor {
+  height: 100%;
+}
+
+.diff-fallback {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 24px;
+  color: var(--muted);
+  font-size: 12px;
+  text-align: center;
+}
+
+.diff-fallback svg {
+  opacity: 0.5;
+}
+
+/* Read-only cue on the diff tab in the strip. */
+.tab--diff span:not(.tab__close) {
+  font-style: italic;
 }
 
 .endpoint {

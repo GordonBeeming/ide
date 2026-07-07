@@ -1,9 +1,24 @@
+import type { GitFileStatus } from "./tauri";
+
+export interface EditorTabDiff {
+  filePath: string;
+  original: string;
+  modified: string;
+  status: GitFileStatus;
+  isBinary: boolean;
+  isTooLarge: boolean;
+}
+
 export interface EditorTab {
+  // Diff tabs use the synthetic key `diff://<filePath>` so every other
+  // path-keyed helper in this module keeps working unmodified — a file can be
+  // open for editing and as a diff at the same time without colliding.
   path: string;
   contents: string;
   dirty: boolean;
   modifiedMs?: number;
   pinned: boolean;
+  diff?: EditorTabDiff;
 }
 
 export function addPreviewTab(

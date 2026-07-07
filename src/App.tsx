@@ -13,6 +13,7 @@ import {
 } from "react";
 import { listen } from "@tauri-apps/api/event";
 import {
+  Check,
   ChevronRight,
   Circle,
   Copy,
@@ -23,9 +24,12 @@ import {
   FileCog,
   FolderOpen,
   FolderPlus,
+  GitBranch,
   GitCommitHorizontal,
+  GitCompareArrows,
   ListOrdered,
   ListFilter,
+  Loader,
   PanelLeftClose,
   PanelLeftOpen,
   Pencil,
@@ -119,6 +123,7 @@ import {
   isNativeTauri,
   listDirectory,
   listFiles,
+  loadGitFileDiff,
   normalizeFileListResult,
   normalizeSearchResult,
   pickOpenFile,
@@ -173,6 +178,7 @@ import {
 import { cursorStatus, type EditorCursor } from "./editorCursor";
 
 const EditorPane = lazy(() => import("./EditorPane"));
+const DiffPane = lazy(() => import("./DiffPane"));
 
 const fallbackAppInfo: AppInfo = {
   name: "ide",
@@ -800,7 +806,7 @@ export default function App() {
   }, [activeFile]);
 
   useEffect(() => {
-    if (!gitAttributionEnabled || !activePath || !activeFile) {
+    if (!gitAttributionEnabled || !activePath || !activeFile || activeFile.diff) {
       setGitAttribution(undefined);
       setGitCommitPopover(undefined);
       return;
@@ -1202,6 +1208,31 @@ export default function App() {
     void refreshGitStatus();
   }, [commitModeActive, refreshGitStatus]);
 
+  // Success is transient — clear it after a few seconds (or immediately on the
+  // next edit, via handleGitCommit) so the panel doesn't carry a stale line.
+  useEffect(() => {
+    if (!gitCommitSuccess) return;
+    const timeoutId = window.setTimeout(() => setGitCommitSuccess(undefined), 5000);
+    return () => window.clearTimeout(timeoutId);
+  }, [gitCommitSuccess]);
+
+  // Diff tabs are inspection surfaces scoped to commit mode — leaving it drops
+  // every unpinned one so they don't accumulate; a double-clicked (pinned) tab
+  // was a deliberate keep and survives.
+  useEffect(() => {
+    if (commitModeActive) return;
+    setOpenFiles((current) => {
+      const kept = current.filter((file) => !file.diff || file.pinned);
+      if (kept.length === current.length) return current;
+      setActivePath((currentActivePath) =>
+        currentActivePath && kept.some((file) => file.path === currentActivePath)
+          ? currentActivePath
+          : kept.at(-1)?.path,
+      );
+      return kept;
+    });
+  }, [commitModeActive]);
+
   const toggleGitCommitSelection = useCallback((path: string) => {
     setGitCommitSelectedPaths((current) => {
       const next = new Set(current);
@@ -1220,6 +1251,22 @@ export default function App() {
 
   const deselectAllChangedFiles = useCallback(() => {
     setGitCommitSelectedPaths(new Set());
+  }, []);
+
+  // Bulk-selects/deselects a folder's whole leaf set for the tri-state folder
+  // checkboxes — a single toggle affects every file beneath that folder node.
+  const setGitCommitPathsSelected = useCallback((paths: string[], selected: boolean) => {
+    setGitCommitSelectedPaths((current) => {
+      const next = new Set(current);
+      for (const path of paths) {
+        if (selected) {
+          next.add(path);
+        } else {
+          next.delete(path);
+        }
+      }
+      return next;
+    });
   }, []);
 
   const handleGitCommit = useCallback(async () => {
@@ -1297,6 +1344,9 @@ export default function App() {
 
       const openFile = openFilesRef.current.find((file) => file.path === path);
       if (!openFile) return;
+      // Diff tabs are synthetic and read-only — there's no real file at this
+      // path to stat, and none of the reload/dirty machinery applies to them.
+      if (openFile.diff) return;
 
       diskCheckInFlightRef.current.add(path);
       try {
@@ -1504,9 +1554,14 @@ export default function App() {
   }, [refreshLspStatus]);
 
   useEffect(() => {
+    // Diff tabs are a synthetic inspection surface, not a real open file — an
+    // agent asking "what's open" shouldn't see the `diff://` pseudo-path.
+    const realOpenFiles = openFiles.filter((file) => !file.diff);
     const context: AgentContext = {
-      activeFile: activePath,
-      openFiles: openFiles.map((file) => file.path),
+      activeFile: realOpenFiles.some((file) => file.path === activePath)
+        ? activePath
+        : undefined,
+      openFiles: realOpenFiles.map((file) => file.path),
       selection: activeSelection,
       diagnostics,
     };
@@ -1651,6 +1706,31 @@ export default function App() {
       await openPath(entry, pinned, lineNumber);
     },
     [files, openPath, quickOpenIndexedResults],
+  );
+
+  // Opens a read-only worktree-vs-HEAD diff under the synthetic `diff://`
+  // key, as a preview (unpinned) tab — the same idiom as single-clicking a
+  // tree file, so opening a second diff replaces the first unless pinned.
+  const openDiffTab = useCallback(
+    async (filePath: string) => {
+      const key = `diff://${filePath}`;
+      try {
+        const diff = await loadGitFileDiff(filePath, maxOpenFileKb * 1024);
+        setOpenFiles((current) =>
+          addPreviewTab(current, {
+            path: key,
+            contents: diff.modified,
+            dirty: false,
+            pinned: false,
+            diff: { filePath, ...diff },
+          }),
+        );
+        setActivePath(key);
+      } catch (reason) {
+        setGitCommitError(`Unable to load diff for ${filePath}: ${String(reason)}`);
+      }
+    },
+    [maxOpenFileKb],
   );
 
   useEffect(() => {
@@ -1804,8 +1884,10 @@ export default function App() {
         },
         {
           expandedFolders: [...expandedFolders],
-          openFiles: openFiles.map((file) => file.path),
-          activeFile: activePath,
+          // Diff tabs are synthetic (`diff://…`) and must not survive a
+          // relaunch — persist only the real open-file paths.
+          openFiles: openFiles.filter((file) => !file.diff).map((file) => file.path),
+          activeFile: activeFile?.diff ? undefined : activePath,
           selectedPath,
           sidebarWidth,
           trustExternalSymlinks: trustExternalWorkspace,
@@ -3882,33 +3964,40 @@ export default function App() {
 
         {commitModeActive ? (
           <div className="commit-panel" aria-label="Git commit panel">
-            {!gitStatus || gitStatus.status === "unsupported" ? (
-              <div className="commit-panel__empty" role="status">
-                {gitStatusError ?? gitStatus?.unsupportedReason ?? "Loading Git status…"}
+            {gitStatusError || gitStatus?.status === "unsupported" ? (
+              <div className="commit-panel__state" role="status">
+                <GitBranch size={22} />
+                <span>{gitStatusError ?? gitStatus?.unsupportedReason}</span>
+              </div>
+            ) : !gitStatus ? (
+              <div className="commit-panel__state" role="status">
+                <Loader size={22} />
+                <span>Loading Git status…</span>
               </div>
             ) : changedFilePaths.length === 0 ? (
-              <div className="commit-panel__empty" role="status">No changes</div>
+              <div className="commit-panel__state" role="status">
+                <Check size={22} />
+                <span>No changes</span>
+              </div>
             ) : (
               <>
                 <div className="commit-panel__header">
-                  <div className="commit-panel__select-actions">
-                    <button
-                      className="command-button command-button--quiet"
-                      disabled={allChangedFilesSelected}
-                      onClick={selectAllChangedFiles}
-                    >
-                      Select all
-                    </button>
-                    <button
-                      className="command-button command-button--quiet"
-                      disabled={gitCommitSelectedPaths.size === 0}
-                      onClick={deselectAllChangedFiles}
-                    >
-                      Deselect all
-                    </button>
-                  </div>
+                  <TriStateCheckbox
+                    state={
+                      gitCommitSelectedPaths.size === 0
+                        ? "none"
+                        : allChangedFilesSelected
+                          ? "all"
+                          : "some"
+                    }
+                    onToggle={
+                      allChangedFilesSelected ? deselectAllChangedFiles : selectAllChangedFiles
+                    }
+                    ariaLabel={allChangedFilesSelected ? "Deselect all changes" : "Select all changes"}
+                  />
+                  <span className="commit-panel__title">Changes</span>
                   <span className="commit-panel__count">
-                    {gitCommitSelectedPaths.size} / {changedFilePaths.length} selected
+                    {gitCommitSelectedPaths.size} / {changedFilePaths.length}
                   </span>
                 </div>
                 <div className="commit-panel__tree" role="tree" aria-label="Changed files">
@@ -3916,9 +4005,11 @@ export default function App() {
                     <CommitTreeItem
                       key={node.path}
                       node={node}
+                      depth={0}
                       selectedPaths={gitCommitSelectedPaths}
                       onToggleSelected={toggleGitCommitSelection}
-                      onOpen={(path) => openPathByName(path, false)}
+                      onSetPathsSelected={setGitCommitPathsSelected}
+                      onOpen={(path) => void openDiffTab(path)}
                     />
                   ))}
                 </div>
@@ -3928,9 +4019,15 @@ export default function App() {
                     placeholder="Commit message"
                     value={gitCommitMessage}
                     onChange={(event) => setGitCommitMessage(event.target.value)}
+                    onKeyDown={(event) => {
+                      if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+                        event.preventDefault();
+                        void handleGitCommit();
+                      }
+                    }}
                   />
                   <button
-                    className="command-button command-button--primary"
+                    className="command-button command-button--primary commit-panel__commit"
                     disabled={
                       !gitCommitMessage.trim() ||
                       gitCommitSelectedPaths.size === 0 ||
@@ -3938,15 +4035,19 @@ export default function App() {
                     }
                     onClick={handleGitCommit}
                   >
-                    {gitCommitInFlight ? "Committing…" : "Commit"}
+                    {gitCommitInFlight
+                      ? "Committing…"
+                      : gitCommitSelectedPaths.size > 0
+                        ? `Commit ${gitCommitSelectedPaths.size} file${gitCommitSelectedPaths.size === 1 ? "" : "s"}`
+                        : "Commit"}
                   </button>
                   {gitCommitError ? (
-                    <div className="commit-panel__notice commit-panel__notice--error">
+                    <div className="commit-panel__notice commit-panel__notice--error" role="alert">
                       {gitCommitError}
                     </div>
                   ) : null}
                   {gitCommitSuccess ? (
-                    <div className="commit-panel__notice commit-panel__notice--success">
+                    <div className="commit-panel__notice commit-panel__notice--success" role="status">
                       {gitCommitSuccess}
                     </div>
                   ) : null}
@@ -4070,6 +4171,7 @@ export default function App() {
                     "tab",
                     file.path === activePath ? "tab--active" : "",
                     file.pinned ? "" : "tab--temp",
+                    file.diff ? "tab--diff" : "",
                   ].join(" ")}
                   key={file.path}
                   onClick={() => {
@@ -4088,9 +4190,9 @@ export default function App() {
                     )
                   }
                 >
-                  <FileCog size={15} />
-                  <span>{file.path}</span>
-                  {file.dirty ? <Circle className="dirty-dot" size={8} /> : null}
+                  {file.diff ? <GitCompareArrows size={15} /> : <FileCog size={15} />}
+                  <span>{file.diff ? `${file.diff.filePath} (Working Tree)` : file.path}</span>
+                  {!file.diff && file.dirty ? <Circle className="dirty-dot" size={8} /> : null}
                   <span
                     className="tab__close"
                     role="button"
@@ -4269,7 +4371,19 @@ export default function App() {
               ) : null}
             </div>
           ) : null}
-          {activeFile ? (
+          {activeFile?.diff ? (
+            <Suspense fallback={<div className="empty-state editor-loading-state">Loading diff</div>}>
+              <DiffPane
+                key={activeFile.path}
+                filePath={activeFile.diff.filePath}
+                original={activeFile.diff.original}
+                modified={activeFile.diff.modified}
+                isBinary={activeFile.diff.isBinary}
+                isTooLarge={activeFile.diff.isTooLarge}
+                prefersDark={prefersDark}
+              />
+            </Suspense>
+          ) : activeFile ? (
             <Suspense fallback={<div className="empty-state editor-loading-state">Loading editor</div>}>
               <EditorPane
                 contents={activeFile.contents}
@@ -5914,38 +6028,111 @@ function commitStatusBadgeLabel(status: GitStatusEntry["status"]): string {
   return "M";
 }
 
+// All file (leaf) paths beneath a node — folders drive selection of their
+// descendants via these, since a folder itself is never in the selected set.
+function collectCommitLeafPaths(node: CommitTreeNode): string[] {
+  return node.isDir ? node.children.flatMap(collectCommitLeafPaths) : [node.path];
+}
+
+type CommitSelectionState = "none" | "some" | "all";
+
+function commitSelectionState(
+  paths: string[],
+  selected: Set<string>,
+): CommitSelectionState {
+  let selectedCount = 0;
+  for (const path of paths) {
+    if (selected.has(path)) selectedCount += 1;
+  }
+  if (selectedCount === 0) return "none";
+  return selectedCount === paths.length ? "all" : "some";
+}
+
+// `indeterminate` is a DOM-only property React can't set from JSX, so it's
+// applied imperatively whenever the tri-state changes.
+function TriStateCheckbox({
+  state,
+  onToggle,
+  ariaLabel,
+}: {
+  state: CommitSelectionState;
+  onToggle: () => void;
+  ariaLabel: string;
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (inputRef.current) inputRef.current.indeterminate = state === "some";
+  }, [state]);
+  return (
+    <input
+      ref={inputRef}
+      type="checkbox"
+      className="commit-tree-row__check"
+      checked={state === "all"}
+      aria-checked={state === "some" ? "mixed" : state === "all"}
+      onChange={onToggle}
+      aria-label={ariaLabel}
+    />
+  );
+}
+
 // Folders are always force-expanded here (the changed-file set is small and
 // status-focused), so unlike `TreeItem` there is no collapse/expand state.
+// Folder checkboxes are tri-state (JetBrains-style bulk selection); file rows
+// carry a quiet single-letter status glyph (VS-Code-style) instead of a
+// filled badge, and every row — including deleted ones — opens a diff.
 function CommitTreeItem({
   node,
+  depth,
   selectedPaths,
   onToggleSelected,
+  onSetPathsSelected,
   onOpen,
 }: {
   node: CommitTreeNode;
+  depth: number;
   selectedPaths: Set<string>;
   onToggleSelected: (path: string) => void;
+  onSetPathsSelected: (paths: string[], selected: boolean) => void;
   onOpen: (path: string) => void;
 }) {
   const Icon = iconForFile(node.name, node.isDir);
-  const indent = 8 + node.depth * 14;
+  const indentStyle = { "--commit-indent": `${8 + depth * 12}px` } as CSSProperties;
 
   if (node.isDir) {
+    const leafPaths = collectCommitLeafPaths(node);
+    const state = commitSelectionState(leafPaths, selectedPaths);
     return (
-      <div>
-        <div className="commit-tree-row commit-tree-row--folder" style={{ paddingLeft: indent }}>
-          <Icon size={15} />
-          <span className="commit-tree-row__name">{node.name}</span>
-        </div>
-        {node.children.map((child) => (
-          <CommitTreeItem
-            key={child.path}
-            node={child}
-            selectedPaths={selectedPaths}
-            onToggleSelected={onToggleSelected}
-            onOpen={onOpen}
+      <div role="treeitem" aria-expanded="true" aria-level={depth + 1}>
+        <div className="commit-tree-row commit-tree-row--folder" style={indentStyle}>
+          <TriStateCheckbox
+            state={state}
+            onToggle={() => onSetPathsSelected(leafPaths, state !== "all")}
+            ariaLabel={`${state === "all" ? "Deselect" : "Select"} folder ${node.path}`}
           />
-        ))}
+          <button
+            type="button"
+            className="commit-tree-row__label"
+            onClick={() => onSetPathsSelected(leafPaths, state !== "all")}
+            title={node.path}
+          >
+            <Icon className="commit-tree-row__icon" size={15} />
+            <span className="commit-tree-row__name">{node.name}</span>
+          </button>
+        </div>
+        <div role="group">
+          {node.children.map((child) => (
+            <CommitTreeItem
+              key={child.path}
+              node={child}
+              depth={depth + 1}
+              selectedPaths={selectedPaths}
+              onToggleSelected={onToggleSelected}
+              onSetPathsSelected={onSetPathsSelected}
+              onOpen={onOpen}
+            />
+          ))}
+        </div>
       </div>
     );
   }
@@ -5955,9 +6142,15 @@ function CommitTreeItem({
   const isDeleted = status === "deleted";
 
   return (
-    <div className="commit-tree-row" style={{ paddingLeft: indent }}>
+    <div
+      role="treeitem"
+      aria-level={depth + 1}
+      className={`commit-tree-row${isDeleted ? " commit-tree-row--deleted" : ""}`}
+      style={indentStyle}
+    >
       <input
         type="checkbox"
+        className="commit-tree-row__check"
         checked={isSelected}
         onChange={() => onToggleSelected(node.path)}
         aria-label={`${isSelected ? "Deselect" : "Select"} ${node.path}`}
@@ -5965,14 +6158,16 @@ function CommitTreeItem({
       <button
         type="button"
         className="commit-tree-row__open"
-        disabled={isDeleted}
-        title={isDeleted ? "Deleted files can't be opened" : node.path}
+        title={isDeleted ? `Open diff (deleted) — ${node.path}` : `Open diff — ${node.path}`}
         onClick={() => onOpen(node.path)}
       >
-        <Icon size={15} />
+        <Icon className="commit-tree-row__icon" size={15} />
         <span className="commit-tree-row__name">{node.name}</span>
       </button>
-      <span className={`commit-tree-row__badge commit-tree-row__badge--${status}`}>
+      <span
+        className={`commit-tree-row__badge commit-tree-row__badge--${status}`}
+        aria-hidden="true"
+      >
         {commitStatusBadgeLabel(status)}
       </span>
     </div>
