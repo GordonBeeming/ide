@@ -4104,6 +4104,23 @@ describe("Git commit sidebar", () => {
     expect(await screen.findByLabelText("Diff gone.txt")).toBeInTheDocument();
   });
 
+  it("shows the qualified path in the status bar for a diff tab, never the synthetic key", async () => {
+    render(<App />);
+
+    expect(await treeButton("README.md")).toBeInTheDocument();
+    fireEvent.click(screen.getByTitle("Commit changes"));
+
+    const panel = await screen.findByLabelText("Git commit panel");
+    const readmeRow = await within(panel).findByText("README.md");
+    fireEvent.click(readmeRow.closest("button")!);
+    await screen.findByLabelText("Diff README.md");
+
+    expect(document.querySelector(".statusbar__path")).toHaveTextContent(
+      "README.md (Working Tree)",
+    );
+    expect(screen.queryByText(/^diff:\/\//)).not.toBeInTheDocument();
+  });
+
   it("closes unpinned diff tabs on leaving commit mode but keeps pinned ones", async () => {
     render(<App />);
 
@@ -4116,8 +4133,10 @@ describe("Git commit sidebar", () => {
     await screen.findByLabelText("Diff README.md");
     // Pin the README diff before opening another one — an unpinned preview
     // diff tab is replaced by the next one opened, same as a file preview tab.
-    const pinnedTab = screen.getByText("README.md (Working Tree)").closest("button")!;
-    fireEvent.doubleClick(pinnedTab);
+    // Use the .tab-strip-scoped helper: the status bar now also shows the
+    // "(Working Tree)" label, so a page-wide text query would be ambiguous.
+    await waitFor(() => expect(tabButton("README.md (Working Tree)")).toBeTruthy());
+    fireEvent.doubleClick(tabButton("README.md (Working Tree)")!);
 
     const appRow = await within(panel).findByText("App.tsx");
     fireEvent.click(appRow.closest("button")!);
@@ -4125,10 +4144,8 @@ describe("Git commit sidebar", () => {
 
     fireEvent.click(screen.getByTitle("Commit changes"));
 
-    await waitFor(() =>
-      expect(screen.queryByText("src/App.tsx (Working Tree)")).not.toBeInTheDocument(),
-    );
-    expect(screen.getByText("README.md (Working Tree)")).toBeInTheDocument();
+    await waitFor(() => expect(tabButton("src/App.tsx (Working Tree)")).toBeUndefined());
+    expect(tabButton("README.md (Working Tree)")).toBeTruthy();
   });
 });
 

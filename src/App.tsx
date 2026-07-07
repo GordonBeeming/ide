@@ -659,7 +659,7 @@ export default function App() {
   );
   const currentFindResults = useMemo(
     () =>
-      activeFile
+      activeFile && !activeFile.diff
         ? currentFileMatches(
             activeFile.path,
             activeFile.contents,
@@ -706,8 +706,13 @@ export default function App() {
       : `${searchStats.searchedFiles.toLocaleString()} files searched${
           searchStats.skippedFiles ? `, ${searchStats.skippedFiles.toLocaleString()} skipped` : ""
         }`;
+  // Diff tabs are read-only synthetic surfaces — find-in-file (like save and
+  // the disk-state check) must no-op for them rather than searching/labeling
+  // against the synthetic `diff://` path.
   const currentFindExpanded =
-    Boolean(activeFile) && (currentFindOpen || currentFileQuery.trim().length > 0);
+    Boolean(activeFile) &&
+    !activeFile?.diff &&
+    (currentFindOpen || currentFileQuery.trim().length > 0);
   const suggestedNewFilePath = useMemo(
     () => suggestNewFilePath(selectedPath, files),
     [files, selectedPath],
@@ -1678,7 +1683,9 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!trackActiveFile || !activePath || singleFileMode) return;
+    // Diff tabs are a synthetic key with no corresponding workspace tree
+    // node, so there's nothing real to select or expand toward.
+    if (!trackActiveFile || !activePath || singleFileMode || activeFile?.diff) return;
 
     setSelectedPath(activePath);
     const parentPaths = parentFolderPaths(activePath);
@@ -2500,7 +2507,7 @@ export default function App() {
   }, []);
 
   const openCurrentFileFind = useCallback(() => {
-    if (!activeFile) {
+    if (!activeFile || activeFile.diff) {
       setStatus("Find in file requires an open file");
       return;
     }
@@ -2509,7 +2516,7 @@ export default function App() {
   }, [activeFile]);
 
   const openGoToLineDialog = useCallback(() => {
-    if (!activeFile) {
+    if (!activeFile || activeFile.diff) {
       setStatus("Go to line requires an open file");
       return;
     }
@@ -2533,7 +2540,7 @@ export default function App() {
   }, []);
 
   const goToLine = useCallback(() => {
-    if (!activeFile) {
+    if (!activeFile || activeFile.diff) {
       closeGoToLineDialog();
       setStatus("Go to line requires an open file");
       return;
@@ -3071,15 +3078,18 @@ export default function App() {
         title: "Find in File",
         detail: "Search inside the active file",
         keywords: ["current file search"],
-        enabled: Boolean(activeFile),
+        enabled: Boolean(activeFile) && !activeFile?.diff,
         run: openCurrentFileFind,
       },
       {
         id: "go_to_line",
         title: "Go to Line",
-        detail: activeFile ? `Jump within ${activeFile.path}` : "Jump within the active file",
+        detail:
+          activeFile && !activeFile.diff
+            ? `Jump within ${activeFile.path}`
+            : "Jump within the active file",
         keywords: ["line number", "jump"],
-        enabled: Boolean(activeFile),
+        enabled: Boolean(activeFile) && !activeFile?.diff,
         run: openGoToLineDialog,
       },
       {
@@ -3121,9 +3131,10 @@ export default function App() {
       {
         id: "save_file",
         title: "Save",
-        detail: activeFile ? `Save ${activeFile.path}` : "Save the active file",
+        detail:
+          activeFile && !activeFile.diff ? `Save ${activeFile.path}` : "Save the active file",
         keywords: ["write file"],
-        enabled: Boolean(activeFile),
+        enabled: Boolean(activeFile) && !activeFile?.diff,
         run: () => {
           void saveActive();
         },
@@ -4342,7 +4353,7 @@ export default function App() {
         </header>
 
         <div className={editorRegionClass()}>
-          {activeFile && currentFileQuery.trim() ? (
+          {activeFile && !activeFile.diff && currentFileQuery.trim() ? (
             <div className="current-find-results" aria-label="Current file search results">
               <div className="current-find-results__header">
                 <span>Find in {activeFile.path}</span>
@@ -4429,7 +4440,11 @@ export default function App() {
 
         <footer className="statusbar">
           <span className="statusbar__state">{status}</span>
-          <span className="statusbar__path">{activePath ?? workspaceRoot}</span>
+          <span className="statusbar__path">
+            {activeFile?.diff
+              ? `${activeFile.diff.filePath} (Working Tree)`
+              : activePath ?? workspaceRoot}
+          </span>
           {activeGitFileCommit ? (
             <button
               className="statusbar__git-attribution"
