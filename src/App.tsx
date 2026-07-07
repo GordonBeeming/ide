@@ -641,11 +641,41 @@ export default function App() {
     [filter, tree],
   );
   const changedFiles = gitStatus?.status === "available" ? gitStatus.files : [];
-  const commitTree = useMemo(() => buildCommitTree(changedFiles), [changedFiles]);
   const changedFilePaths = useMemo(
     () => changedFiles.map((file) => file.path),
     [changedFiles],
   );
+  // Badge/dot overlay for the main tree (Part 2) — undefined (not just empty)
+  // when there's nothing to show, so `TreeItem` renders byte-for-byte as it
+  // does today when the flag is off or status hasn't loaded.
+  const fileStatusByPath = useMemo(() => {
+    if (changedFiles.length === 0) return undefined;
+    return new Map(changedFiles.map((file) => [file.path, file.status]));
+  }, [changedFiles]);
+  const changedFolderPaths = useMemo(() => {
+    if (changedFiles.length === 0) return undefined;
+    const folders = new Set<string>();
+    for (const file of changedFiles) {
+      const segments = file.path.split("/");
+      for (let index = 1; index < segments.length; index += 1) {
+        folders.add(segments.slice(0, index).join("/"));
+      }
+    }
+    return folders;
+  }, [changedFiles]);
+  // Commit mode reuses the same tree/TreeItem as normal browsing (Part 3),
+  // filtered down to changed files plus their ancestor folders. Deleted
+  // files don't exist in `sidebarFiles` (the workspace scan can't see them),
+  // so they're injected as synthetic leaf entries before filtering.
+  const changedFilesTree = useMemo(() => {
+    if (changedFiles.length === 0) return [];
+    const existingPaths = new Set(sidebarFiles.map((file) => file.path));
+    const syntheticEntries = syntheticMissingFileEntries(changedFiles, existingPaths);
+    const combinedEntries =
+      syntheticEntries.length > 0 ? [...sidebarFiles, ...syntheticEntries] : sidebarFiles;
+    const fullTree = buildTree(combinedEntries);
+    return filterTreeToPaths(fullTree, new Set(changedFilePaths));
+  }, [changedFiles, changedFilePaths, sidebarFiles]);
   const allChangedFilesSelected =
     changedFilePaths.length > 0 &&
     changedFilePaths.every((path) => gitCommitSelectedPaths.has(path));
@@ -1081,6 +1111,34 @@ export default function App() {
     }
   }, []);
 
+  // Declared ahead of `refreshFiles` so the workspace-scan callback (the
+  // single choke point every save/create/rename/delete/refresh already
+  // funnels through) can trigger it too, without a temporal-dead-zone issue.
+  const refreshGitStatus = useCallback(async () => {
+    if (!gitCommitEnabled) return;
+
+    try {
+      const status = await getGitStatus();
+      setGitStatus(status);
+      setGitStatusError(undefined);
+      setGitCommitSelectedPaths((current) => {
+        const validPaths = new Set(status.files.map((file) => file.path));
+        if (!gitStatusInitializedRef.current) {
+          gitStatusInitializedRef.current = true;
+          return validPaths;
+        }
+        const next = new Set<string>();
+        for (const path of current) {
+          if (validPaths.has(path)) next.add(path);
+        }
+        return next;
+      });
+    } catch (reason) {
+      setGitStatus(undefined);
+      setGitStatusError(`Unable to load Git status: ${String(reason)}`);
+    }
+  }, [gitCommitEnabled]);
+
   const refreshFiles = useCallback(async (options?: { singleFilePath?: string }) => {
     const effectiveSingleFilePath =
       options && "singleFilePath" in options ? options.singleFilePath : singleFilePath;
@@ -1126,6 +1184,12 @@ export default function App() {
       loadingFoldersRef.current.clear();
       setWorkspaceLoadFailed(false);
       await refreshIntegrationStatus();
+      // This is the single choke point every workspace load/refresh and
+      // save/create/rename/delete already funnels through, so hooking Git
+      // status here (flag-gated inside refreshGitStatus) covers all of them
+      // without each caller needing its own explicit call. Fire-and-forget:
+      // the scan result below shouldn't wait on an extra round trip.
+      void refreshGitStatus();
       return entries;
     } catch (reason) {
       setWorkspaceLoadFailed(true);
@@ -1134,6 +1198,7 @@ export default function App() {
       setWorkspaceLoading(false);
     }
   }, [
+    refreshGitStatus,
     refreshIntegrationStatus,
     showDotfiles,
     showGeneratedInternal,
@@ -1168,50 +1233,53 @@ export default function App() {
     }
   }, []);
 
-  const refreshGitStatus = useCallback(async () => {
-    if (!gitCommitEnabled) return;
-
-    try {
-      const status = await getGitStatus();
-      setGitStatus(status);
-      setGitStatusError(undefined);
-      setGitCommitSelectedPaths((current) => {
-        const validPaths = new Set(status.files.map((file) => file.path));
-        if (!gitStatusInitializedRef.current) {
-          gitStatusInitializedRef.current = true;
-          return validPaths;
-        }
-        const next = new Set<string>();
-        for (const path of current) {
-          if (validPaths.has(path)) next.add(path);
-        }
-        return next;
-      });
-    } catch (reason) {
-      setGitStatus(undefined);
-      setGitStatusError(`Unable to load Git status: ${String(reason)}`);
-    }
-  }, [gitCommitEnabled]);
-
   const refreshWorkspace = useCallback(async () => {
     setError(undefined);
     setStatus("Refreshing files");
     try {
+      // `refreshFiles` itself refreshes Git status (flag-gated) on success, so
+      // every save/create/rename/delete that already calls it gets fresh
+      // status for free — this explicit refresh-button path is covered too.
       await refreshFiles();
-      if (commitModeActive) {
-        void refreshGitStatus();
-      }
       setStatus("Ready");
     } catch (reason) {
       setError(String(reason));
       setStatus("Workspace load failed");
     }
-  }, [refreshFiles, commitModeActive, refreshGitStatus]);
+  }, [refreshFiles]);
 
   useEffect(() => {
     if (!commitModeActive) return;
     void refreshGitStatus();
   }, [commitModeActive, refreshGitStatus]);
+
+  // Auto-expand the ancestor folders of every changed file on entering commit
+  // mode, so the (now filtered, not force-expanded) shared tree shows them
+  // without a manual expand. Only ever adds to `expandedFolders` — a manual
+  // collapse afterward (in either mode) is never overridden, and it carries
+  // over when leaving/re-entering commit mode since it's the same Set.
+  useEffect(() => {
+    if (!commitModeActive || changedFilePaths.length === 0) return;
+    const ancestorPaths = new Set<string>();
+    for (const path of changedFilePaths) {
+      const segments = path.split("/");
+      for (let index = 1; index < segments.length; index += 1) {
+        ancestorPaths.add(segments.slice(0, index).join("/"));
+      }
+    }
+    if (ancestorPaths.size === 0) return;
+    setExpandedFolders((current) => {
+      let changed = false;
+      const next = new Set(current);
+      for (const path of ancestorPaths) {
+        if (!next.has(path)) {
+          next.add(path);
+          changed = true;
+        }
+      }
+      return changed ? next : current;
+    });
+  }, [commitModeActive, changedFilePaths]);
 
   // Success is transient — clear it after a few seconds (or immediately on the
   // next edit, via handleGitCommit) so the panel doesn't carry a stale line.
@@ -4012,15 +4080,23 @@ export default function App() {
                   </span>
                 </div>
                 <div className="commit-panel__tree" role="tree" aria-label="Changed files">
-                  {commitTree.map((node) => (
-                    <CommitTreeItem
+                  {changedFilesTree.map((node) => (
+                    <TreeItem
                       key={node.path}
+                      expandedFolders={expandedFolders}
+                      forceExpanded={false}
                       node={node}
-                      depth={0}
-                      selectedPaths={gitCommitSelectedPaths}
-                      onToggleSelected={toggleGitCommitSelection}
-                      onSetPathsSelected={setGitCommitPathsSelected}
-                      onOpen={(path) => void openDiffTab(path)}
+                      selectedPath={selectedPath}
+                      onOpen={(entry) => void openDiffTab(entry.path)}
+                      onSelect={setSelectedPath}
+                      onToggleFolder={toggleFolder}
+                      fileStatusByPath={fileStatusByPath}
+                      changedFolderPaths={changedFolderPaths}
+                      selection={{
+                        selectedPaths: gitCommitSelectedPaths,
+                        onToggleFile: toggleGitCommitSelection,
+                        onSetFolderSelected: setGitCommitPathsSelected,
+                      }}
                     />
                   ))}
                 </div>
@@ -4094,6 +4170,8 @@ export default function App() {
                   onOpen={openPath}
                   onSelect={setSelectedPath}
                   onToggleFolder={toggleFolder}
+                  fileStatusByPath={fileStatusByPath}
+                  changedFolderPaths={changedFolderPaths}
                 />
               ))
             )}
@@ -5836,6 +5914,12 @@ export default function App() {
   );
 }
 
+interface TreeItemSelection {
+  selectedPaths: Set<string>;
+  onToggleFile: (path: string) => void;
+  onSetFolderSelected: (paths: string[], selected: boolean) => void;
+}
+
 function TreeItem({
   expandedFolders,
   forceExpanded,
@@ -5844,6 +5928,9 @@ function TreeItem({
   onOpen,
   onSelect,
   onToggleFolder,
+  fileStatusByPath,
+  changedFolderPaths,
+  selection,
 }: {
   expandedFolders: Set<string>;
   forceExpanded: boolean;
@@ -5852,10 +5939,26 @@ function TreeItem({
   onOpen: (entry: FileEntry, pinned?: boolean) => void;
   onSelect: (path: string) => void;
   onToggleFolder: (path: string) => void;
+  // Git status overlay (Part 2) — present in both normal browsing and commit
+  // mode. `undefined` (not empty) when there's nothing to show, so the row
+  // renders exactly as it does today with the flag off.
+  fileStatusByPath?: Map<string, GitStatusEntry["status"]>;
+  changedFolderPaths?: Set<string>;
+  // Presence alone means "commit/selection mode" — adds the leading checkbox
+  // column and is the only thing that changes between browsing and committing;
+  // expand/collapse, and everything else, stays identical in both.
+  selection?: TreeItemSelection;
 }) {
   const expanded = forceExpanded || expandedFolders.has(node.path);
   const Icon = iconForFile(node.name, node.isDir);
   const isActive = selectedPath === node.path;
+  const fileStatus = !node.isDir ? fileStatusByPath?.get(node.path) : undefined;
+  const isDeleted = fileStatus === "deleted";
+  const hasChangedDescendant = node.isDir && Boolean(changedFolderPaths?.has(node.path));
+  const leafPaths = node.isDir && selection ? collectTreeLeafPaths(node) : undefined;
+  const folderSelectionState =
+    leafPaths && selection ? treeSelectionState(leafPaths, selection.selectedPaths) : undefined;
+  const showTrailing = node.isSymlink || Boolean(fileStatus) || hasChangedDescendant;
   const handleKeyDown = (event: ReactKeyboardEvent<HTMLButtonElement>) => {
     const activatesRow =
       event.key === "Enter" || event.key === " " || event.key === "Spacebar";
@@ -5893,56 +5996,97 @@ function TreeItem({
 
   return (
     <div>
-      <button
-        className={`tree-row ${isActive ? "tree-row--active" : ""}`}
-        role="treeitem"
-        aria-expanded={node.isDir ? expanded : undefined}
-        aria-level={node.depth + 1}
-        aria-selected={isActive}
-        style={{ paddingLeft: 8 + node.depth * 14 }}
-        onClick={() => {
-          onSelect(node.path);
-          if (node.isDir) {
-            onToggleFolder(node.path);
-          } else {
-            onOpen(node, false);
-          }
-        }}
-        onDoubleClick={() => {
-          if (!node.isDir) {
-            onOpen(node, true);
-          }
-        }}
-        onKeyDown={handleKeyDown}
-      >
-        {node.isDir ? (
-          <ChevronRight
-            className={expanded ? "chevron chevron--open" : "chevron"}
-            size={14}
-          />
-        ) : (
-          <span className="tree-row__spacer" />
-        )}
-        <Icon size={15} />
-        <span className="tree-row__name">{node.name}</span>
-        {node.isSymlink ? (
-          node.isExternal ? (
-            <ExternalLink
-              className="tree-row__symlink tree-row__symlink--external"
-              size={12}
-              aria-label="External symbolic link"
-              data-testid="tree-symlink-external"
+      <div className="tree-row-line" style={{ paddingLeft: 8 + node.depth * 14 }}>
+        {selection ? (
+          node.isDir ? (
+            <TriStateCheckbox
+              state={folderSelectionState ?? "none"}
+              onToggle={() =>
+                selection.onSetFolderSelected(leafPaths ?? [], folderSelectionState !== "all")
+              }
+              ariaLabel={`${folderSelectionState === "all" ? "Deselect" : "Select"} folder ${node.path}`}
             />
           ) : (
-            <Link2
-              className="tree-row__symlink"
-              size={12}
-              aria-label="Symbolic link"
-              data-testid="tree-symlink"
+            <input
+              type="checkbox"
+              className="tree-row__check"
+              checked={selection.selectedPaths.has(node.path)}
+              onChange={() => selection.onToggleFile(node.path)}
+              aria-label={`${selection.selectedPaths.has(node.path) ? "Deselect" : "Select"} ${node.path}`}
             />
           )
         ) : null}
-      </button>
+        <button
+          className={[
+            "tree-row",
+            isActive ? "tree-row--active" : "",
+            isDeleted ? "tree-row--deleted" : "",
+          ]
+            .filter(Boolean)
+            .join(" ")}
+          role="treeitem"
+          aria-expanded={node.isDir ? expanded : undefined}
+          aria-level={node.depth + 1}
+          aria-selected={isActive}
+          onClick={() => {
+            onSelect(node.path);
+            if (node.isDir) {
+              onToggleFolder(node.path);
+            } else {
+              onOpen(node, false);
+            }
+          }}
+          onDoubleClick={() => {
+            if (!node.isDir) {
+              onOpen(node, true);
+            }
+          }}
+          onKeyDown={handleKeyDown}
+        >
+          {node.isDir ? (
+            <ChevronRight
+              className={expanded ? "chevron chevron--open" : "chevron"}
+              size={14}
+            />
+          ) : (
+            <span className="tree-row__spacer" />
+          )}
+          <Icon className="tree-row__icon" size={15} />
+          <span className="tree-row__name">{node.name}</span>
+          {showTrailing ? (
+            <span className="tree-row__trailing">
+              {node.isSymlink ? (
+                node.isExternal ? (
+                  <ExternalLink
+                    className="tree-row__symlink tree-row__symlink--external"
+                    size={12}
+                    aria-label="External symbolic link"
+                    data-testid="tree-symlink-external"
+                  />
+                ) : (
+                  <Link2
+                    className="tree-row__symlink"
+                    size={12}
+                    aria-label="Symbolic link"
+                    data-testid="tree-symlink"
+                  />
+                )
+              ) : null}
+              {fileStatus ? (
+                <span
+                  className={`tree-row__status tree-row__status--${fileStatus}`}
+                  aria-hidden="true"
+                >
+                  {gitFileStatusLabel(fileStatus)}
+                </span>
+              ) : null}
+              {hasChangedDescendant ? (
+                <span className="tree-row__status-dot" aria-hidden="true" />
+              ) : null}
+            </span>
+          ) : null}
+        </button>
+      </div>
       {node.isDir && expanded
         ? node.children.map((child) => (
             <TreeItem
@@ -5954,6 +6098,9 @@ function TreeItem({
               onOpen={onOpen}
               onSelect={onSelect}
               onToggleFolder={onToggleFolder}
+              fileStatusByPath={fileStatusByPath}
+              changedFolderPaths={changedFolderPaths}
+              selection={selection}
             />
           ))
         : null}
@@ -5984,60 +6131,7 @@ function buildTree(entries: FileEntry[]): TreeNode[] {
   return roots;
 }
 
-interface CommitTreeNode {
-  path: string;
-  name: string;
-  depth: number;
-  isDir: boolean;
-  children: CommitTreeNode[];
-  // Only set on file leaves — folder nodes are synthesized purely for nesting.
-  status?: GitStatusEntry["status"];
-}
-
-// Changed-file paths have no corresponding FileEntry for their ancestor
-// directories (unlike the workspace scan, which returns one), so this builds
-// a small parallel tree straight from git status paths rather than reusing
-// `buildTree`.
-function buildCommitTree(files: GitStatusEntry[]): CommitTreeNode[] {
-  const nodes = new Map<string, CommitTreeNode>();
-  const roots: CommitTreeNode[] = [];
-
-  for (const file of files) {
-    const segments = file.path.split("/");
-    let parent: CommitTreeNode | undefined;
-    for (let index = 0; index < segments.length; index += 1) {
-      const path = segments.slice(0, index + 1).join("/");
-      const isLeaf = index === segments.length - 1;
-      let node = nodes.get(path);
-      if (!node) {
-        node = {
-          path,
-          name: segments[index],
-          depth: index,
-          isDir: !isLeaf,
-          children: [],
-          status: isLeaf ? file.status : undefined,
-        };
-        nodes.set(path, node);
-        if (parent) {
-          parent.children.push(node);
-        } else {
-          roots.push(node);
-        }
-      }
-      parent = node;
-    }
-  }
-
-  const sortNodes = (items: CommitTreeNode[]) => {
-    items.sort((a, b) => Number(b.isDir) - Number(a.isDir) || a.name.localeCompare(b.name));
-    items.forEach((item) => sortNodes(item.children));
-  };
-  sortNodes(roots);
-  return roots;
-}
-
-function commitStatusBadgeLabel(status: GitStatusEntry["status"]): string {
+function gitFileStatusLabel(status: GitStatusEntry["status"]): string {
   if (status === "added") return "A";
   if (status === "deleted") return "D";
   return "M";
@@ -6045,16 +6139,13 @@ function commitStatusBadgeLabel(status: GitStatusEntry["status"]): string {
 
 // All file (leaf) paths beneath a node — folders drive selection of their
 // descendants via these, since a folder itself is never in the selected set.
-function collectCommitLeafPaths(node: CommitTreeNode): string[] {
-  return node.isDir ? node.children.flatMap(collectCommitLeafPaths) : [node.path];
+function collectTreeLeafPaths(node: TreeNode): string[] {
+  return node.isDir ? node.children.flatMap(collectTreeLeafPaths) : [node.path];
 }
 
-type CommitSelectionState = "none" | "some" | "all";
+type TreeSelectionState = "none" | "some" | "all";
 
-function commitSelectionState(
-  paths: string[],
-  selected: Set<string>,
-): CommitSelectionState {
+function treeSelectionState(paths: string[], selected: Set<string>): TreeSelectionState {
   let selectedCount = 0;
   for (const path of paths) {
     if (selected.has(path)) selectedCount += 1;
@@ -6070,7 +6161,7 @@ function TriStateCheckbox({
   onToggle,
   ariaLabel,
 }: {
-  state: CommitSelectionState;
+  state: TreeSelectionState;
   onToggle: () => void;
   ariaLabel: string;
 }) {
@@ -6082,7 +6173,7 @@ function TriStateCheckbox({
     <input
       ref={inputRef}
       type="checkbox"
-      className="commit-tree-row__check"
+      className="tree-row__check"
       checked={state === "all"}
       aria-checked={state === "some" ? "mixed" : state === "all"}
       onChange={onToggle}
@@ -6091,102 +6182,45 @@ function TriStateCheckbox({
   );
 }
 
-// Folders are always force-expanded here (the changed-file set is small and
-// status-focused), so unlike `TreeItem` there is no collapse/expand state.
-// Folder checkboxes are tri-state (JetBrains-style bulk selection); file rows
-// carry a quiet single-letter status glyph (VS-Code-style) instead of a
-// filled badge, and every row — including deleted ones — opens a diff.
-function CommitTreeItem({
-  node,
-  depth,
-  selectedPaths,
-  onToggleSelected,
-  onSetPathsSelected,
-  onOpen,
-}: {
-  node: CommitTreeNode;
-  depth: number;
-  selectedPaths: Set<string>;
-  onToggleSelected: (path: string) => void;
-  onSetPathsSelected: (paths: string[], selected: boolean) => void;
-  onOpen: (path: string) => void;
-}) {
-  const Icon = iconForFile(node.name, node.isDir);
-  const indentStyle = { "--commit-indent": `${8 + depth * 12}px` } as CSSProperties;
+// Builds stub FileEntry rows for changed paths the workspace scan doesn't
+// have — always true for deletions (the file is gone from disk), and
+// possible for anything else too (a lazily-loaded folder that hasn't been
+// scanned yet, a file created outside the IDE since the last scan). Covering
+// every status, not just deleted, keeps a changed file from silently
+// vanishing from the commit-mode tree just because the scan hasn't caught up.
+function syntheticMissingFileEntries(
+  changedFiles: GitStatusEntry[],
+  existingPaths: Set<string>,
+): FileEntry[] {
+  return changedFiles
+    .filter((file) => !existingPaths.has(file.path))
+    .map((file) => {
+      const segments = file.path.split("/");
+      const parent = segments.length > 1 ? segments.slice(0, -1).join("/") : undefined;
+      return {
+        path: file.path,
+        name: segments[segments.length - 1],
+        parent,
+        isDir: false,
+        depth: segments.length - 1,
+        size: 0,
+      };
+    });
+}
 
-  if (node.isDir) {
-    const leafPaths = collectCommitLeafPaths(node);
-    const state = commitSelectionState(leafPaths, selectedPaths);
-    return (
-      <div role="treeitem" aria-expanded="true" aria-level={depth + 1}>
-        <div className="commit-tree-row commit-tree-row--folder" style={indentStyle}>
-          <TriStateCheckbox
-            state={state}
-            onToggle={() => onSetPathsSelected(leafPaths, state !== "all")}
-            ariaLabel={`${state === "all" ? "Deselect" : "Select"} folder ${node.path}`}
-          />
-          <button
-            type="button"
-            className="commit-tree-row__label"
-            onClick={() => onSetPathsSelected(leafPaths, state !== "all")}
-            title={node.path}
-          >
-            <Icon className="commit-tree-row__icon" size={15} />
-            <span className="commit-tree-row__name">{node.name}</span>
-          </button>
-        </div>
-        <div role="group">
-          {node.children.map((child) => (
-            <CommitTreeItem
-              key={child.path}
-              node={child}
-              depth={depth + 1}
-              selectedPaths={selectedPaths}
-              onToggleSelected={onToggleSelected}
-              onSetPathsSelected={onSetPathsSelected}
-              onOpen={onOpen}
-            />
-          ))}
-        </div>
-      </div>
-    );
-  }
-
-  const status = node.status ?? "modified";
-  const isSelected = selectedPaths.has(node.path);
-  const isDeleted = status === "deleted";
-
-  return (
-    <div
-      role="treeitem"
-      aria-level={depth + 1}
-      className={`commit-tree-row${isDeleted ? " commit-tree-row--deleted" : ""}`}
-      style={indentStyle}
-    >
-      <input
-        type="checkbox"
-        className="commit-tree-row__check"
-        checked={isSelected}
-        onChange={() => onToggleSelected(node.path)}
-        aria-label={`${isSelected ? "Deselect" : "Select"} ${node.path}`}
-      />
-      <button
-        type="button"
-        className="commit-tree-row__open"
-        title={isDeleted ? `Open diff (deleted) — ${node.path}` : `Open diff — ${node.path}`}
-        onClick={() => onOpen(node.path)}
-      >
-        <Icon className="commit-tree-row__icon" size={15} />
-        <span className="commit-tree-row__name">{node.name}</span>
-      </button>
-      <span
-        className={`commit-tree-row__badge commit-tree-row__badge--${status}`}
-        aria-hidden="true"
-      >
-        {commitStatusBadgeLabel(status)}
-      </span>
-    </div>
-  );
+// Prunes a tree down to the file nodes whose path is in `paths`, plus their
+// ancestor folders — the commit panel's "changed files + the folders that
+// contain them" view over the exact same tree the workspace browser renders.
+function filterTreeToPaths(nodes: TreeNode[], paths: Set<string>): TreeNode[] {
+  return nodes
+    .map((node) => {
+      const children = filterTreeToPaths(node.children, paths);
+      if ((!node.isDir && paths.has(node.path)) || children.length > 0) {
+        return { ...node, children };
+      }
+      return undefined;
+    })
+    .filter((node): node is TreeNode => Boolean(node));
 }
 
 function mergeFileEntries(current: FileEntry[], nextEntries: FileEntry[]) {

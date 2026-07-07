@@ -4040,16 +4040,23 @@ describe("Git commit sidebar", () => {
   });
 
   it("gives a folder checkbox tri-state selection over its descendant files", async () => {
-    tauriMocks.getGitStatus.mockResolvedValueOnce({
-      status: "available",
+    // Queued twice: `getGitStatus` now fires once on the initial workspace
+    // load (Part 2) and again on entering commit mode, both before this test
+    // reads the panel — a single `mockResolvedValueOnce` would be consumed
+    // by the mount call, leaving the entering-commit-mode call to fall
+    // through to the describe-inherited baseline (README.md/src/App.tsx).
+    const customStatus = {
+      status: "available" as const,
       branch: "main",
       headDetached: false,
       headUnborn: false,
       files: [
-        { path: "src/a.ts", status: "modified", staged: false, unstaged: true },
-        { path: "src/b.ts", status: "modified", staged: false, unstaged: true },
+        { path: "src/a.ts", status: "modified" as const, staged: false, unstaged: true },
+        { path: "src/b.ts", status: "modified" as const, staged: false, unstaged: true },
       ],
-    });
+    };
+    tauriMocks.getGitStatus.mockResolvedValueOnce(customStatus);
+    tauriMocks.getGitStatus.mockResolvedValueOnce(customStatus);
     render(<App />);
 
     expect(await treeButton("README.md")).toBeInTheDocument();
@@ -4075,13 +4082,16 @@ describe("Git commit sidebar", () => {
   });
 
   it("opens a diff tab for a changed file, including deleted rows", async () => {
-    tauriMocks.getGitStatus.mockResolvedValueOnce({
-      status: "available",
+    // Queued twice — see the tri-state test above for why one isn't enough.
+    const customStatus = {
+      status: "available" as const,
       branch: "main",
       headDetached: false,
       headUnborn: false,
-      files: [{ path: "gone.txt", status: "deleted", staged: false, unstaged: true }],
-    });
+      files: [{ path: "gone.txt", status: "deleted" as const, staged: false, unstaged: true }],
+    };
+    tauriMocks.getGitStatus.mockResolvedValueOnce(customStatus);
+    tauriMocks.getGitStatus.mockResolvedValueOnce(customStatus);
     tauriMocks.loadGitFileDiff.mockResolvedValueOnce({
       original: "bye\n",
       modified: "",
@@ -4146,6 +4156,57 @@ describe("Git commit sidebar", () => {
 
     await waitFor(() => expect(tabButton("src/App.tsx (Working Tree)")).toBeUndefined());
     expect(tabButton("README.md (Working Tree)")).toBeTruthy();
+  });
+
+  it("shows Git status badges and a folder dot in the main tree outside commit mode", async () => {
+    render(<App />);
+
+    const readmeButton = await treeButton("README.md");
+    await waitFor(() =>
+      expect(readmeButton.querySelector(".tree-row__status")).toHaveTextContent("M"),
+    );
+    expect(readmeButton.querySelector(".tree-row__status")).toHaveClass(
+      "tree-row__status--modified",
+    );
+
+    // "src" starts collapsed (expandedFolders is empty by default), but the
+    // dot on the folder row itself should still be visible without expanding.
+    const srcButton = await treeButton("src");
+    expect(srcButton.querySelector(".tree-row__status-dot")).toBeInTheDocument();
+
+    fireEvent.click(srcButton);
+    const appButton = await treeButton("App.tsx");
+    expect(appButton.querySelector(".tree-row__status")).toHaveTextContent("M");
+
+    // No selection checkboxes outside commit mode — same tree, same rows.
+    expect(screen.queryByLabelText("Select README.md")).not.toBeInTheDocument();
+  });
+
+  it("collapses a folder in commit mode and the collapse carries back to browsing", async () => {
+    render(<App />);
+
+    expect(await treeButton("README.md")).toBeInTheDocument();
+    fireEvent.click(screen.getByTitle("Commit changes"));
+
+    const panel = await screen.findByLabelText("Git commit panel");
+    // Entering commit mode auto-expands ancestors of changed paths, so "src"
+    // (containing the changed src/App.tsx) starts expanded here even though
+    // it's collapsed by default in normal browsing.
+    const srcRow = await within(panel).findByText("src");
+    const srcButton = srcRow.closest("button")!;
+    await waitFor(() => expect(srcButton).toHaveAttribute("aria-expanded", "true"));
+    expect(within(panel).getByText("App.tsx")).toBeInTheDocument();
+
+    fireEvent.click(srcButton);
+    await waitFor(() => expect(srcButton).toHaveAttribute("aria-expanded", "false"));
+    expect(within(panel).queryByText("App.tsx")).not.toBeInTheDocument();
+
+    // Leave commit mode — the manual collapse carries over to normal browsing.
+    fireEvent.click(screen.getByTitle("Commit changes"));
+    const tree = await screen.findByLabelText("Workspace files");
+    const browsingSrcRow = await within(tree).findByText("src");
+    expect(browsingSrcRow.closest("button")).toHaveAttribute("aria-expanded", "false");
+    expect(within(tree).queryByText("App.tsx")).not.toBeInTheDocument();
   });
 });
 

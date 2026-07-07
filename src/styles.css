@@ -571,115 +571,6 @@ button {
   padding: 4px 0;
 }
 
-/* Three real grid columns for three DOM children: checkbox | open-button |
-   status glyph. The open-button owns icon+name via its own inner grid, so the
-   name column is the one carrying minmax(0,1fr) and can ellipsis. */
-.commit-tree-row {
-  display: grid;
-  grid-template-columns: 16px minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 6px;
-  min-height: 28px;
-  padding-left: var(--commit-indent, 8px);
-  padding-right: 10px;
-  color: var(--muted);
-}
-
-.commit-tree-row--folder {
-  grid-template-columns: 16px minmax(0, 1fr);
-}
-
-.commit-tree-row:hover {
-  background: var(--accent-weak);
-}
-
-.commit-tree-row__check {
-  width: 14px;
-  height: 14px;
-  margin: 0;
-  cursor: pointer;
-}
-
-.commit-tree-row__open,
-.commit-tree-row__label {
-  display: grid;
-  grid-template-columns: 16px minmax(0, 1fr);
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-  border: 0;
-  background: transparent;
-  color: var(--text);
-  cursor: pointer;
-  font: inherit;
-  text-align: left;
-}
-
-.commit-tree-row__label {
-  color: var(--muted);
-}
-
-.commit-tree-row__open:hover,
-.commit-tree-row__open:focus-visible,
-.commit-tree-row__label:hover,
-.commit-tree-row__label:focus-visible {
-  color: var(--accent);
-  outline: 0;
-}
-
-.commit-tree-row__open:focus-visible,
-.commit-tree-row__label:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: -2px;
-  border-radius: 4px;
-}
-
-.commit-tree-row__icon {
-  flex: none;
-  color: var(--muted);
-}
-
-.commit-tree-row__name {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* Deleted files stay selectable and openable (as an all-red diff), but read
-   as gone. */
-.commit-tree-row--deleted .commit-tree-row__name {
-  color: var(--muted);
-  text-decoration: line-through;
-}
-
-.commit-tree-row--deleted .commit-tree-row__icon {
-  opacity: 0.6;
-}
-
-/* Quiet status: a single colored letter, right-aligned, no fill — the file
-   name reads first and status is a peripheral cue, never the row's focus. */
-.commit-tree-row__badge {
-  justify-self: end;
-  width: 14px;
-  font-size: 11px;
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-  line-height: 1;
-  text-align: center;
-}
-
-.commit-tree-row__badge--added {
-  color: var(--commit-added-fg);
-}
-
-.commit-tree-row__badge--modified {
-  color: var(--accent);
-}
-
-.commit-tree-row__badge--deleted {
-  color: var(--danger);
-}
-
 .commit-panel__footer {
   display: grid;
   gap: 8px;
@@ -848,9 +739,32 @@ button {
   background: var(--accent);
 }
 
+/* Wraps the row's optional leading checkbox (commit/selection mode only,
+   Part 3) and the row button itself, so indentation applies to both together
+   while keeping the checkbox — a real <input>, which can't nest inside the
+   button below — as a sibling rather than a descendant. Normal browsing mode
+   never renders the checkbox, so this wrapper is the only structural change
+   from before; `.tree-row`'s own grid is untouched. */
+.tree-row-line {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  gap: 5px;
+}
+
+.tree-row__check {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  cursor: pointer;
+}
+
 .tree-row {
   display: grid;
   grid-template-columns: 14px 18px minmax(0, 1fr) auto;
+  flex: 1;
+  min-width: 0;
   width: 100%;
   min-height: 28px;
   align-items: center;
@@ -866,6 +780,63 @@ button {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* Deleted files (commit mode only — synthetic rows for paths the workspace
+   scan can never see) stay selectable and openable as an all-red diff, but
+   read as gone. */
+.tree-row--deleted .tree-row__name {
+  color: var(--muted);
+  text-decoration: line-through;
+}
+
+.tree-row--deleted .tree-row__icon {
+  opacity: 0.6;
+}
+
+/* Symlink icon, status letter, and folder dot share this trailing slot so
+   the grid's 4th column stays a single "auto" track exactly as before —
+   only its contents vary. `overflow: visible` opts back out of the
+   `.tree-row span:last-child` ellipsis rule below, which would otherwise
+   clip these tiny icons. */
+.tree-row__trailing {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  overflow: visible;
+}
+
+/* Quiet status: a single colored letter — the file name reads first and
+   status is a peripheral cue, never the row's focus. Same palette as the
+   commit panel used before this became the same tree. */
+.tree-row__status {
+  width: 12px;
+  font-size: 11px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  text-align: center;
+}
+
+.tree-row__status--added {
+  color: var(--commit-added-fg);
+}
+
+.tree-row__status--modified {
+  color: var(--accent);
+}
+
+.tree-row__status--deleted {
+  color: var(--danger);
+}
+
+/* Folders show a small dot rather than a letter — status is per-descendant,
+   not a single verdict for the whole folder. */
+.tree-row__status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
 }
 
 .tree-row__symlink {

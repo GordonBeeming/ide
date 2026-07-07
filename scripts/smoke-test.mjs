@@ -237,6 +237,23 @@ async function fulfillApi(route) {
     return;
   }
 
+  // The gitCommit flag now refreshes status on every workspace load (not
+  // just on entering commit mode), so this smoke workspace — which never
+  // enters commit mode — still needs a response here to avoid a 404
+  // console error tripping the "zero console errors" assertion below.
+  if (url.pathname === "/api/git-status") {
+    await route.fulfill(
+      json({
+        status: "available",
+        branch: "main",
+        headDetached: false,
+        headUnborn: false,
+        files: [],
+      }),
+    );
+    return;
+  }
+
   if (url.pathname === "/api/codex-mcp") {
     await route.fulfill(
       json({
