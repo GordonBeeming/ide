@@ -862,12 +862,15 @@ fn resolve_workspace_path_inner(
 
     let root = root.canonicalize()?;
     let candidate = root.join(relative_path);
-    let parent = candidate
-        .parent()
-        .ok_or(WorkspaceError::InvalidPath)?
-        .canonicalize()?;
+    let parent = candidate.parent().ok_or(WorkspaceError::InvalidPath)?;
+    // The parent directory may not exist — e.g. committing or diffing a file whose
+    // entire containing directory was deleted. Resolve the nearest existing ancestor
+    // so path resolution succeeds; the deletion itself is handled by the caller. When
+    // the parent does exist this returns it unchanged, so the symlink-escape guard
+    // below still canonicalizes the real directory a write would traverse.
+    let existing_ancestor = nearest_existing_ancestor(parent)?.canonicalize()?;
 
-    if !parent.starts_with(&root) && !allow_external {
+    if !existing_ancestor.starts_with(&root) && !allow_external {
         return Err(WorkspaceError::SymlinkOutsideWorkspace);
     }
 
@@ -929,8 +932,23 @@ fn resolve_new_workspace_entry_path(
 fn nearest_existing_ancestor(path: &Path) -> Result<PathBuf, WorkspaceError> {
     let mut current = path;
     loop {
-        if current.exists() {
-            return Ok(current.to_path_buf());
+        // symlink_metadata (lstat) reports the dirent itself, not its target, so a
+        // dangling symlink counts as "existing" here and gets returned rather than
+        // skipped. Path::exists() follows the link and would report a dangling
+        // symlink as absent, walking past it to a higher ancestor and letting the
+        // caller's canonicalize() pass on a parent that never sees the symlink —
+        // opening a TOCTOU window where the link resolves outside the workspace
+        // once its target shows up. Returning the symlink itself instead forces the
+        // caller's canonicalize() to follow (and fail closed on) the same entry.
+        //
+        // Only NotFound means "keep walking up" — any other error (e.g.
+        // PermissionDenied) means the entry exists but couldn't be inspected, so
+        // that error must be surfaced to the caller rather than silently skipping
+        // past the entry to validate a higher, unrelated ancestor.
+        match current.symlink_metadata() {
+            Ok(_) => return Ok(current.to_path_buf()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(WorkspaceError::Io(error)),
         }
         current = current.parent().ok_or(WorkspaceError::InvalidPath)?;
     }
@@ -1115,6 +1133,54 @@ mod tests {
             read_workspace_file(dir.path(), "link.txt", 1024, false).unwrap(),
             "inside"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn nearest_existing_ancestor_surfaces_permission_denied_instead_of_skipping() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempdir().unwrap();
+        let locked = dir.path().join("locked");
+        fs::create_dir(&locked).unwrap();
+        // Dropping execute (search) permission on `locked` makes lstat on anything
+        // under it fail with PermissionDenied, even though `locked` itself — and the
+        // path we ask about — genuinely exist. nearest_existing_ancestor must
+        // surface that error rather than treating it as "not found" and walking
+        // past `locked` to validate the workspace root instead.
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o000)).unwrap();
+
+        let result = nearest_existing_ancestor(&locked.join("child"));
+
+        // Restore permissions so the tempdir can be cleaned up.
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).unwrap();
+
+        // A privileged euid (e.g. root in a container) ignores permission bits
+        // entirely, so lstat succeeds and there's nothing to assert here — the
+        // scenario this test targets only exists when permissions are enforced.
+        match result {
+            Err(WorkspaceError::Io(error)) => {
+                assert_eq!(error.kind(), std::io::ErrorKind::PermissionDenied);
+            }
+            Ok(_) => {}
+            Err(other) => panic!("unexpected error: {other:?}"),
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn read_workspace_file_fails_closed_on_dangling_symlink_parent() {
+        let dir = tempdir().unwrap();
+        // A dangling symlink still "exists" as a dirent (symlink_metadata finds it),
+        // so nearest_existing_ancestor must return it rather than walk past it to a
+        // higher, real ancestor. If it walked past, the escape guard would validate
+        // an unrelated real directory and let the request through; the caller's
+        // later canonicalize() of the dangling link then fails closed instead of
+        // silently resolving once/if the link's target starts to exist.
+        symlink(dir.path().join("nowhere"), dir.path().join("dangling_link")).unwrap();
+
+        let result = read_workspace_file(dir.path(), "dangling_link/child.txt", 1024, false);
+        assert!(matches!(result, Err(WorkspaceError::Io(_))));
     }
 
     #[cfg(unix)]
