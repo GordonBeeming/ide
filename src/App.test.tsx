@@ -1748,6 +1748,31 @@ describe("App shell interactions", () => {
     expect(screen.queryByRole("dialog", { name: "ide Test" })).not.toBeInTheDocument();
   });
 
+  it("closes filter and search via their icons without the blur race reopening them", async () => {
+    render(<App />);
+    await treeButton("README.md");
+    // In a real browser, mousedown on the icon blurs the focused empty input,
+    // whose onBlur clears the mode before the click toggles — reopening the
+    // panel it was meant to close. The guard is preventDefault on the icons'
+    // mousedown, which keeps the input focused through the click so onBlur
+    // never pre-clears the mode. jsdom can't replay that race (it doesn't
+    // move focus on mousedown), and dispatching ANY synthetic mousedown here
+    // corrupts selection bookkeeping for later editor-selection tests — so
+    // this test pins the user-visible contract only: the icon click closes
+    // the focused panel and it stays closed.
+    for (const title of ["Filter files", "Search contents"]) {
+      fireEvent.click(screen.getByTitle(title));
+      const input = await screen.findByPlaceholderText(title);
+      expect(input).toHaveFocus();
+
+      fireEvent.click(screen.getByTitle(title));
+      await waitFor(() =>
+        expect(screen.queryByPlaceholderText(title)).not.toBeInTheDocument(),
+      );
+      expect(await treeButton("README.md")).toBeInTheDocument();
+    }
+  });
+
   it("keeps search fields collapsed until the search controls are used", async () => {
     render(<App />);
 

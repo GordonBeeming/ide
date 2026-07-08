@@ -3911,6 +3911,10 @@ export default function App() {
             ].join(" ")}
             title="Filter files"
             aria-label="Filter files"
+            // Keep the focused input from blurring on mousedown: its empty-query
+            // onBlur would clear the mode first, making this click's toggle
+            // reopen the panel it was meant to close.
+            onMouseDown={(event) => event.preventDefault()}
             onClick={() =>
               setActiveSidebarSearch((current) => (current === "filter" ? undefined : "filter"))
             }
@@ -3924,6 +3928,8 @@ export default function App() {
             ].join(" ")}
             title="Search contents"
             aria-label="Search contents"
+            // Same blur-race guard as the filter toggle above.
+            onMouseDown={(event) => event.preventDefault()}
             onClick={() =>
               setActiveSidebarSearch((current) => (current === "content" ? undefined : "content"))
             }
