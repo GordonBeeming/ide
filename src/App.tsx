@@ -1680,6 +1680,11 @@ export default function App() {
   // failure, and never overlapping — a disabled cadence (0) turns it off entirely.
   useEffect(() => {
     if (!gitCommitEnabled || !workspaceRoot || singleFileMode) return;
+    // A workspace that isn't a Git repo (or hasn't loaded status yet) has
+    // nothing to fetch — installing the interval anyway would spawn a
+    // best-effort fetchGit() every cycle that always fails and gets silently
+    // swallowed, wasting cycles on a plain folder.
+    if (gitStatus?.status !== "available") return;
     if (autoFetchSeconds <= 0) return;
     const intervalId = window.setInterval(() => {
       if (autoFetchInFlightRef.current) return;
@@ -1700,6 +1705,10 @@ export default function App() {
     gitCommitEnabled,
     workspaceRoot,
     singleFileMode,
+    // Only the availability discriminant, not the whole gitStatus object —
+    // that changes every poll and would tear down/reinstall the interval
+    // constantly instead of just gating whether it exists at all.
+    gitStatus?.status,
     autoFetchSeconds,
     refreshGitStatus,
   ]);

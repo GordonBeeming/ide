@@ -1104,6 +1104,41 @@ describe("App shell interactions", () => {
     }
   });
 
+  it("does not auto-fetch a workspace that isn't a Git repo", async () => {
+    vi.useFakeTimers();
+    try {
+      tauriMocks.getUiState.mockResolvedValue({
+        view: { showDotfiles: false, showGeneratedInternal: false, autoFetchSeconds: 15 },
+        workspace: { expandedFolders: [], openFiles: [] },
+      });
+      // A plain folder has nothing to fetch — installing the interval anyway
+      // would spawn a fetchGit() every cycle that always fails silently.
+      tauriMocks.getGitStatus.mockResolvedValue({
+        status: "unsupported",
+        unsupportedReason: "Workspace is not inside a Git repository",
+        headDetached: false,
+        headUnborn: false,
+        files: [],
+        mergeInProgress: false,
+        conflictedFiles: [],
+      });
+
+      render(<App />);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1000);
+      });
+      // Well past any plausible interval — an unsupported workspace installs
+      // no timer at all.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(120000);
+      });
+      expect(tauriMocks.fetchGit).not.toHaveBeenCalled();
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
+
   it("does not auto-fetch when the cadence is disabled", async () => {
     vi.useFakeTimers();
     try {
