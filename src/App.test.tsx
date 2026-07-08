@@ -3968,6 +3968,57 @@ describe("Git commit sidebar", () => {
     expect(await treeButton("README.md")).toBeInTheDocument();
   });
 
+  // These two override getGitStatus with a persistent mock (this describe has no
+  // per-test reset, unlike "App shell interactions"), so they keep the standard
+  // two-file set to stay compatible with the sibling tests that follow.
+  it("shows an up-to-date indicator when level with the upstream", async () => {
+    tauriMocks.getGitStatus.mockResolvedValue({
+      status: "available",
+      branch: "main",
+      headDetached: false,
+      headUnborn: false,
+      files: [
+        { path: "README.md", status: "modified", staged: false, unstaged: true },
+        { path: "src/App.tsx", status: "modified", staged: true, unstaged: false },
+      ],
+      mergeInProgress: false,
+      conflictedFiles: [],
+      ahead: 0,
+      behind: 0,
+    });
+    render(<App />);
+
+    expect(await treeButton("README.md")).toBeInTheDocument();
+    fireEvent.click(screen.getByTitle("Commit changes"));
+
+    const panel = await screen.findByLabelText("Git commit panel");
+    expect(await within(panel).findByText("Up to date")).toBeInTheDocument();
+  });
+
+  it("shows ahead/behind counts against the upstream", async () => {
+    tauriMocks.getGitStatus.mockResolvedValue({
+      status: "available",
+      branch: "main",
+      headDetached: false,
+      headUnborn: false,
+      files: [
+        { path: "README.md", status: "modified", staged: false, unstaged: true },
+        { path: "src/App.tsx", status: "modified", staged: true, unstaged: false },
+      ],
+      mergeInProgress: false,
+      conflictedFiles: [],
+      ahead: 2,
+      behind: 1,
+    });
+    render(<App />);
+
+    expect(await treeButton("README.md")).toBeInTheDocument();
+    fireEvent.click(screen.getByTitle("Commit changes"));
+
+    const panel = await screen.findByLabelText("Git commit panel");
+    expect(await within(panel).findByLabelText("2 ahead, 1 behind")).toBeInTheDocument();
+  });
+
   it("selects all changed files by default and supports the master tri-state checkbox", async () => {
     render(<App />);
 

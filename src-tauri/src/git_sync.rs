@@ -609,6 +609,99 @@ mod tests {
         }
     }
 
+    // The ahead/behind counts live on GitStatus (the gix path), but they're the
+    // sync feature's numbers, so they're exercised here with the bare-remote
+    // harness this module already has.
+    #[tokio::test]
+    async fn git_status_reports_up_to_date_ahead_behind() {
+        let remote = tempdir().unwrap();
+        init_bare_remote(remote.path());
+        let work = tempdir().unwrap();
+        clone_with_commit(remote.path(), work.path());
+
+        let status = crate::git_commit::status_for_workspace(work.path()).await;
+
+        assert_eq!(status.ahead, Some(0));
+        assert_eq!(status.behind, Some(0));
+    }
+
+    #[tokio::test]
+    async fn git_status_reports_ahead_for_unpushed_commits() {
+        let remote = tempdir().unwrap();
+        init_bare_remote(remote.path());
+        let work = tempdir().unwrap();
+        clone_with_commit(remote.path(), work.path());
+        fs::write(work.path().join("local.txt"), "x\n").unwrap();
+        run_git(work.path(), ["add", "."]);
+        run_git(work.path(), ["commit", "-m", "Local commit"]);
+
+        let status = crate::git_commit::status_for_workspace(work.path()).await;
+
+        assert_eq!(status.ahead, Some(1));
+        assert_eq!(status.behind, Some(0));
+    }
+
+    #[tokio::test]
+    async fn git_status_reports_behind_after_fetch() {
+        let remote = tempdir().unwrap();
+        init_bare_remote(remote.path());
+        let work = tempdir().unwrap();
+        clone_with_commit(remote.path(), work.path());
+
+        let other = tempdir().unwrap();
+        clone_existing(remote.path(), other.path());
+        fs::write(other.path().join("remote.txt"), "y\n").unwrap();
+        run_git(other.path(), ["add", "."]);
+        run_git(other.path(), ["commit", "-m", "Remote commit"]);
+        run_git(other.path(), ["push"]);
+        // Fetch (not pull) so the tracking ref advances while HEAD stays put.
+        run_git(work.path(), ["fetch"]);
+
+        let status = crate::git_commit::status_for_workspace(work.path()).await;
+
+        assert_eq!(status.ahead, Some(0));
+        assert_eq!(status.behind, Some(1));
+    }
+
+    #[tokio::test]
+    async fn git_status_reports_diverged_ahead_and_behind() {
+        let remote = tempdir().unwrap();
+        init_bare_remote(remote.path());
+        let work = tempdir().unwrap();
+        clone_with_commit(remote.path(), work.path());
+
+        let other = tempdir().unwrap();
+        clone_existing(remote.path(), other.path());
+        fs::write(other.path().join("remote.txt"), "y\n").unwrap();
+        run_git(other.path(), ["add", "."]);
+        run_git(other.path(), ["commit", "-m", "Remote commit"]);
+        run_git(other.path(), ["push"]);
+
+        fs::write(work.path().join("local.txt"), "x\n").unwrap();
+        run_git(work.path(), ["add", "."]);
+        run_git(work.path(), ["commit", "-m", "Local commit"]);
+        run_git(work.path(), ["fetch"]);
+
+        let status = crate::git_commit::status_for_workspace(work.path()).await;
+
+        assert_eq!(status.ahead, Some(1));
+        assert_eq!(status.behind, Some(1));
+    }
+
+    #[tokio::test]
+    async fn git_status_reports_no_ahead_behind_without_upstream() {
+        let dir = tempdir().unwrap();
+        init_repo(dir.path());
+        fs::write(dir.path().join("file.txt"), "one\n").unwrap();
+        run_git(dir.path(), ["add", "."]);
+        run_git(dir.path(), ["commit", "-m", "Initial commit"]);
+
+        let status = crate::git_commit::status_for_workspace(dir.path()).await;
+
+        assert_eq!(status.ahead, None);
+        assert_eq!(status.behind, None);
+    }
+
     #[tokio::test]
     async fn conflict_surfaces_in_git_status_merge_fields() {
         let (_remote, work, _other) = conflicted_workspace();

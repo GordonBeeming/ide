@@ -148,6 +148,10 @@ export interface GitStatus {
   files: GitStatusEntry[];
   mergeInProgress: boolean;
   conflictedFiles: string[];
+  // Commits ahead of / behind the upstream; both undefined when there's no
+  // upstream (or a detached/unborn HEAD).
+  ahead?: number;
+  behind?: number;
 }
 
 export interface GitCommitResult {
@@ -717,6 +721,11 @@ export function normalizeGitStatus(value: unknown): GitStatus | undefined {
       ? candidate.conflictedFiles
       : [];
 
+  // ahead/behind serialize as null (no upstream) → undefined; a non-negative
+  // integer otherwise. Anything else is treated as absent.
+  const ahead = normalizeTrackingCount(candidate.ahead);
+  const behind = normalizeTrackingCount(candidate.behind);
+
   return {
     status: candidate.status,
     unsupportedReason:
@@ -729,7 +738,15 @@ export function normalizeGitStatus(value: unknown): GitStatus | undefined {
     files,
     mergeInProgress: candidate.mergeInProgress === true,
     conflictedFiles,
+    ahead,
+    behind,
   };
+}
+
+function normalizeTrackingCount(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0
+    ? value
+    : undefined;
 }
 
 function isGitFileStatus(value: unknown): value is GitFileStatus {

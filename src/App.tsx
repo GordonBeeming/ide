@@ -401,6 +401,16 @@ function positiveWholeNumber(value: string) {
   return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : undefined;
 }
 
+// Accessible label for the ahead/behind indicator; the visual is a compact
+// "↑2 ↓1", this is what screen readers and the hover title read.
+function describeTracking(ahead: number, behind: number): string {
+  if (ahead === 0 && behind === 0) return "Up to date with upstream";
+  const parts: string[] = [];
+  if (ahead > 0) parts.push(`${ahead} ahead`);
+  if (behind > 0) parts.push(`${behind} behind`);
+  return parts.join(", ");
+}
+
 // One-line summary of a non-conflict sync outcome for the commit panel's sync
 // footer. The mergeConflict outcome renders its own file list, so it never
 // reaches here.
@@ -661,6 +671,12 @@ export default function App() {
   // updates on its own as the user resolves files (rather than freezing on the
   // one-shot sync result). Defaults tolerate an older status shape / test mock.
   const mergeInProgress = gitStatus?.mergeInProgress ?? false;
+  // Ahead/behind the configured upstream, straight off the polled status. Both
+  // are undefined together when there's no upstream (or detached/unborn HEAD),
+  // in which case the footer shows no counts.
+  const aheadCount = gitStatus?.ahead;
+  const behindCount = gitStatus?.behind;
+  const hasUpstream = aheadCount !== undefined && behindCount !== undefined;
   const conflictedFiles = gitStatus?.conflictedFiles ?? [];
   const activeGitAttribution =
     gitAttributionEnabled &&
@@ -4472,15 +4488,41 @@ export default function App() {
                   />
                   {gitSyncInFlight ? "Syncing…" : "Sync"}
                 </button>
-                <span
-                  className="commit-panel__sync-branch"
-                  title={gitStatus?.branch ?? gitSyncResult?.branch}
-                >
-                  <GitBranch size={12} />
-                  <span className="commit-panel__sync-branch-name">
-                    {gitStatus?.branch ?? gitSyncResult?.branch ?? "No branch"}
+                <div className="commit-panel__sync-info">
+                  <span
+                    className="commit-panel__sync-branch"
+                    title={gitStatus?.branch ?? gitSyncResult?.branch}
+                  >
+                    <GitBranch size={12} />
+                    <span className="commit-panel__sync-branch-name">
+                      {gitStatus?.branch ?? gitSyncResult?.branch ?? "No branch"}
+                    </span>
                   </span>
-                </span>
+                  {hasUpstream ? (
+                    aheadCount === 0 && behindCount === 0 ? (
+                      <span
+                        className="commit-panel__sync-tracking commit-panel__sync-tracking--current"
+                        title="Up to date with upstream"
+                      >
+                        <Check size={12} />
+                        Up to date
+                      </span>
+                    ) : (
+                      <span
+                        className="commit-panel__sync-tracking"
+                        title={describeTracking(aheadCount, behindCount)}
+                        aria-label={describeTracking(aheadCount, behindCount)}
+                      >
+                        {aheadCount > 0 ? (
+                          <span className="commit-panel__sync-count">↑{aheadCount}</span>
+                        ) : null}
+                        {behindCount > 0 ? (
+                          <span className="commit-panel__sync-count">↓{behindCount}</span>
+                        ) : null}
+                      </span>
+                    )
+                  ) : null}
+                </div>
               </div>
               {mergeInProgress ? (
                 <div className="commit-panel__merge" role="group" aria-label="Resolve merge">

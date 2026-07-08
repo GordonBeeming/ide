@@ -32,6 +32,12 @@ pub(crate) struct GitStatus {
     // Empties as the user stages resolutions, which is what re-enables completing
     // the merge.
     pub conflicted_files: Vec<String>,
+    // Commits HEAD is ahead of / behind its configured upstream. `None` when there
+    // is no upstream, or HEAD is detached/unborn. `behind` reflects the remote as
+    // of the last fetch (the standard Git behaviour) — a Sync fetches first, so the
+    // status re-poll right after it shows the up-to-date counts.
+    pub ahead: Option<usize>,
+    pub behind: Option<usize>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -181,6 +187,10 @@ fn status_for_workspace_blocking(workspace_root: &Path) -> GitStatus {
 
     let merge_in_progress = repo.git_dir().join("MERGE_HEAD").exists();
     let conflicted_files = collect_conflicted_files(&repo, prefix.as_deref());
+    let (ahead, behind) = match ahead_behind(&repo, &head) {
+        Some((ahead, behind)) => (Some(ahead), Some(behind)),
+        None => (None, None),
+    };
 
     GitStatus {
         status: GitStatusAvailability::Available,
@@ -191,7 +201,50 @@ fn status_for_workspace_blocking(workspace_root: &Path) -> GitStatus {
         files,
         merge_in_progress,
         conflicted_files,
+        ahead,
+        behind,
     }
+}
+
+// Ahead/behind commit counts of HEAD versus its configured upstream tracking ref.
+// `behind` is measured against the remote-tracking ref as it stood at the last
+// fetch — the same thing `git status` reports — so a Sync (which fetches first)
+// followed by the status re-poll surfaces the current numbers.
+fn ahead_behind(repo: &gix::Repository, head: &gix::Head<'_>) -> Option<(usize, usize)> {
+    // A detached or unborn HEAD has no branch whose upstream we could compare to.
+    let ref_name = head.referent_name()?;
+    let head_id = head.id()?.detach();
+
+    let tracking =
+        match repo.branch_remote_tracking_ref_name(ref_name, gix::remote::Direction::Fetch)? {
+            Ok(name) => name.into_owned(),
+            Err(_) => return None,
+        };
+    let upstream_id = repo
+        .find_reference(tracking.as_ref())
+        .ok()?
+        .peel_to_id()
+        .ok()?
+        .detach();
+
+    // Each walk paints the hidden tip's ancestry as unwanted, so the count is
+    // exactly the commits on one side of the merge base.
+    let ahead = repo
+        .rev_walk([head_id])
+        .with_hidden([upstream_id])
+        .all()
+        .ok()?
+        .filter(|info| info.is_ok())
+        .count();
+    let behind = repo
+        .rev_walk([upstream_id])
+        .with_hidden([head_id])
+        .all()
+        .ok()?
+        .filter(|info| info.is_ok())
+        .count();
+
+    Some((ahead, behind))
 }
 
 // Unmerged index entries carry a non-zero conflict stage (base/ours/theirs). A
@@ -358,6 +411,8 @@ fn unsupported_status(reason: impl Into<String>) -> GitStatus {
         files: Vec::new(),
         merge_in_progress: false,
         conflicted_files: Vec::new(),
+        ahead: None,
+        behind: None,
     }
 }
 

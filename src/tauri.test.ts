@@ -1084,6 +1084,36 @@ describe("Git status response normalization", () => {
 
     expect(status?.mergeInProgress).toBe(false);
     expect(status?.conflictedFiles).toEqual([]);
+    expect(status?.ahead).toBeUndefined();
+    expect(status?.behind).toBeUndefined();
+  });
+
+  it("carries ahead/behind counts and rejects bad ones", async () => {
+    const { normalizeGitStatus } = await import("./tauri");
+
+    const base = {
+      status: "available" as const,
+      branch: "main",
+      headDetached: false,
+      headUnborn: false,
+      files: [],
+      mergeInProgress: false,
+      conflictedFiles: [],
+    };
+
+    const counted = normalizeGitStatus({ ...base, ahead: 2, behind: 1 });
+    expect(counted?.ahead).toBe(2);
+    expect(counted?.behind).toBe(1);
+
+    // No upstream serializes as null → undefined.
+    const noUpstream = normalizeGitStatus({ ...base, ahead: null, behind: null });
+    expect(noUpstream?.ahead).toBeUndefined();
+    expect(noUpstream?.behind).toBeUndefined();
+
+    // Negative / non-integer values are treated as absent.
+    const bad = normalizeGitStatus({ ...base, ahead: -1, behind: 1.5 });
+    expect(bad?.ahead).toBeUndefined();
+    expect(bad?.behind).toBeUndefined();
   });
 
   it("normalizes an unsupported status without a branch", async () => {

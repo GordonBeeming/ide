@@ -712,6 +712,38 @@ button {
   gap: 6px;
 }
 
+/* Branch name + ahead/behind sit on one centered row under the Sync button. */
+.commit-panel__sync-info {
+  display: inline-flex;
+  max-width: 100%;
+  min-width: 0;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.commit-panel__sync-tracking {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.commit-panel__sync-tracking svg {
+  flex-shrink: 0;
+  /* The check reads as "current" without shouting; the label stays muted. */
+  color: var(--commit-added-fg);
+}
+
+.commit-panel__sync-count {
+  display: inline-flex;
+  align-items: center;
+}
+
 .commit-panel__sync-spin {
   animation: commit-panel-spin 1s linear infinite;
 }
