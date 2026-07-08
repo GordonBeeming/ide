@@ -940,8 +940,14 @@ fn nearest_existing_ancestor(path: &Path) -> Result<PathBuf, WorkspaceError> {
         // opening a TOCTOU window where the link resolves outside the workspace
         // once its target shows up. Returning the symlink itself instead forces the
         // caller's canonicalize() to follow (and fail closed on) the same entry.
-        if current.symlink_metadata().is_ok() {
-            return Ok(current.to_path_buf());
+        //
+        // Only NotFound means "keep walking up" — any other error (e.g.
+        // PermissionDenied) means the entry exists but couldn't be inspected, so it
+        // must be returned rather than silently skipped past.
+        match current.symlink_metadata() {
+            Ok(_) => return Ok(current.to_path_buf()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(WorkspaceError::Io(error)),
         }
         current = current.parent().ok_or(WorkspaceError::InvalidPath)?;
     }
@@ -1126,6 +1132,29 @@ mod tests {
             read_workspace_file(dir.path(), "link.txt", 1024, false).unwrap(),
             "inside"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn nearest_existing_ancestor_surfaces_permission_denied_instead_of_skipping() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempdir().unwrap();
+        let locked = dir.path().join("locked");
+        fs::create_dir(&locked).unwrap();
+        // Dropping execute (search) permission on `locked` makes lstat on anything
+        // under it fail with PermissionDenied, even though `locked` itself — and the
+        // path we ask about — genuinely exist. nearest_existing_ancestor must
+        // surface that error rather than treating it as "not found" and walking
+        // past `locked` to validate the workspace root instead.
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o000)).unwrap();
+
+        let result = nearest_existing_ancestor(&locked.join("child"));
+
+        // Restore permissions so the tempdir can be cleaned up.
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).unwrap();
+
+        assert!(matches!(result, Err(WorkspaceError::Io(_))));
     }
 
     #[cfg(unix)]
