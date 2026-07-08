@@ -680,8 +680,21 @@ button {
   background: var(--panel);
 }
 
+/* Positioning context for the side-by-side split handle, which overlays
+   `.diff-host` as a sibling rather than a child — CodeMirror/MergeView owns
+   `.diff-host`'s children directly (`parent: host.current`), and mixing
+   React-rendered children into a DOM node an imperative library also
+   appends to is a reconciliation footgun. */
+.diff-host-wrapper {
+  position: relative;
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
 .diff-host {
   flex: 1;
+  min-width: 0;
   min-height: 0;
   overflow: hidden;
 }
@@ -697,6 +710,37 @@ button {
    (a descendant selector matches at any depth). */
 .diff-host .cm-mergeView {
   height: 100%;
+}
+
+/* Rotated mirror of .sidebar-resizer, positioned at a dynamic `left: <ratio>%`
+   (set inline per render) instead of a fixed edge. Ephemeral — the ratio
+   itself is DiffPane-local state, never persisted. */
+.diff-split-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 8px;
+  margin-left: -4px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: col-resize;
+  z-index: 3;
+}
+
+.diff-split-handle::after {
+  position: absolute;
+  left: 3px;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: transparent;
+  content: "";
+}
+
+.diff-split-handle:hover::after,
+.diff-split-handle:focus-visible::after {
+  background: var(--accent);
 }
 
 .diff-fallback {

@@ -4660,6 +4660,7 @@ export default function App() {
                 prefersDark={prefersDark}
                 viewMode={diffViewMode}
                 onViewModeChange={setDiffViewMode}
+                commitModeActive={commitModeActive}
               />
             </Suspense>
           ) : activeFile ? (
