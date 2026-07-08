@@ -2852,10 +2852,18 @@ fn open_launch_request_window(app: &tauri::AppHandle, request: OpenLaunchRequest
 fn explicit_launch_target_from_args(
     args: &[String],
 ) -> Result<Option<LaunchTarget>, std::io::Error> {
+    // The single-instance plugin forwards the *new* invocation's full argv, so
+    // args[0] is the executable that received the request — which may be a
+    // different build than this running instance (the installed binary
+    // forwarding into a `tauri dev` process, or vice-versa). Drop it instead of
+    // relying on a current-exe match: across builds the paths differ, so the
+    // match fails and the running instance tries to "open" the other build's
+    // binary as a file.
+    let forwarded = args.get(1..).unwrap_or(&[]);
     let current_exe = std::env::current_exe()
         .ok()
         .and_then(|path| path.canonicalize().ok());
-    launch_target_from_args(args, current_exe.as_deref())
+    launch_target_from_args(forwarded, current_exe.as_deref())
 }
 
 fn launch_target_from_args(
@@ -3124,6 +3132,35 @@ mod tests {
         ];
 
         let target = launch_target_from_args(&args, Some(&canonical_exe)).unwrap();
+
+        assert_eq!(
+            target,
+            Some(LaunchTarget {
+                workspace_root: canonical_workspace,
+                initial_file: None,
+            })
+        );
+    }
+
+    #[test]
+    fn explicit_launch_target_skips_forwarding_binary_from_other_build() {
+        // Reproduces the dev/installed collision: the installed binary forwards
+        // its full argv into a running `tauri dev` instance, so argv[0] is a
+        // real, existing executable that is *not* this process's exe. It must be
+        // dropped so the workspace argument wins — otherwise the app "opens" the
+        // forwarding binary as a file.
+        let dir = tempdir().unwrap();
+        let forwarding_exe = dir.path().join("installed-ide");
+        let workspace = dir.path().join("workspace");
+        std::fs::write(&forwarding_exe, "").unwrap();
+        std::fs::create_dir(&workspace).unwrap();
+        let canonical_workspace = workspace.canonicalize().unwrap();
+        let args = vec![
+            forwarding_exe.to_string_lossy().to_string(),
+            workspace.to_string_lossy().to_string(),
+        ];
+
+        let target = explicit_launch_target_from_args(&args).unwrap();
 
         assert_eq!(
             target,
