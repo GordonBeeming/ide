@@ -21,7 +21,7 @@ Folder targets become the workspace root. File targets open their parent folder 
 
 When a file or folder target is supplied and an ide instance is already reachable on the loopback API, `run.sh` authenticates with the persisted app-local bearer token and hands the target to `/api/open-path` instead of starting another dev instance.
 
-When no target is supplied and an ide instance is already reachable, `run.sh` tries to activate the existing macOS app and exits without starting a duplicate dev process. This avoids the Vite port and Cargo build-lock failures that happen when two dev instances are started from the same checkout.
+When no target is supplied and an ide instance is already reachable, `run.sh` stops it and starts the dev build in its place: a graceful quit through AppleScript first, then a force-kill if the app is still holding the port after ~10 seconds. Plain `./run.sh` always means "run the code in this working copy", so a running release build (or a stale dev instance) can't block it. Without the stop, the single-instance plugin would swallow the launch.
 
 Install shell commands:
 

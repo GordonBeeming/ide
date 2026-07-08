@@ -59,10 +59,36 @@ running_app_reachable() {
   curl -fsS --max-time 1 "http://127.0.0.1:17877/api/codex-mcp" >/dev/null 2>&1
 }
 
-activate_running_app() {
+# Plain `./run.sh` means "give me a dev instance running this working copy".
+# The single-instance plugin makes any running app (usually the installed
+# release build) block the dev launch, so quit it first — gracefully, then
+# force-killed if it lingers — instead of bailing out.
+stop_running_app() {
+  echo "Stopping the running ide instance so the dev build can start."
   if command -v osascript >/dev/null 2>&1; then
-    osascript -e 'tell application "ide" to activate' >/dev/null 2>&1 || true
+    osascript -e 'tell application id "com.gordonbeeming.ide" to quit' >/dev/null 2>&1 || true
   fi
+
+  local attempt
+  for attempt in {1..20}; do
+    if ! running_app_reachable; then
+      return 0
+    fi
+    sleep 0.5
+  done
+
+  echo "Graceful quit timed out; force-killing the running ide instance."
+  pkill -f "/Applications/ide.app/Contents/MacOS/ide" 2>/dev/null || true
+  pkill -f "$ROOT_DIR/src-tauri/target/debug/ide" 2>/dev/null || true
+  for attempt in {1..10}; do
+    if ! running_app_reachable; then
+      return 0
+    fi
+    sleep 0.5
+  done
+
+  echo "An ide instance is still holding the app port after force-kill." >&2
+  exit 1
 }
 
 if [ -n "$OPEN_PATH" ] && handoff_to_running_app "$OPEN_PATH"; then
@@ -70,9 +96,7 @@ if [ -n "$OPEN_PATH" ] && handoff_to_running_app "$OPEN_PATH"; then
 fi
 
 if [ -z "$OPEN_PATH" ] && running_app_reachable; then
-  activate_running_app
-  echo "ide is already running; not starting a duplicate dev instance."
-  exit 0
+  stop_running_app
 fi
 
 if ! command -v npm >/dev/null 2>&1; then
