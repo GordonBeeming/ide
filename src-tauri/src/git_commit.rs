@@ -975,9 +975,13 @@ mod tests {
         commit_all(dir.path(), "Initial commit");
         fs::remove_dir_all(dir.path().join("nested")).unwrap();
 
-        commit_files(dir.path(), "Delete nested", &["nested/gone.txt".to_string()])
-            .await
-            .unwrap();
+        commit_files(
+            dir.path(),
+            "Delete nested",
+            &["nested/gone.txt".to_string()],
+        )
+        .await
+        .unwrap();
 
         assert!(git_stdout(dir.path(), ["show", "HEAD:nested/gone.txt"]).is_err());
         assert_eq!(
