@@ -1,6 +1,7 @@
 mod claude_bridge;
 mod git_attribution;
 mod git_commit;
+mod git_sync;
 mod http_server;
 mod lsp;
 mod workspace;
@@ -237,7 +238,7 @@ impl Default for PersistedViewSettings {
 // Flag ids the app currently knows about. Persisted overrides for any id not in
 // this list are pruned on load, so retiring a flag is just removing it here (and
 // from the frontend registry). Keep in sync with src/featureFlags.ts.
-const KNOWN_FEATURE_FLAGS: &[&str] = &["gitAttribution", "gitCommit"];
+const KNOWN_FEATURE_FLAGS: &[&str] = &["gitAttribution", "gitCommit", "gitSync"];
 
 fn default_show_gitignored_files() -> bool {
     false
@@ -520,6 +521,8 @@ enum CommandError {
     GitCommit(#[from] git_commit::GitCommitError),
     #[error("{0}")]
     GitFileDiff(#[from] git_commit::GitFileDiffError),
+    #[error("{0}")]
+    GitSync(#[from] git_sync::GitSyncError),
 }
 
 impl serde::Serialize for CommandError {
@@ -915,6 +918,17 @@ async fn git_commit(
 ) -> Result<git_commit::GitCommitResult, CommandError> {
     let workspace_root = workspace_root_for_window(&state, &window).await;
     git_commit::commit_files(&workspace_root, &message, &paths)
+        .await
+        .map_err(CommandError::from)
+}
+
+#[tauri::command]
+async fn git_sync(
+    window: tauri::Window,
+    state: State<'_, AppState>,
+) -> Result<git_sync::GitSyncResult, CommandError> {
+    let workspace_root = workspace_root_for_window(&state, &window).await;
+    git_sync::sync_workspace(&workspace_root)
         .await
         .map_err(CommandError::from)
 }
@@ -1927,6 +1941,7 @@ pub fn run() {
             get_git_attribution,
             get_git_status,
             git_commit,
+            git_sync,
             git_file_diff,
             write_file,
             create_file,

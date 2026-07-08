@@ -1128,6 +1128,69 @@ describe("Git commit response normalization", () => {
   });
 });
 
+describe("Git sync response normalization", () => {
+  it("normalizes a synced result with pull/push counts", async () => {
+    const { normalizeGitSyncResult } = await import("./tauri");
+
+    expect(
+      normalizeGitSyncResult({
+        outcome: "synced",
+        branch: "main",
+        pulled: 2,
+        pushed: 1,
+      }),
+    ).toEqual({
+      outcome: "synced",
+      branch: "main",
+      pulled: 2,
+      pushed: 1,
+      files: [],
+    });
+  });
+
+  it("defaults missing counts to zero for an up-to-date result", async () => {
+    const { normalizeGitSyncResult } = await import("./tauri");
+
+    expect(
+      normalizeGitSyncResult({ outcome: "upToDate", branch: "main" }),
+    ).toEqual({
+      outcome: "upToDate",
+      branch: "main",
+      pulled: 0,
+      pushed: 0,
+      files: [],
+    });
+  });
+
+  it("carries the conflicted file list for a merge conflict", async () => {
+    const { normalizeGitSyncResult } = await import("./tauri");
+
+    expect(
+      normalizeGitSyncResult({
+        outcome: "mergeConflict",
+        branch: "main",
+        files: ["conflict.txt"],
+      }),
+    ).toEqual({
+      outcome: "mergeConflict",
+      branch: "main",
+      pulled: 0,
+      pushed: 0,
+      files: ["conflict.txt"],
+    });
+  });
+
+  it("rejects malformed sync payloads", async () => {
+    const { normalizeGitSyncResult } = await import("./tauri");
+
+    expect(normalizeGitSyncResult({ outcome: "synced" })).toBeUndefined();
+    expect(normalizeGitSyncResult({ outcome: "bogus", branch: "main" })).toBeUndefined();
+    expect(
+      normalizeGitSyncResult({ outcome: "mergeConflict", branch: "main", files: [1] }),
+    ).toBeUndefined();
+  });
+});
+
 describe("Git file diff response normalization", () => {
   it("normalizes a modified-file diff", async () => {
     const { normalizeGitFileDiff } = await import("./tauri");

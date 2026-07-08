@@ -657,6 +657,93 @@ button {
   color: var(--text);
 }
 
+/* Scrollable content (state message, changes tree, commit box) lives in the
+   body; the sync footer below it is a non-scrolling row, so Sync stays visible
+   in every panel state — including the empty "No changes" one. */
+.commit-panel__body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.commit-panel__sync {
+  flex-shrink: 0;
+  display: grid;
+  gap: 8px;
+  padding: 8px 10px 10px;
+  border-top: 1px solid var(--border);
+}
+
+.commit-panel__sync-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.commit-panel__sync-branch {
+  display: inline-flex;
+  flex: 1;
+  min-width: 0;
+  align-items: center;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.commit-panel__sync-branch svg {
+  flex-shrink: 0;
+  opacity: 0.7;
+}
+
+.commit-panel__sync-branch-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.commit-panel__sync-button {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.commit-panel__sync-spin {
+  animation: commit-panel-spin 1s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .commit-panel__sync-spin {
+    animation: none;
+  }
+}
+
+@keyframes commit-panel-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.commit-panel__sync-conflict-title {
+  display: block;
+  margin-bottom: 4px;
+  font-weight: 600;
+}
+
+.commit-panel__sync-conflicts {
+  margin: 0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.commit-panel__sync-conflicts li {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
 /* The direct grid child of .editor-region (grid-template-rows: auto
    minmax(0,1fr)) — matches .editor-host's placement so the diff view fills
    the same row EditorPane does, whether or not the find-results panel (row

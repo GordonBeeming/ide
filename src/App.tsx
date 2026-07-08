@@ -136,6 +136,7 @@ import {
   searchFiles,
   setWorkspaceRootPath,
   statFile,
+  syncGit,
   takeOpenedLaunchTargets,
   updateAgentContext,
   updateUiState,
@@ -149,6 +150,7 @@ import {
   type GitCommitInfo,
   type GitStatus,
   type GitStatusEntry,
+  type GitSyncResult,
   type WorkspaceIndexStats,
   type WorkspaceDisplayContext,
   type WorkspaceUiState,
@@ -397,6 +399,27 @@ function positiveWholeNumber(value: string) {
   return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : undefined;
 }
 
+// One-line summary of a non-conflict sync outcome for the commit panel's sync
+// footer. The mergeConflict outcome renders its own file list, so it never
+// reaches here.
+function formatGitSyncResult(result: GitSyncResult): string {
+  switch (result.outcome) {
+    case "upToDate":
+      return `${result.branch} is already up to date`;
+    case "synced": {
+      const parts: string[] = [];
+      if (result.pulled > 0) parts.push(`pulled ${result.pulled}`);
+      if (result.pushed > 0) parts.push(`pushed ${result.pushed}`);
+      const detail = parts.length > 0 ? ` (${parts.join(", ")})` : "";
+      return `Synced ${result.branch}${detail}`;
+    }
+    case "noUpstream":
+      return `No upstream configured for ${result.branch}`;
+    case "mergeConflict":
+      return `Merge conflicts on ${result.branch}`;
+  }
+}
+
 function emptyEditorStateForSelection(
   selectedEntry: FileEntry | undefined,
   openFailure: OpenFailure | undefined,
@@ -575,6 +598,9 @@ export default function App() {
   const [gitCommitInFlight, setGitCommitInFlight] = useState(false);
   const [gitCommitError, setGitCommitError] = useState<string>();
   const [gitCommitSuccess, setGitCommitSuccess] = useState<string>();
+  const [gitSyncInFlight, setGitSyncInFlight] = useState(false);
+  const [gitSyncResult, setGitSyncResult] = useState<GitSyncResult>();
+  const [gitSyncError, setGitSyncError] = useState<string>();
   const gitStatusInitializedRef = useRef(false);
   const sidebarFilterInputRef = useRef<HTMLInputElement | null>(null);
   const sidebarContentSearchInputRef = useRef<HTMLInputElement | null>(null);
@@ -625,6 +651,7 @@ export default function App() {
   const cursorPosition = cursorStatus(activePath, cursor, revealTarget);
   const gitAttributionEnabled = isFeatureEnabled("gitAttribution", featureFlags);
   const gitCommitEnabled = isFeatureEnabled("gitCommit", featureFlags);
+  const gitSyncEnabled = isFeatureEnabled("gitSync", featureFlags);
   const activeGitAttribution =
     gitAttributionEnabled &&
     gitAttribution?.status === "available" &&
@@ -1399,6 +1426,14 @@ export default function App() {
     return () => window.clearTimeout(timeoutId);
   }, [gitCommitSuccess]);
 
+  // Sync notices are scoped to a commit-panel session; clear them on the way out
+  // so reopening the panel doesn't show a stale "Synced"/conflict line.
+  useEffect(() => {
+    if (commitModeActive) return;
+    setGitSyncResult(undefined);
+    setGitSyncError(undefined);
+  }, [commitModeActive]);
+
   // Diff tabs are inspection surfaces scoped to commit mode — leaving it drops
   // every unpinned one so they don't accumulate; a double-clicked (pinned) tab
   // was a deliberate keep and survives.
@@ -1477,6 +1512,24 @@ export default function App() {
     gitCommitSelectedPaths,
     refreshGitStatus,
   ]);
+
+  const handleGitSync = useCallback(async () => {
+    if (gitSyncInFlight) return;
+    setGitSyncInFlight(true);
+    setGitSyncError(undefined);
+    setGitSyncResult(undefined);
+    try {
+      const result = await syncGit();
+      setGitSyncResult(result);
+      // A pull can add or change files, so refresh the changes list to match
+      // what is now on disk.
+      await refreshGitStatus();
+    } catch (reason) {
+      setGitSyncError(`Unable to sync: ${String(reason)}`);
+    } finally {
+      setGitSyncInFlight(false);
+    }
+  }, [gitSyncInFlight, refreshGitStatus]);
 
   const readOpenFileFromDisk = useCallback(async (path: string) => {
     const entry = await statFile(path);
@@ -4224,6 +4277,7 @@ export default function App() {
 
         {commitModeActive ? (
           <div className="commit-panel" aria-label="Git commit panel">
+            <div className="commit-panel__body">
             {gitStatusError || gitStatus?.status === "unsupported" ? (
               <div className="commit-panel__state" role="status">
                 <GitBranch size={22} />
@@ -4335,6 +4389,62 @@ export default function App() {
                 </div>
               </>
             )}
+            </div>
+            {gitSyncEnabled ? (
+              <div className="commit-panel__sync">
+                <div className="commit-panel__sync-row">
+                  <span
+                    className="commit-panel__sync-branch"
+                    title={gitStatus?.branch ?? gitSyncResult?.branch}
+                  >
+                    <GitBranch size={14} />
+                    <span className="commit-panel__sync-branch-name">
+                      {gitStatus?.branch ?? gitSyncResult?.branch ?? "No branch"}
+                    </span>
+                  </span>
+                  <button
+                    className="command-button commit-panel__sync-button"
+                    disabled={gitSyncInFlight || gitStatus?.status !== "available"}
+                    onClick={handleGitSync}
+                  >
+                    <RefreshCw
+                      size={14}
+                      className={gitSyncInFlight ? "commit-panel__sync-spin" : undefined}
+                    />
+                    {gitSyncInFlight ? "Syncing…" : "Sync"}
+                  </button>
+                </div>
+                {gitSyncError ? (
+                  <div
+                    className="commit-panel__notice commit-panel__notice--error"
+                    role="alert"
+                  >
+                    {gitSyncError}
+                  </div>
+                ) : gitSyncResult?.outcome === "mergeConflict" ? (
+                  <div
+                    className="commit-panel__notice commit-panel__notice--error"
+                    role="alert"
+                  >
+                    <span className="commit-panel__sync-conflict-title">
+                      Merge conflicts — resolve these files, then commit the merge:
+                    </span>
+                    <ul className="commit-panel__sync-conflicts">
+                      {gitSyncResult.files.map((file) => (
+                        <li key={file}>{file}</li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : gitSyncResult ? (
+                  <div
+                    className="commit-panel__notice commit-panel__notice--success"
+                    role="status"
+                  >
+                    {formatGitSyncResult(gitSyncResult)}
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
           </div>
         ) : null}
 

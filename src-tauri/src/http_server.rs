@@ -27,7 +27,7 @@ use crate::workspace::{
 };
 use crate::workspace_index::{advance_workspace_index, WorkspaceIndex, WorkspaceIndexAdvanceError};
 use crate::{
-    git_attribution, git_commit, workspace_root_hash, AgentContext, WorkspaceSessionState,
+    git_attribution, git_commit, git_sync, workspace_root_hash, AgentContext, WorkspaceSessionState,
 };
 
 #[derive(Clone)]
@@ -262,6 +262,7 @@ pub async fn start_http_server(config: HttpServerConfig) -> Result<HttpServerInf
             "/api/git-commit",
             post(post_git_commit).options(cors_preflight),
         )
+        .route("/api/git-sync", post(post_git_sync).options(cors_preflight))
         .route("/api/folder", post(create_folder).options(cors_preflight))
         .route(
             "/api/open-path",
@@ -785,6 +786,17 @@ async fn post_git_commit(
     let workspace_root = resolved.workspace_root.read().await.clone();
     let result =
         git_commit::commit_files(&workspace_root, &request.message, &request.paths).await?;
+    Ok(Json(result))
+}
+
+async fn post_git_sync(
+    State(state): State<HttpServerState>,
+    Extension(resolved): Extension<ResolvedWorkspace>,
+    headers: HeaderMap,
+) -> Result<Json<git_sync::GitSyncResult>, ApiError> {
+    require_bearer_auth(&headers, &state.mcp_token)?;
+    let workspace_root = resolved.workspace_root.read().await.clone();
+    let result = git_sync::sync_workspace(&workspace_root).await?;
     Ok(Json(result))
 }
 
@@ -1593,6 +1605,20 @@ impl From<git_commit::GitFileDiffError> for ApiError {
             | git_commit::GitFileDiffError::Workspace(_) => StatusCode::BAD_REQUEST,
             git_commit::GitFileDiffError::NotFound => StatusCode::NOT_FOUND,
             git_commit::GitFileDiffError::Git(_) => StatusCode::INTERNAL_SERVER_ERROR,
+        };
+        Self {
+            status,
+            message: value.to_string(),
+        }
+    }
+}
+
+impl From<git_sync::GitSyncError> for ApiError {
+    fn from(value: git_sync::GitSyncError) -> Self {
+        let status = match &value {
+            git_sync::GitSyncError::NotARepo => StatusCode::BAD_REQUEST,
+            git_sync::GitSyncError::GitUnavailable => StatusCode::INTERNAL_SERVER_ERROR,
+            git_sync::GitSyncError::Failed(_) => StatusCode::INTERNAL_SERVER_ERROR,
         };
         Self {
             status,

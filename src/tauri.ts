@@ -163,6 +163,20 @@ export interface GitFileDiff {
   isTooLarge: boolean;
 }
 
+export type GitSyncOutcome = "upToDate" | "synced" | "noUpstream" | "mergeConflict";
+
+// The backend serializes an internally tagged enum (`outcome` discriminant), so
+// the fields that carry data are only meaningful for specific outcomes: `pulled`
+// / `pushed` for "synced", `files` for "mergeConflict". Absent fields default to
+// zero / empty here so callers can read them without narrowing first.
+export interface GitSyncResult {
+  outcome: GitSyncOutcome;
+  branch: string;
+  pulled: number;
+  pushed: number;
+  files: string[];
+}
+
 export interface OpenFileRequest {
   workspaceRoot: string;
   path: string;
@@ -612,6 +626,20 @@ export function commitGitChanges(message: string, paths: string[]) {
   });
 }
 
+export function syncGit() {
+  return callApi<unknown>("git_sync", "/api/git-sync", {
+    method: "POST",
+    body: {},
+    invokeArgs: {},
+  }).then((value) => {
+    const normalized = normalizeGitSyncResult(value);
+    if (!normalized) {
+      throw new Error("Git sync response had an unexpected shape");
+    }
+    return normalized;
+  });
+}
+
 export function loadGitFileDiff(path: string, maxOpenBytes?: number) {
   const params = new URLSearchParams({ path });
   if (maxOpenBytes !== undefined) {
@@ -724,6 +752,42 @@ export function normalizeGitCommitResult(value: unknown): GitCommitResult | unde
     shortSha: candidate.shortSha,
     branch: typeof candidate.branch === "string" ? candidate.branch : undefined,
     committedPaths: candidate.committedPaths,
+  };
+}
+
+function isGitSyncOutcome(value: unknown): value is GitSyncOutcome {
+  return (
+    value === "upToDate" ||
+    value === "synced" ||
+    value === "noUpstream" ||
+    value === "mergeConflict"
+  );
+}
+
+export function normalizeGitSyncResult(value: unknown): GitSyncResult | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const candidate = value as Record<string, unknown>;
+  if (!isGitSyncOutcome(candidate.outcome) || typeof candidate.branch !== "string") {
+    return undefined;
+  }
+  // Only the mergeConflict outcome carries `files`; reject a malformed list
+  // rather than silently dropping conflicted paths the UI needs to show.
+  let files: string[] = [];
+  if (candidate.files !== undefined) {
+    if (
+      !Array.isArray(candidate.files) ||
+      !candidate.files.every((file): file is string => typeof file === "string")
+    ) {
+      return undefined;
+    }
+    files = candidate.files;
+  }
+  return {
+    outcome: candidate.outcome,
+    branch: candidate.branch,
+    pulled: typeof candidate.pulled === "number" ? candidate.pulled : 0,
+    pushed: typeof candidate.pushed === "number" ? candidate.pushed : 0,
+    files,
   };
 }
 
