@@ -6152,7 +6152,16 @@ function TreeItem({
   const fileStatus = !node.isDir ? fileStatusByPath?.get(node.path) : undefined;
   const isDeleted = fileStatus === "deleted";
   const hasChangedDescendant = node.isDir && Boolean(changedFolderPaths?.has(node.path));
-  const leafPaths = node.isDir && selection ? collectTreeLeafPaths(node) : undefined;
+  // Depends on `node` and a plain boolean, not the `selection` object itself —
+  // `selection.selectedPaths` gets a new identity on every checkbox toggle,
+  // and a node's leaf set never changes just because the selection did, so
+  // keying on `selection` would recompute (and re-walk the whole subtree)
+  // on every toggle instead of only when the tree itself changes.
+  const hasSelection = Boolean(selection);
+  const leafPaths = useMemo(
+    () => (node.isDir && hasSelection ? collectTreeLeafPaths(node) : undefined),
+    [node, hasSelection],
+  );
   const folderSelectionState =
     leafPaths && selection ? treeSelectionState(leafPaths, selection.selectedPaths) : undefined;
   const showTrailing = node.isSymlink || Boolean(fileStatus) || hasChangedDescendant;
