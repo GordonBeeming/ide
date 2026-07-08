@@ -694,6 +694,13 @@ export default function App() {
   const behindCount = gitStatus?.behind;
   const hasUpstream = aheadCount !== undefined && behindCount !== undefined;
   const conflictedFiles = gitStatus?.conflictedFiles ?? [];
+  // The polled status is the source of truth once it's loaded, even when its
+  // branch is undefined (detached/unborn HEAD) — that's a real "no branch"
+  // state, not a reason to fall back to a stale branch name from a previous
+  // sync result. The fallback to gitSyncResult only covers the gap before the
+  // first status poll resolves.
+  const syncBranchLabel =
+    gitStatus?.status === "available" ? gitStatus.branch : gitSyncResult?.branch;
   const activeGitAttribution =
     gitAttributionEnabled &&
     gitAttribution?.status === "available" &&
@@ -4579,7 +4586,11 @@ export default function App() {
                 <button
                   className="command-button commit-panel__sync-button"
                   disabled={
-                    gitSyncInFlight || gitStatus?.status !== "available" || mergeInProgress
+                    gitSyncInFlight ||
+                    gitStatus?.status !== "available" ||
+                    gitStatus?.headDetached ||
+                    gitStatus?.headUnborn ||
+                    mergeInProgress
                   }
                   onClick={handleGitSync}
                 >
@@ -4590,13 +4601,10 @@ export default function App() {
                   {gitSyncInFlight ? "Syncing…" : "Sync"}
                 </button>
                 <div className="commit-panel__sync-info">
-                  <span
-                    className="commit-panel__sync-branch"
-                    title={gitStatus?.branch ?? gitSyncResult?.branch}
-                  >
+                  <span className="commit-panel__sync-branch" title={syncBranchLabel}>
                     <GitBranch size={12} />
                     <span className="commit-panel__sync-branch-name">
-                      {gitStatus?.branch ?? gitSyncResult?.branch ?? "No branch"}
+                      {syncBranchLabel ?? "No branch"}
                     </span>
                   </span>
                   {hasUpstream ? (
