@@ -498,13 +498,21 @@ impl GitCli {
             let code = &entry[..2];
             if is_unmerged_code(code) {
                 let repo_relative = &entry[3..];
-                let relative = match &prefix {
-                    Some(prefix) => repo_relative
-                        .strip_prefix(prefix.as_str())
-                        .unwrap_or(repo_relative),
-                    None => repo_relative,
-                };
-                files.push(relative.to_string());
+                match &prefix {
+                    Some(prefix) => {
+                        // A conflict outside this workspace's subdirectory has
+                        // no workspace-relative path, so it's dropped here
+                        // rather than exposed as a repo-relative one that
+                        // `stage_resolved` (workspace-scoped, rejects `..`)
+                        // couldn't actually act on. Tracked in #50 to surface
+                        // that state honestly (e.g. a count) instead of
+                        // silently.
+                        if let Some(relative) = repo_relative.strip_prefix(prefix.as_str()) {
+                            files.push(relative.to_string());
+                        }
+                    }
+                    None => files.push(repo_relative.to_string()),
+                }
             }
         }
         Ok(files)
@@ -772,6 +780,28 @@ mod tests {
         match result {
             GitSyncResult::MergeConflict { files, .. } => {
                 assert_eq!(files, vec!["conflict.txt".to_string()]);
+            }
+            other => panic!("expected MergeConflict, got {other:?}"),
+        }
+        drop(repo);
+    }
+
+    #[tokio::test]
+    async fn conflicted_files_drops_entries_outside_the_workspace_subdirectory() {
+        // A conflict outside the workspace subdirectory has no
+        // workspace-relative path — falling back to the repo-relative one
+        // would hand the caller (stage_resolved, resolve_workspace_path) a
+        // path it can't actually act on, so it's dropped instead. The merge
+        // itself still surfaces via MergeConflict; only this specific file is
+        // absent from the list. See #50.
+        let (_remote, repo, workspace_root, _other) = conflicted_workspace_outside_subdirectory();
+
+        let result = sync_workspace(&workspace_root).await.unwrap();
+
+        match result {
+            GitSyncResult::MergeConflict { branch, files } => {
+                assert_eq!(branch, "main");
+                assert_eq!(files, Vec::<String>::new());
             }
             other => panic!("expected MergeConflict, got {other:?}"),
         }
@@ -1149,6 +1179,41 @@ mod tests {
         run_git(other.path(), ["push"]);
 
         fs::write(sub.join("conflict.txt"), "local change\n").unwrap();
+        run_git(repo.path(), ["add", "."]);
+        run_git(repo.path(), ["commit", "-m", "Local edit"]);
+
+        (remote, repo, sub, other)
+    }
+
+    // Same shape as `conflicted_workspace_in_subdirectory`, but the conflict
+    // lands on a file at the repo root — outside the `sub/` workspace root
+    // that gets returned and tested.
+    fn conflicted_workspace_outside_subdirectory() -> (
+        tempfile::TempDir,
+        tempfile::TempDir,
+        PathBuf,
+        tempfile::TempDir,
+    ) {
+        let remote = tempdir().unwrap();
+        init_bare_remote(remote.path());
+        let repo = tempdir().unwrap();
+        clone_with_commit(remote.path(), repo.path());
+
+        let sub = repo.path().join("sub");
+        fs::create_dir(&sub).unwrap();
+        fs::write(repo.path().join("outside.txt"), "base\n").unwrap();
+        run_git(repo.path(), ["add", "."]);
+        run_git(repo.path(), ["commit", "-m", "Add shared file"]);
+        run_git(repo.path(), ["push"]);
+
+        let other = tempdir().unwrap();
+        clone_existing(remote.path(), other.path());
+        fs::write(other.path().join("outside.txt"), "remote change\n").unwrap();
+        run_git(other.path(), ["add", "."]);
+        run_git(other.path(), ["commit", "-m", "Remote edit"]);
+        run_git(other.path(), ["push"]);
+
+        fs::write(repo.path().join("outside.txt"), "local change\n").unwrap();
         run_git(repo.path(), ["add", "."]);
         run_git(repo.path(), ["commit", "-m", "Local edit"]);
 
