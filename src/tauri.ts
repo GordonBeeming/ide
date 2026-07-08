@@ -592,7 +592,7 @@ export function getGitStatus() {
   return callApi<unknown>("get_git_status", "/api/git-status").then((value) => {
     const normalized = normalizeGitStatus(value);
     if (!normalized) {
-      throw new Error("Git status response was not valid JSON");
+      throw new Error("Git status response had an unexpected shape");
     }
     return normalized;
   });
@@ -606,7 +606,7 @@ export function commitGitChanges(message: string, paths: string[]) {
   }).then((value) => {
     const normalized = normalizeGitCommitResult(value);
     if (!normalized) {
-      throw new Error("Git commit response was not valid JSON");
+      throw new Error("Git commit response had an unexpected shape");
     }
     return normalized;
   });
@@ -626,7 +626,7 @@ export function loadGitFileDiff(path: string, maxOpenBytes?: number) {
   }).then((value) => {
     const normalized = normalizeGitFileDiff(value);
     if (!normalized) {
-      throw new Error("Git file diff response was not valid JSON");
+      throw new Error("Git file diff response had an unexpected shape");
     }
     return normalized;
   });
