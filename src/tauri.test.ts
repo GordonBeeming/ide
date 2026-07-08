@@ -350,6 +350,7 @@ describe("hosted Tauri API transport", () => {
         appZoomPercent: 100,
         dateTimeFormat: "localMedium",
         recentRelativeThreshold: "oneWeek",
+        diffViewMode: "inline",
         featureFlags: {},
       },
       workspace: {
@@ -1181,5 +1182,17 @@ describe("Git file diff response normalization", () => {
         isTooLarge: false,
       }),
     ).toBeUndefined();
+  });
+});
+
+describe("Diff view mode sanitization", () => {
+  it("keeps known values and falls back to inline for anything else", async () => {
+    const { sanitizeDiffViewMode } = await import("./tauri");
+
+    expect(sanitizeDiffViewMode("inline")).toBe("inline");
+    expect(sanitizeDiffViewMode("sideBySide")).toBe("sideBySide");
+    expect(sanitizeDiffViewMode("split")).toBe("inline");
+    expect(sanitizeDiffViewMode(undefined)).toBe("inline");
+    expect(sanitizeDiffViewMode(null)).toBe("inline");
   });
 });

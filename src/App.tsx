@@ -131,6 +131,7 @@ import {
   readFile,
   recordRecentFile,
   renameFile,
+  sanitizeDiffViewMode,
   searchIndexedFiles,
   searchFiles,
   setWorkspaceRootPath,
@@ -139,6 +140,8 @@ import {
   updateAgentContext,
   updateUiState,
   writeFile,
+  defaultDiffViewMode,
+  type DiffViewMode,
   type OpenLaunchRequest,
   type PersistedUiSnapshot,
   type SettingsLocations,
@@ -530,6 +533,7 @@ export default function App() {
     useState<DateTimeFormatId>(defaultDateTimeFormat);
   const [recentRelativeThreshold, setRecentRelativeThreshold] =
     useState<RecentRelativeThresholdId>(defaultRecentRelativeThreshold);
+  const [diffViewMode, setDiffViewMode] = useState<DiffViewMode>(defaultDiffViewMode);
   const [featureFlags, setFeatureFlags] = useState<FeatureFlagOverrides>({});
   const [prefersDark, setPrefersDark] = useState(systemPrefersDark);
   const [uiStateLoaded, setUiStateLoaded] = useState(false);
@@ -1017,6 +1021,7 @@ export default function App() {
     setRecentRelativeThreshold(
       sanitizeRecentRelativeThreshold(snapshot.view.recentRelativeThreshold),
     );
+    setDiffViewMode(sanitizeDiffViewMode(snapshot.view.diffViewMode));
     setFeatureFlags(sanitizeFeatureFlagOverrides(snapshot.view.featureFlags));
     setExpandedFolders(new Set(snapshot.workspace.expandedFolders));
     setTrustExternalWorkspace(Boolean(snapshot.workspace.trustExternalSymlinks));
@@ -2044,6 +2049,7 @@ export default function App() {
           appZoomPercent,
           dateTimeFormat,
           recentRelativeThreshold,
+          diffViewMode,
           featureFlags,
         },
         {
@@ -2088,6 +2094,7 @@ export default function App() {
     appZoomPercent,
     dateTimeFormat,
     recentRelativeThreshold,
+    diffViewMode,
     featureFlags,
     uiStateLoaded,
     workspaceUiRestored,
@@ -4565,6 +4572,8 @@ export default function App() {
                 isBinary={activeFile.diff.isBinary}
                 isTooLarge={activeFile.diff.isTooLarge}
                 prefersDark={prefersDark}
+                viewMode={diffViewMode}
+                onViewModeChange={setDiffViewMode}
               />
             </Suspense>
           ) : activeFile ? (

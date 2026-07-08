@@ -257,6 +257,12 @@ button {
   opacity: 0.45;
 }
 
+.tiny-icon-button--active {
+  border-color: var(--accent);
+  background: var(--accent-weak);
+  color: var(--text);
+}
+
 .search-tools {
   display: flex;
   gap: 6px;
@@ -619,6 +625,29 @@ button {
   color: var(--text);
 }
 
+/* The direct grid child of .editor-region (grid-template-rows: auto
+   minmax(0,1fr)) — matches .editor-host's placement so the diff view fills
+   the same row EditorPane does, whether or not the find-results panel (row
+   1) is present (it never coexists with a diff tab, so row 1 is otherwise
+   empty and collapses to 0 height). */
+.diff-pane {
+  display: flex;
+  flex-direction: column;
+  grid-row: 2;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.diff-toolbar {
+  display: flex;
+  flex: none;
+  justify-content: flex-end;
+  gap: 4px;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel);
+}
+
 .diff-host {
   flex: 1;
   min-height: 0;
@@ -626,6 +655,15 @@ button {
 }
 
 .diff-host .cm-editor {
+  height: 100%;
+}
+
+/* MergeView (side-by-side) renders its own two-editor flex layout inside
+   `.cm-mergeView`, which isn't a `.cm-editor` itself — it needs its own
+   height so it fills `.diff-host` the way the unified `.cm-editor` does.
+   The nested `.cm-editor`s inside it are still covered by the rule above
+   (a descendant selector matches at any depth). */
+.diff-host .cm-mergeView {
   height: 100%;
 }
 

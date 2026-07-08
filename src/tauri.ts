@@ -181,6 +181,14 @@ export type OpenLaunchRequest =
       singleFile: boolean;
     };
 
+export type DiffViewMode = "inline" | "sideBySide";
+
+export const defaultDiffViewMode: DiffViewMode = "inline";
+
+export function sanitizeDiffViewMode(value: unknown): DiffViewMode {
+  return value === "inline" || value === "sideBySide" ? value : defaultDiffViewMode;
+}
+
 export interface PersistedViewSettings {
   showDotfiles: boolean;
   showGeneratedInternal: boolean;
@@ -201,6 +209,7 @@ export interface PersistedViewSettings {
   appZoomPercent?: number;
   dateTimeFormat?: DateTimeFormatId;
   recentRelativeThreshold?: RecentRelativeThresholdId;
+  diffViewMode?: DiffViewMode;
   // Persisted feature-flag overrides only; defaults live in src/featureFlags.ts.
   featureFlags?: Record<string, boolean>;
 }
@@ -269,6 +278,7 @@ const defaultUiSnapshot: PersistedUiSnapshot = {
     appZoomPercent: 100,
     dateTimeFormat: defaultDateTimeFormat,
     recentRelativeThreshold: defaultRecentRelativeThreshold,
+    diffViewMode: defaultDiffViewMode,
     featureFlags: {},
   },
   workspace: {

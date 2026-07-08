@@ -197,6 +197,8 @@ struct PersistedViewSettings {
     date_time_format: String,
     #[serde(default = "default_recent_relative_threshold")]
     recent_relative_threshold: String,
+    #[serde(default = "default_diff_view_mode")]
+    diff_view_mode: String,
     // Persisted feature-flag overrides only. Defaults and metadata live in the
     // frontend registry (src/featureFlags.ts); unknown/retired ids are pruned by
     // sanitize_view_settings so the settings file stays tidy as flags retire.
@@ -226,6 +228,7 @@ impl Default for PersistedViewSettings {
             app_zoom_percent: default_app_zoom_percent(),
             date_time_format: default_date_time_format(),
             recent_relative_threshold: default_recent_relative_threshold(),
+            diff_view_mode: default_diff_view_mode(),
             feature_flags: BTreeMap::new(),
         }
     }
@@ -293,6 +296,8 @@ const KNOWN_DATE_TIME_FORMATS: &[&str] = &[
 const KNOWN_RECENT_RELATIVE_THRESHOLDS: &[&str] = &[
     "never", "oneDay", "twoDays", "oneWeek", "twoWeeks", "oneMonth",
 ];
+const DEFAULT_DIFF_VIEW_MODE: &str = "inline";
+const KNOWN_DIFF_VIEW_MODES: &[&str] = &["inline", "sideBySide"];
 
 fn default_tree_scan_limit() -> usize {
     DEFAULT_TREE_SCAN_LIMIT
@@ -354,6 +359,10 @@ fn default_recent_relative_threshold() -> String {
     DEFAULT_RECENT_RELATIVE_THRESHOLD.to_string()
 }
 
+fn default_diff_view_mode() -> String {
+    DEFAULT_DIFF_VIEW_MODE.to_string()
+}
+
 fn sanitize_view_settings(mut settings: PersistedViewSettings) -> PersistedViewSettings {
     settings.tree_scan_limit = settings
         .tree_scan_limit
@@ -398,6 +407,9 @@ fn sanitize_view_settings(mut settings: PersistedViewSettings) -> PersistedViewS
     }
     if !KNOWN_RECENT_RELATIVE_THRESHOLDS.contains(&settings.recent_relative_threshold.as_str()) {
         settings.recent_relative_threshold = default_recent_relative_threshold();
+    }
+    if !KNOWN_DIFF_VIEW_MODES.contains(&settings.diff_view_mode.as_str()) {
+        settings.diff_view_mode = default_diff_view_mode();
     }
     settings
         .feature_flags
@@ -3411,6 +3423,7 @@ mod tests {
                 app_zoom_percent: 350,
                 date_time_format: "yyyyMmDdHhMm".to_string(),
                 recent_relative_threshold: "twoDays".to_string(),
+                diff_view_mode: "sideBySide".to_string(),
                 feature_flags: BTreeMap::new(),
             },
             workspaces: vec![PersistedWorkspaceUiState {
@@ -3443,6 +3456,7 @@ mod tests {
         assert_eq!(loaded.view.app_zoom_percent, 350);
         assert_eq!(loaded.view.date_time_format, "yyyyMmDdHhMm");
         assert_eq!(loaded.view.recent_relative_threshold, "twoDays");
+        assert_eq!(loaded.view.diff_view_mode, "sideBySide");
         assert_eq!(loaded.workspaces.len(), 1);
 
         *state.ui_state.write().unwrap() = loaded;
@@ -3496,7 +3510,7 @@ mod tests {
 
         std::fs::write(
             &ui_state_path,
-            r#"{"view":{"showDotfiles":false,"showGeneratedInternal":false,"dateTimeFormat":"relative","recentRelativeThreshold":"bogus","featureFlags":{"gitAttribution":false,"ghostFlag":true}},"workspaces":[]}"#,
+            r#"{"view":{"showDotfiles":false,"showGeneratedInternal":false,"dateTimeFormat":"relative","recentRelativeThreshold":"bogus","diffViewMode":"bogus","featureFlags":{"gitAttribution":false,"ghostFlag":true}},"workspaces":[]}"#,
         )
         .unwrap();
 
@@ -3507,6 +3521,7 @@ mod tests {
             loaded.view.recent_relative_threshold,
             DEFAULT_RECENT_RELATIVE_THRESHOLD
         );
+        assert_eq!(loaded.view.diff_view_mode, DEFAULT_DIFF_VIEW_MODE);
         assert_eq!(
             loaded.view.feature_flags.get("gitAttribution"),
             Some(&false)

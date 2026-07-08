@@ -237,14 +237,21 @@ vi.mock("./DiffPane", () => ({
     modified,
     isBinary,
     isTooLarge,
+    viewMode,
+    onViewModeChange,
   }: {
     filePath: string;
     original: string;
     modified: string;
     isBinary: boolean;
     isTooLarge: boolean;
+    viewMode: "inline" | "sideBySide";
+    onViewModeChange: (mode: "inline" | "sideBySide") => void;
   }) => (
     <div aria-label={`Diff ${filePath}`}>
+      <span>view mode: {viewMode}</span>
+      <button onClick={() => onViewModeChange("inline")}>Inline diff</button>
+      <button onClick={() => onViewModeChange("sideBySide")}>Side-by-side diff</button>
       {isBinary ? (
         <span>Binary diff</span>
       ) : isTooLarge ? (
@@ -4303,6 +4310,35 @@ describe("Git commit sidebar", () => {
     );
     expect(tauriMocks.updateAgentContext.mock.calls.length).toBe(agentContextCallsBefore);
     expect(screen.getByText("modified: after")).toBeInTheDocument();
+  });
+
+  it("toggles the diff view mode and persists it as an app-level setting", async () => {
+    render(<App />);
+
+    expect(await treeButton("README.md")).toBeInTheDocument();
+    fireEvent.click(screen.getByTitle("Commit changes"));
+
+    const panel = await screen.findByLabelText("Git commit panel");
+    const readmeRow = await within(panel).findByText("README.md");
+    fireEvent.click(readmeRow.closest("button")!);
+    const diff = await screen.findByLabelText("Diff README.md");
+    expect(within(diff).getByText("view mode: inline")).toBeInTheDocument();
+
+    fireEvent.click(within(diff).getByText("Side-by-side diff"));
+    expect(within(diff).getByText("view mode: sideBySide")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(tauriMocks.updateUiState).toHaveBeenCalledWith(
+        expect.objectContaining({ diffViewMode: "sideBySide" }),
+        expect.any(Object),
+      ),
+    );
+
+    // The setting is app-level, not per-tab — a second diff tab opens in the
+    // same mode without needing its own toggle.
+    const appRow = await within(panel).findByText("App.tsx");
+    fireEvent.click(appRow.closest("button")!);
+    const appDiff = await screen.findByLabelText("Diff src/App.tsx");
+    expect(within(appDiff).getByText("view mode: sideBySide")).toBeInTheDocument();
   });
 });
 
