@@ -258,9 +258,17 @@ fn collect_conflicted_files(repo: &gix::Repository, prefix: Option<&str>) -> Vec
         if entry.stage() == gix::index::entry::Stage::Unconflicted {
             continue;
         }
-        if let Some(path) = workspace_relative_path(prefix, entry.path(&index)) {
-            seen.insert(path);
-        }
+        let path = entry.path(&index);
+        // Unlike ordinary changed-file entries, a conflict isn't scoped to this
+        // workspace: `sync_workspace`/`complete_merge` operate on the whole
+        // repo, so a merge can leave a conflict outside this subdirectory that
+        // still blocks "Complete merge". Dropping it here (the way the ordinary
+        // file list intentionally does) would leave the UI showing zero
+        // conflicts while the backend keeps refusing as unresolved. Fall back
+        // to the repo-relative path — there's no workspace-relative one — so it
+        // still surfaces.
+        let repo_relative = path.to_str_lossy().into_owned();
+        seen.insert(workspace_relative_path(prefix, path).unwrap_or(repo_relative));
     }
     seen.into_iter().collect()
 }
@@ -957,6 +965,42 @@ mod tests {
             .map(|entry| entry.path.as_str())
             .collect();
         assert_eq!(paths, vec!["inside.txt"]);
+    }
+
+    #[tokio::test]
+    async fn conflicted_files_surface_even_outside_the_workspace_subdirectory() {
+        // `sync_workspace`/`complete_merge` (git_sync.rs) operate on the whole
+        // repo, not just this workspace's subdirectory, so a conflict can land
+        // on a file outside `sub/`. Dropping it here — the way the ordinary
+        // (non-conflict) file list intentionally scopes to the workspace, per
+        // `status_scopes_to_workspace_subdirectory` above — would leave the UI
+        // showing zero conflicts while `complete_merge` keeps refusing as
+        // unresolved.
+        let dir = tempdir().unwrap();
+        init_repo(dir.path());
+        // `git merge` checks committer identity up front even for a merge that
+        // ends in conflict (it never actually commits), so this needs identity
+        // configured despite `commit_all` above not requiring it.
+        configure_identity(dir.path());
+        fs::create_dir(dir.path().join("sub")).unwrap();
+        fs::write(dir.path().join("sub/inside.txt"), "one\n").unwrap();
+        fs::write(dir.path().join("outside.txt"), "base\n").unwrap();
+        commit_all(dir.path(), "Initial commit");
+
+        run_git(dir.path(), ["checkout", "-b", "other"]);
+        fs::write(dir.path().join("outside.txt"), "other change\n").unwrap();
+        commit_all(dir.path(), "Other change");
+
+        run_git(dir.path(), ["checkout", "main"]);
+        fs::write(dir.path().join("outside.txt"), "main change\n").unwrap();
+        commit_all(dir.path(), "Main change");
+
+        let _ = git_stdout(dir.path(), ["merge", "other", "--no-edit"]);
+
+        let status = status_for_workspace(&dir.path().join("sub")).await;
+
+        assert!(status.merge_in_progress);
+        assert_eq!(status.conflicted_files, vec!["outside.txt".to_string()]);
     }
 
     #[tokio::test]

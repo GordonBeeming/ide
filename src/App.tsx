@@ -1649,8 +1649,9 @@ export default function App() {
       // A sync/merge already touches the remote or index — don't fetch over it.
       busy: gitSyncInFlight || gitMergeInFlight || mergeInProgress,
       // Only skip once a loaded status confirms there's no upstream; while status
-      // is unknown, let the fetch run (the backend no-ops if there's truly none).
-      noUpstream: gitStatus?.status === "available" && gitStatus.ahead === undefined,
+      // is unknown — or the backend predates this field — let the fetch run
+      // (the backend no-ops if there's truly none).
+      noUpstream: gitStatus?.status === "available" && gitStatus.noUpstream,
     };
   }, [gitSyncInFlight, gitMergeInFlight, mergeInProgress, gitStatus]);
 

@@ -149,9 +149,14 @@ export interface GitStatus {
   mergeInProgress: boolean;
   conflictedFiles: string[];
   // Commits ahead of / behind the upstream; both undefined when there's no
-  // upstream (or a detached/unborn HEAD).
+  // upstream (or a detached/unborn HEAD) *and* when talking to a backend that
+  // predates this field. `noUpstream` disambiguates the two: true only when
+  // the backend explicitly reported no upstream, so callers that must skip
+  // work specifically for "no upstream" (rather than "unknown") have a signal
+  // that doesn't misfire against an old/mismatched backend.
   ahead?: number;
   behind?: number;
+  noUpstream: boolean;
 }
 
 export interface GitCommitResult {
@@ -736,6 +741,12 @@ export function normalizeGitStatus(value: unknown): GitStatus | undefined {
   // integer otherwise. Anything else is treated as absent.
   const ahead = normalizeTrackingCount(candidate.ahead);
   const behind = normalizeTrackingCount(candidate.behind);
+  // The backend always sends `ahead` as a key (a number, or explicit `null`
+  // for "no upstream") once it knows about tracking counts at all — only a
+  // backend that predates this field omits the key entirely. So "key present
+  // but null" means a confirmed no-upstream state, while "key absent" means
+  // this backend hasn't told us either way.
+  const noUpstream = "ahead" in candidate && candidate.ahead === null;
 
   return {
     status: candidate.status,
@@ -751,6 +762,7 @@ export function normalizeGitStatus(value: unknown): GitStatus | undefined {
     conflictedFiles,
     ahead,
     behind,
+    noUpstream,
   };
 }
 
@@ -853,10 +865,18 @@ export function normalizeGitSyncResult(value: unknown): GitSyncResult | undefine
   return {
     outcome: candidate.outcome,
     branch: candidate.branch,
-    pulled: typeof candidate.pulled === "number" ? candidate.pulled : 0,
-    pushed: typeof candidate.pushed === "number" ? candidate.pushed : 0,
+    pulled: normalizeNonNegativeCount(candidate.pulled),
+    pushed: normalizeNonNegativeCount(candidate.pushed),
     files,
   };
+}
+
+// Like normalizeTrackingCount, but falls back to 0 rather than undefined —
+// pulled/pushed are always-present counts, not "absent means no upstream"
+// fields, so a malformed value (negative, float, non-number) should read as
+// "nothing moved" rather than propagate a value the UI can't sensibly render.
+function normalizeNonNegativeCount(value: unknown): number {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : 0;
 }
 
 export function normalizeGitMergeCommit(value: unknown): GitMergeCommit | undefined {

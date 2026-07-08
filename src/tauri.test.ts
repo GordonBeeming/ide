@@ -1044,6 +1044,7 @@ describe("Git status response normalization", () => {
       ],
       mergeInProgress: false,
       conflictedFiles: [],
+      noUpstream: false,
     });
   });
 
@@ -1069,6 +1070,7 @@ describe("Git status response normalization", () => {
       files: [],
       mergeInProgress: true,
       conflictedFiles: ["conflict.txt"],
+      noUpstream: false,
     });
   });
 
@@ -1105,16 +1107,28 @@ describe("Git status response normalization", () => {
     const counted = normalizeGitStatus({ ...base, ahead: 2, behind: 1 });
     expect(counted?.ahead).toBe(2);
     expect(counted?.behind).toBe(1);
+    expect(counted?.noUpstream).toBe(false);
 
-    // No upstream serializes as null → undefined.
+    // No upstream serializes as null → undefined, and `noUpstream` becomes
+    // true since the backend explicitly reported the null (as opposed to the
+    // key being absent below).
     const noUpstream = normalizeGitStatus({ ...base, ahead: null, behind: null });
     expect(noUpstream?.ahead).toBeUndefined();
     expect(noUpstream?.behind).toBeUndefined();
+    expect(noUpstream?.noUpstream).toBe(true);
 
-    // Negative / non-integer values are treated as absent.
+    // Negative / non-integer values are treated as absent, same as null, but
+    // `noUpstream` only fires on an explicit null, not a merely-invalid value.
     const bad = normalizeGitStatus({ ...base, ahead: -1, behind: 1.5 });
     expect(bad?.ahead).toBeUndefined();
     expect(bad?.behind).toBeUndefined();
+    expect(bad?.noUpstream).toBe(false);
+
+    // A backend that predates ahead/behind omits the key entirely — that must
+    // not be confused with a confirmed no-upstream state.
+    const legacy = normalizeGitStatus(base);
+    expect(legacy?.ahead).toBeUndefined();
+    expect(legacy?.noUpstream).toBe(false);
   });
 
   it("normalizes an unsupported status without a branch", async () => {
@@ -1139,6 +1153,7 @@ describe("Git status response normalization", () => {
       files: [],
       mergeInProgress: false,
       conflictedFiles: [],
+      noUpstream: false,
     });
   });
 
@@ -1234,6 +1249,25 @@ describe("Git sync response normalization", () => {
       normalizeGitSyncResult({ outcome: "upToDate", branch: "main" }),
     ).toEqual({
       outcome: "upToDate",
+      branch: "main",
+      pulled: 0,
+      pushed: 0,
+      files: [],
+    });
+  });
+
+  it("treats negative or non-integer counts as zero", async () => {
+    const { normalizeGitSyncResult } = await import("./tauri");
+
+    expect(
+      normalizeGitSyncResult({
+        outcome: "synced",
+        branch: "main",
+        pulled: -1,
+        pushed: 1.5,
+      }),
+    ).toEqual({
+      outcome: "synced",
       branch: "main",
       pulled: 0,
       pushed: 0,

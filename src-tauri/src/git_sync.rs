@@ -460,7 +460,13 @@ impl GitCli {
             .then(|| prefix_output.stdout.trim().to_string())
             .filter(|prefix| !prefix.is_empty());
 
-        let output = self.run(&["status", "--porcelain"])?;
+        // `-z` disables porcelain v1's path quoting (spaces/unusual characters
+        // would otherwise come back C-quoted, e.g. `"a\\tb"`) and NUL-separates
+        // entries instead of newlines, mirroring the `-z` usage already in
+        // `staged_file_with_conflict_markers` below. None of the codes
+        // `is_unmerged_code` matches are renames, so there's no extra
+        // NUL-separated old-path segment to account for.
+        let output = self.run(&["status", "--porcelain=v1", "-z"])?;
         if !output.success {
             return Err(GitSyncError::Failed(git_message(
                 &output,
@@ -468,15 +474,15 @@ impl GitCli {
             )));
         }
         let mut files = Vec::new();
-        for line in output.stdout.lines() {
-            // Porcelain v1 lines are `XY <path>`; the two status codes plus a
-            // space are a fixed 3-char prefix.
-            if line.len() < 4 {
+        for entry in output.stdout.split('\0').filter(|entry| !entry.is_empty()) {
+            // Each entry is `XY <path>`; the two status codes plus a space are a
+            // fixed 3-char prefix.
+            if entry.len() < 4 {
                 continue;
             }
-            let code = &line[..2];
+            let code = &entry[..2];
             if is_unmerged_code(code) {
-                let repo_relative = &line[3..];
+                let repo_relative = &entry[3..];
                 let relative = match &prefix {
                     Some(prefix) => repo_relative
                         .strip_prefix(prefix.as_str())
@@ -715,6 +721,24 @@ mod tests {
             GitSyncResult::MergeConflict { branch, files } => {
                 assert_eq!(branch, "main");
                 assert_eq!(files, vec!["conflict.txt".to_string()]);
+            }
+            other => panic!("expected MergeConflict, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn conflicted_files_handles_paths_with_spaces() {
+        // Porcelain v1 without `-z` C-quotes unusual paths (spaces included),
+        // wrapping the entry in double quotes — a naive line-split would then
+        // return `"my file.txt"` instead of `my file.txt`, and passing that
+        // back to `git add` in `stage_resolved` would fail to find the file.
+        let (_remote, work, _other) = conflicted_workspace_with_filename("my file.txt");
+
+        let result = sync_workspace(work.path()).await.unwrap();
+
+        match result {
+            GitSyncResult::MergeConflict { files, .. } => {
+                assert_eq!(files, vec!["my file.txt".to_string()]);
             }
             other => panic!("expected MergeConflict, got {other:?}"),
         }
@@ -995,23 +1019,32 @@ mod tests {
     // Leaves `work` one local commit and one remote commit apart on `conflict.txt`,
     // so a pull produces an unresolved merge conflict on that file.
     fn conflicted_workspace() -> (tempfile::TempDir, tempfile::TempDir, tempfile::TempDir) {
+        conflicted_workspace_with_filename("conflict.txt")
+    }
+
+    // Same as `conflicted_workspace`, but the conflicted file's name is a
+    // parameter — used to exercise names porcelain v1 would otherwise C-quote
+    // (e.g. spaces) without duplicating the whole setup.
+    fn conflicted_workspace_with_filename(
+        filename: &str,
+    ) -> (tempfile::TempDir, tempfile::TempDir, tempfile::TempDir) {
         let remote = tempdir().unwrap();
         init_bare_remote(remote.path());
         let work = tempdir().unwrap();
         clone_with_commit(remote.path(), work.path());
-        fs::write(work.path().join("conflict.txt"), "base\n").unwrap();
+        fs::write(work.path().join(filename), "base\n").unwrap();
         run_git(work.path(), ["add", "."]);
         run_git(work.path(), ["commit", "-m", "Add shared file"]);
         run_git(work.path(), ["push"]);
 
         let other = tempdir().unwrap();
         clone_existing(remote.path(), other.path());
-        fs::write(other.path().join("conflict.txt"), "remote change\n").unwrap();
+        fs::write(other.path().join(filename), "remote change\n").unwrap();
         run_git(other.path(), ["add", "."]);
         run_git(other.path(), ["commit", "-m", "Remote edit"]);
         run_git(other.path(), ["push"]);
 
-        fs::write(work.path().join("conflict.txt"), "local change\n").unwrap();
+        fs::write(work.path().join(filename), "local change\n").unwrap();
         run_git(work.path(), ["add", "."]);
         run_git(work.path(), ["commit", "-m", "Local edit"]);
 
