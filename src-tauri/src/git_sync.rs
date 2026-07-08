@@ -117,7 +117,11 @@ fn sync_workspace_blocking(workspace_root: &Path) -> Result<GitSyncResult, GitSy
         return Ok(GitSyncResult::NoUpstream { branch });
     }
 
-    let fetch = git.run(&["fetch", &remote])?;
+    // `--` forces the remote name to be treated as a positional argument even
+    // if it starts with `-` (it's read from repo config, e.g. from a cloned
+    // repo's `.git/config`, not typed by the user) — otherwise git could
+    // parse it as a flag.
+    let fetch = git.run(&["fetch", "--", &remote])?;
     if !fetch.success {
         return Err(GitSyncError::Failed(git_message(
             &fetch,
@@ -327,7 +331,11 @@ fn fetch_upstream_blocking(workspace_root: &Path) -> Result<(), GitSyncError> {
         return Ok(());
     };
 
-    let fetch = git.run(&["fetch", &remote])?;
+    // `--` forces the remote name to be treated as a positional argument even
+    // if it starts with `-` (it's read from repo config, e.g. from a cloned
+    // repo's `.git/config`, not typed by the user) — otherwise git could
+    // parse it as a flag.
+    let fetch = git.run(&["fetch", "--", &remote])?;
     if !fetch.success {
         return Err(GitSyncError::Failed(git_message(
             &fetch,

@@ -150,12 +150,15 @@ export interface GitStatus {
   conflictedFiles: string[];
   // Commits ahead of / behind the upstream; both undefined when there's no
   // upstream (or a detached/unborn HEAD) *and* when talking to a backend that
-  // predates this field. `noUpstream` disambiguates the two: true only when
-  // the backend explicitly reported no upstream, so callers that must skip
-  // work specifically for "no upstream" (rather than "unknown") have a signal
-  // that doesn't misfire against an old/mismatched backend.
+  // predates this field.
   ahead?: number;
   behind?: number;
+  // True only for a confirmed no-upstream *branch* — the backend also nulls
+  // ahead/behind for a detached or unborn HEAD (which has no branch to
+  // compare against at all), and for a backend that predates the field
+  // entirely; this excludes both, so it means exactly "there is a checked-out
+  // branch and it has no upstream" everywhere it's read, with no separate
+  // headDetached/headUnborn check required at the call site.
   noUpstream: boolean;
 }
 
@@ -741,12 +744,20 @@ export function normalizeGitStatus(value: unknown): GitStatus | undefined {
   // integer otherwise. Anything else is treated as absent.
   const ahead = normalizeTrackingCount(candidate.ahead);
   const behind = normalizeTrackingCount(candidate.behind);
-  // The backend always sends `ahead` as a key (a number, or explicit `null`
-  // for "no upstream") once it knows about tracking counts at all — only a
-  // backend that predates this field omits the key entirely. So "key present
-  // but null" means a confirmed no-upstream state, while "key absent" means
-  // this backend hasn't told us either way.
-  const noUpstream = "ahead" in candidate && candidate.ahead === null;
+  // The backend always sends `ahead` as a key (a number, or explicit `null`)
+  // once it knows about tracking counts at all — only a backend that predates
+  // this field omits the key entirely. So "key present but null" means a
+  // confirmed no-upstream state, while "key absent" means this backend hasn't
+  // told us either way. But that same null also covers a detached/unborn
+  // HEAD (no branch to compare against) — exclude both so `noUpstream` keeps
+  // its documented meaning ("a checked-out branch, confirmed to have no
+  // upstream") wherever it's read, rather than requiring every caller to
+  // separately re-check headDetached/headUnborn.
+  const noUpstream =
+    "ahead" in candidate &&
+    candidate.ahead === null &&
+    candidate.headDetached === false &&
+    candidate.headUnborn === false;
 
   return {
     status: candidate.status,

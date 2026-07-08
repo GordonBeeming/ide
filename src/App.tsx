@@ -1678,16 +1678,10 @@ export default function App() {
       busy: gitSyncInFlight || gitMergeInFlight || mergeInProgress,
       // Only skip once a loaded status confirms there's no upstream; while status
       // is unknown — or the backend predates this field — let the fetch run
-      // (the backend no-ops if there's truly none). The backend also reports
-      // `ahead`/`behind` as null for a detached or unborn HEAD (neither has a
-      // branch to compare against), which `noUpstream` alone can't tell apart
-      // from a real no-upstream branch — exclude both so fetch isn't wrongly
-      // suppressed just because nothing is currently checked out to compare.
-      noUpstream:
-        gitStatus?.status === "available" &&
-        gitStatus.noUpstream &&
-        !gitStatus.headDetached &&
-        !gitStatus.headUnborn,
+      // (the backend no-ops if there's truly none). `noUpstream` already
+      // excludes detached/unborn HEAD (see its definition in tauri.ts), so
+      // this doesn't need its own headDetached/headUnborn check.
+      noUpstream: gitStatus?.status === "available" && gitStatus.noUpstream,
     };
   }, [gitSyncInFlight, gitMergeInFlight, mergeInProgress, gitStatus]);
 
@@ -4648,7 +4642,10 @@ export default function App() {
                   <span className="commit-panel__sync-conflict-title">
                     {conflictedFiles.length > 0
                       ? "Merge conflicts — resolve each file, then complete the merge:"
-                      : "All conflicts resolved — complete the merge to finish."}
+                      : // conflictedFiles is scoped to this workspace (see #50) — a
+                        // conflict elsewhere in the repo can still exist and block
+                        // the merge, so this can't claim "all" are resolved.
+                        "No conflicts detected in this workspace — complete the merge to finish."}
                   </span>
                   {conflictedFiles.length > 0 ? (
                     <ul className="commit-panel__merge-files">

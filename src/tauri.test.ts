@@ -1117,6 +1117,21 @@ describe("Git status response normalization", () => {
     expect(noUpstream?.behind).toBeUndefined();
     expect(noUpstream?.noUpstream).toBe(true);
 
+    // A detached or unborn HEAD also nulls ahead/behind (no branch to compare
+    // against), but that's not a confirmed no-upstream *branch* — noUpstream
+    // must stay false so it keeps meaning exactly what its name says
+    // everywhere it's read, not just at one call site that remembers to
+    // additionally check headDetached/headUnborn.
+    const detached = normalizeGitStatus({
+      ...base,
+      headDetached: true,
+      ahead: null,
+      behind: null,
+    });
+    expect(detached?.noUpstream).toBe(false);
+    const unborn = normalizeGitStatus({ ...base, headUnborn: true, ahead: null, behind: null });
+    expect(unborn?.noUpstream).toBe(false);
+
     // Negative / non-integer values are treated as absent, same as null, but
     // `noUpstream` only fires on an explicit null, not a merely-invalid value.
     const bad = normalizeGitStatus({ ...base, ahead: -1, behind: 1.5 });
