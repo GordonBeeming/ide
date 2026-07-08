@@ -634,6 +634,7 @@ export default function App() {
   const [gitMergeSuccess, setGitMergeSuccess] = useState<string>();
   const gitStatusInitializedRef = useRef(false);
   const gitStatusRefreshInFlightRef = useRef(false);
+  const gitStatusRefreshPendingRef = useRef(false);
   const sidebarFilterInputRef = useRef<HTMLInputElement | null>(null);
   const sidebarContentSearchInputRef = useRef<HTMLInputElement | null>(null);
   const currentFindInputRef = useRef<HTMLInputElement | null>(null);
@@ -1300,37 +1301,46 @@ export default function App() {
     // whether the previous call has returned; without a guard, a slow
     // getGitStatus() (a large repo, a loaded disk) can leave two requests in
     // flight and let the older one's response land after the newer one's,
-    // flickering state backwards. A skipped tick is fine — the next poll (or
-    // caller) picks it up.
-    if (gitStatusRefreshInFlightRef.current) return;
+    // flickering state backwards. But a caller that specifically awaits this
+    // right after a commit/sync/stage/merge (to reflect that mutation) must
+    // not just be dropped if it lands mid-poll — its request is remembered
+    // and the fetch loop below runs once more before returning, so every
+    // caller is guaranteed a status at least as fresh as when it called.
+    if (gitStatusRefreshInFlightRef.current) {
+      gitStatusRefreshPendingRef.current = true;
+      return;
+    }
     gitStatusRefreshInFlightRef.current = true;
 
-    try {
-      const status = await getGitStatus();
-      setGitStatus(status);
-      setGitStatusError(undefined);
-      setGitCommitSelectedPaths((current) => {
-        const validPaths = new Set(status.files.map((file) => file.path));
-        if (!gitStatusInitializedRef.current) {
-          gitStatusInitializedRef.current = true;
-          return validPaths;
-        }
-        const next = new Set<string>();
-        for (const path of current) {
-          if (validPaths.has(path)) next.add(path);
-        }
-        return next;
-      });
-      // A fresh Git status means every in-IDE save/create/rename/delete (they
-      // all funnel through refreshFiles → here) and every commit just landed,
-      // so any open diff tab may now be stale — reload them too.
-      void refreshOpenDiffTabs();
-    } catch (reason) {
-      setGitStatus(undefined);
-      setGitStatusError(`Unable to load Git status: ${String(reason)}`);
-    } finally {
-      gitStatusRefreshInFlightRef.current = false;
-    }
+    do {
+      gitStatusRefreshPendingRef.current = false;
+      try {
+        const status = await getGitStatus();
+        setGitStatus(status);
+        setGitStatusError(undefined);
+        setGitCommitSelectedPaths((current) => {
+          const validPaths = new Set(status.files.map((file) => file.path));
+          if (!gitStatusInitializedRef.current) {
+            gitStatusInitializedRef.current = true;
+            return validPaths;
+          }
+          const next = new Set<string>();
+          for (const path of current) {
+            if (validPaths.has(path)) next.add(path);
+          }
+          return next;
+        });
+        // A fresh Git status means every in-IDE save/create/rename/delete (they
+        // all funnel through refreshFiles → here) and every commit just landed,
+        // so any open diff tab may now be stale — reload them too.
+        void refreshOpenDiffTabs();
+      } catch (reason) {
+        setGitStatus(undefined);
+        setGitStatusError(`Unable to load Git status: ${String(reason)}`);
+      }
+    } while (gitStatusRefreshPendingRef.current);
+
+    gitStatusRefreshInFlightRef.current = false;
   }, [gitCommitEnabled, refreshOpenDiffTabs]);
 
   const refreshFiles = useCallback(async (options?: { singleFilePath?: string }) => {

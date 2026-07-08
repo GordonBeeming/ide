@@ -89,6 +89,9 @@ const tauriMocks = vi.hoisted(() => ({
   getGitStatus: vi.fn(),
   commitGitChanges: vi.fn(),
   fetchGit: vi.fn(),
+  syncGit: vi.fn(),
+  stageResolvedFile: vi.fn(),
+  completeMerge: vi.fn(),
   loadGitFileDiff: vi.fn(),
 }));
 
@@ -158,6 +161,9 @@ vi.mock("./tauri", async () => {
     getGitStatus: tauriMocks.getGitStatus,
     commitGitChanges: tauriMocks.commitGitChanges,
     fetchGit: tauriMocks.fetchGit,
+    syncGit: tauriMocks.syncGit,
+    stageResolvedFile: tauriMocks.stageResolvedFile,
+    completeMerge: tauriMocks.completeMerge,
     loadGitFileDiff: tauriMocks.loadGitFileDiff,
   };
 });
