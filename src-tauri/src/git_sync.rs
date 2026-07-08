@@ -136,7 +136,11 @@ fn sync_workspace_blocking(workspace_root: &Path) -> Result<GitSyncResult, GitSy
     let behind = git.rev_count("HEAD..@{upstream}")?;
 
     if behind > 0 {
-        let pull = git.run(&["pull", "--no-edit"])?;
+        // `--no-rebase` forces the merge strategy explicitly. Without it, git on a
+        // config that hasn't set `pull.rebase` fatals on divergent branches
+        // ("Need to specify how to reconcile…") instead of merging, which would
+        // turn an ordinary conflict into an opaque failure.
+        let pull = git.run(&["pull", "--no-edit", "--no-rebase"])?;
         if !pull.success {
             let conflicts = git.conflicted_files()?;
             let mid_merge = git
