@@ -932,7 +932,15 @@ fn resolve_new_workspace_entry_path(
 fn nearest_existing_ancestor(path: &Path) -> Result<PathBuf, WorkspaceError> {
     let mut current = path;
     loop {
-        if current.exists() {
+        // symlink_metadata (lstat) reports the dirent itself, not its target, so a
+        // dangling symlink counts as "existing" here and gets returned rather than
+        // skipped. Path::exists() follows the link and would report a dangling
+        // symlink as absent, walking past it to a higher ancestor and letting the
+        // caller's canonicalize() pass on a parent that never sees the symlink —
+        // opening a TOCTOU window where the link resolves outside the workspace
+        // once its target shows up. Returning the symlink itself instead forces the
+        // caller's canonicalize() to follow (and fail closed on) the same entry.
+        if current.symlink_metadata().is_ok() {
             return Ok(current.to_path_buf());
         }
         current = current.parent().ok_or(WorkspaceError::InvalidPath)?;
@@ -1118,6 +1126,22 @@ mod tests {
             read_workspace_file(dir.path(), "link.txt", 1024, false).unwrap(),
             "inside"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn read_workspace_file_fails_closed_on_dangling_symlink_parent() {
+        let dir = tempdir().unwrap();
+        // A dangling symlink still "exists" as a dirent (symlink_metadata finds it),
+        // so nearest_existing_ancestor must return it rather than walk past it to a
+        // higher, real ancestor. If it walked past, the escape guard would validate
+        // an unrelated real directory and let the request through; the caller's
+        // later canonicalize() of the dangling link then fails closed instead of
+        // silently resolving once/if the link's target starts to exist.
+        symlink(dir.path().join("nowhere"), dir.path().join("dangling_link")).unwrap();
+
+        let result = read_workspace_file(dir.path(), "dangling_link/child.txt", 1024, false);
+        assert!(matches!(result, Err(WorkspaceError::Io(_))));
     }
 
     #[cfg(unix)]
