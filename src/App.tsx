@@ -168,6 +168,7 @@ import {
   tabCloseRequiresConfirmation,
   updateTabContents,
   type EditorTab,
+  type EditorTabDiff,
 } from "./tabs";
 import {
   editorCommandLabel,
@@ -1111,6 +1112,84 @@ export default function App() {
     }
   }, []);
 
+  // Fetches the latest diff for one open diff tab and returns the updated
+  // payload, or undefined if the fetch failed or nothing actually changed —
+  // callers skip the state update entirely in that case, so an unrelated
+  // refresh never re-renders a diff tab that's still accurate. Shares the
+  // disk-check in-flight guard with real files, keyed by the same tab path
+  // (the synthetic `diff://<filePath>` key), so a slow fetch can't overlap
+  // with itself from two triggers (background poll + focus, say).
+  const fetchDiffTabUpdate = useCallback(
+    async (tab: EditorTab): Promise<EditorTabDiff | undefined> => {
+      const existing = tab.diff;
+      if (!existing) return undefined;
+      if (diskCheckInFlightRef.current.has(tab.path)) return undefined;
+
+      diskCheckInFlightRef.current.add(tab.path);
+      try {
+        const diff = await loadGitFileDiff(existing.filePath, maxOpenFileKb * 1024);
+        const changed =
+          diff.original !== existing.original ||
+          diff.modified !== existing.modified ||
+          diff.status !== existing.status ||
+          diff.isBinary !== existing.isBinary ||
+          diff.isTooLarge !== existing.isTooLarge;
+        return changed ? { filePath: existing.filePath, ...diff } : undefined;
+      } catch {
+        // A transient status-check failure shouldn't blank an open diff —
+        // leave the tab showing its last known-good snapshot.
+        return undefined;
+      } finally {
+        diskCheckInFlightRef.current.delete(tab.path);
+      }
+    },
+    [maxOpenFileKb],
+  );
+
+  // Single-tab path used by checkOpenFileDiskState (background poll, focus,
+  // tab activation) so an externally-changed file's diff reloads the same
+  // way a real open file's contents do.
+  const refreshOpenDiffTab = useCallback(
+    async (path: string) => {
+      const tab = openFilesRef.current.find((file) => file.path === path && file.diff);
+      if (!tab) return;
+      const update = await fetchDiffTabUpdate(tab);
+      if (!update) return;
+      setOpenFiles((current) =>
+        current.map((file) =>
+          file.path === path ? { ...file, contents: update.modified, diff: update } : file,
+        ),
+      );
+    },
+    [fetchDiffTabUpdate],
+  );
+
+  // Bulk path used after a Git status refresh (in-IDE save/create/rename/
+  // delete, and post-commit) — every open diff tab is re-checked in
+  // parallel, and the updates are applied in a single setOpenFiles call so
+  // a tab whose diff didn't change keeps the exact same object reference
+  // (no needless re-render).
+  const refreshOpenDiffTabs = useCallback(async () => {
+    const diffTabs = openFilesRef.current.filter((file) => file.diff);
+    if (diffTabs.length === 0) return;
+
+    const updates = new Map<string, EditorTabDiff>();
+    await Promise.all(
+      diffTabs.map(async (tab) => {
+        const update = await fetchDiffTabUpdate(tab);
+        if (update) updates.set(tab.path, update);
+      }),
+    );
+    if (updates.size === 0) return;
+
+    setOpenFiles((current) =>
+      current.map((file) => {
+        const update = updates.get(file.path);
+        return update ? { ...file, contents: update.modified, diff: update } : file;
+      }),
+    );
+  }, [fetchDiffTabUpdate]);
+
   // Declared ahead of `refreshFiles` so the workspace-scan callback (the
   // single choke point every save/create/rename/delete/refresh already
   // funnels through) can trigger it too, without a temporal-dead-zone issue.
@@ -1133,11 +1212,15 @@ export default function App() {
         }
         return next;
       });
+      // A fresh Git status means every in-IDE save/create/rename/delete (they
+      // all funnel through refreshFiles → here) and every commit just landed,
+      // so any open diff tab may now be stale — reload them too.
+      void refreshOpenDiffTabs();
     } catch (reason) {
       setGitStatus(undefined);
       setGitStatusError(`Unable to load Git status: ${String(reason)}`);
     }
-  }, [gitCommitEnabled]);
+  }, [gitCommitEnabled, refreshOpenDiffTabs]);
 
   const refreshFiles = useCallback(async (options?: { singleFilePath?: string }) => {
     const effectiveSingleFilePath =
@@ -1418,8 +1501,14 @@ export default function App() {
       const openFile = openFilesRef.current.find((file) => file.path === path);
       if (!openFile) return;
       // Diff tabs are synthetic and read-only — there's no real file at this
-      // path to stat, and none of the reload/dirty machinery applies to them.
-      if (openFile.diff) return;
+      // path to stat, and none of the reload/dirty machinery below applies.
+      // They still need to catch up to an externally-changed file though, so
+      // the background poller / focus / tab-activation callers of this
+      // function double as the diff tab's own reload trigger.
+      if (openFile.diff) {
+        await refreshOpenDiffTab(path);
+        return;
+      }
 
       diskCheckInFlightRef.current.add(path);
       try {
@@ -1452,7 +1541,7 @@ export default function App() {
         diskCheckInFlightRef.current.delete(path);
       }
     },
-    [applyCleanDiskUpdate],
+    [applyCleanDiskUpdate, refreshOpenDiffTab],
   );
 
   const checkOpenFilesDiskState = useCallback(

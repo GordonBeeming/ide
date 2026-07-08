@@ -4233,6 +4233,77 @@ describe("Git commit sidebar", () => {
     expect(browsingSrcRow.closest("button")).toHaveAttribute("aria-expanded", "false");
     expect(within(tree).queryByText("App.tsx")).not.toBeInTheDocument();
   });
+
+  it("reloads an open diff tab when the underlying file changes, keeping it pinned", async () => {
+    render(<App />);
+
+    expect(await treeButton("README.md")).toBeInTheDocument();
+    fireEvent.click(screen.getByTitle("Commit changes"));
+
+    const panel = await screen.findByLabelText("Git commit panel");
+    const readmeRow = await within(panel).findByText("README.md");
+    fireEvent.click(readmeRow.closest("button")!);
+    await screen.findByLabelText("Diff README.md");
+    expect(screen.getByText("modified: after")).toBeInTheDocument();
+
+    await waitFor(() => expect(tabButton("README.md (Working Tree)")).toBeTruthy());
+    fireEvent.doubleClick(tabButton("README.md (Working Tree)")!);
+    expect(tabButton("README.md (Working Tree)")).not.toHaveClass("tab--temp");
+
+    // Same trigger a background poll/window-focus/tab-reactivation would use
+    // for a real file — a diff tab rides the same disk-state check.
+    tauriMocks.loadGitFileDiff.mockResolvedValueOnce({
+      original: "before\n",
+      modified: "after v2\n",
+      status: "modified",
+      isBinary: false,
+      isTooLarge: false,
+    });
+    window.dispatchEvent(new Event("focus"));
+
+    await waitFor(() =>
+      expect(screen.getByLabelText("Diff README.md")).toHaveTextContent("modified: after v2"),
+    );
+    // Reloading in place must not disturb the pin.
+    expect(tabButton("README.md (Working Tree)")).toBeTruthy();
+    expect(tabButton("README.md (Working Tree)")).not.toHaveClass("tab--temp");
+  });
+
+  it("leaves an open diff tab untouched when a refresh finds no change", async () => {
+    render(<App />);
+
+    expect(await treeButton("README.md")).toBeInTheDocument();
+    fireEvent.click(screen.getByTitle("Commit changes"));
+
+    const panel = await screen.findByLabelText("Git commit panel");
+    const readmeRow = await within(panel).findByText("README.md");
+    fireEvent.click(readmeRow.closest("button")!);
+    await screen.findByLabelText("Diff README.md");
+    expect(screen.getByText("modified: after")).toBeInTheDocument();
+
+    const fetchesBefore = tauriMocks.loadGitFileDiff.mock.calls.length;
+    // updateAgentContext depends directly on the raw `openFiles` array
+    // reference (see the effect in App.tsx), so it's an existing, precise
+    // proxy for "did a setOpenFiles call happen" — it must NOT fire again if
+    // the refreshed diff is identical to what the tab already holds.
+    await waitFor(() => expect(tauriMocks.updateAgentContext).toHaveBeenCalled());
+    const agentContextCallsBefore = tauriMocks.updateAgentContext.mock.calls.length;
+
+    tauriMocks.loadGitFileDiff.mockResolvedValueOnce({
+      original: "before\n",
+      modified: "after\n",
+      status: "modified",
+      isBinary: false,
+      isTooLarge: false,
+    });
+    window.dispatchEvent(new Event("focus"));
+
+    await waitFor(() =>
+      expect(tauriMocks.loadGitFileDiff.mock.calls.length).toBeGreaterThan(fetchesBefore),
+    );
+    expect(tauriMocks.updateAgentContext.mock.calls.length).toBe(agentContextCallsBefore);
+    expect(screen.getByText("modified: after")).toBeInTheDocument();
+  });
 });
 
 async function treeButton(name: string) {
