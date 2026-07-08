@@ -862,12 +862,15 @@ fn resolve_workspace_path_inner(
 
     let root = root.canonicalize()?;
     let candidate = root.join(relative_path);
-    let parent = candidate
-        .parent()
-        .ok_or(WorkspaceError::InvalidPath)?
-        .canonicalize()?;
+    let parent = candidate.parent().ok_or(WorkspaceError::InvalidPath)?;
+    // The parent directory may not exist — e.g. committing or diffing a file whose
+    // entire containing directory was deleted. Resolve the nearest existing ancestor
+    // so path resolution succeeds; the deletion itself is handled by the caller. When
+    // the parent does exist this returns it unchanged, so the symlink-escape guard
+    // below still canonicalizes the real directory a write would traverse.
+    let existing_ancestor = nearest_existing_ancestor(parent)?.canonicalize()?;
 
-    if !parent.starts_with(&root) && !allow_external {
+    if !existing_ancestor.starts_with(&root) && !allow_external {
         return Err(WorkspaceError::SymlinkOutsideWorkspace);
     }
 

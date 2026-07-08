@@ -963,6 +963,29 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn commit_deleted_file_whose_parent_dir_is_gone() {
+        // Deleting a whole directory (e.g. `.config/opencode`) removes the parent of
+        // every file under it, so path resolution must not require the parent to exist.
+        let dir = tempdir().unwrap();
+        init_repo(dir.path());
+        configure_identity(dir.path());
+        fs::create_dir(dir.path().join("nested")).unwrap();
+        fs::write(dir.path().join("nested/gone.txt"), "bye\n").unwrap();
+        commit_all(dir.path(), "Initial commit");
+        fs::remove_dir_all(dir.path().join("nested")).unwrap();
+
+        commit_files(dir.path(), "Delete nested", &["nested/gone.txt".to_string()])
+            .await
+            .unwrap();
+
+        assert!(git_stdout(dir.path(), ["show", "HEAD:nested/gone.txt"]).is_err());
+        assert_eq!(
+            git_stdout(dir.path(), ["status", "--porcelain"]).unwrap(),
+            ""
+        );
+    }
+
     #[cfg(unix)]
     #[tokio::test]
     async fn commit_preserves_executable_bit() {
