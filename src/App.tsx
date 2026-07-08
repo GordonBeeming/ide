@@ -633,7 +633,11 @@ export default function App() {
   const [gitMergeError, setGitMergeError] = useState<string>();
   const [gitMergeSuccess, setGitMergeSuccess] = useState<string>();
   const gitStatusInitializedRef = useRef(false);
-  const gitStatusRefreshInFlightRef = useRef(false);
+  // Holds the in-flight fetch's promise (not just a boolean) so a caller that
+  // arrives while one is running can await the same promise and reliably
+  // observe a status fetched at-or-after its own call, rather than resolving
+  // immediately against data that may predate whatever it just did.
+  const gitStatusRefreshInFlightRef = useRef<Promise<void> | null>(null);
   const gitStatusRefreshPendingRef = useRef(false);
   const sidebarFilterInputRef = useRef<HTMLInputElement | null>(null);
   const sidebarContentSearchInputRef = useRef<HTMLInputElement | null>(null);
@@ -1295,52 +1299,59 @@ export default function App() {
   // Declared ahead of `refreshFiles` so the workspace-scan callback (the
   // single choke point every save/create/rename/delete/refresh already
   // funnels through) can trigger it too, without a temporal-dead-zone issue.
-  const refreshGitStatus = useCallback(async () => {
-    if (!gitCommitEnabled) return;
+  const refreshGitStatus = useCallback((): Promise<void> => {
+    if (!gitCommitEnabled) return Promise.resolve();
     // The 2s merge-resolution poll (below) calls this on a timer regardless of
     // whether the previous call has returned; without a guard, a slow
     // getGitStatus() (a large repo, a loaded disk) can leave two requests in
     // flight and let the older one's response land after the newer one's,
-    // flickering state backwards. But a caller that specifically awaits this
-    // right after a commit/sync/stage/merge (to reflect that mutation) must
-    // not just be dropped if it lands mid-poll — its request is remembered
-    // and the fetch loop below runs once more before returning, so every
-    // caller is guaranteed a status at least as fresh as when it called.
+    // flickering state backwards. A caller that lands mid-poll instead marks
+    // a re-run pending and awaits the SAME in-flight promise every other
+    // concurrent caller is awaiting — that promise only resolves once no
+    // pending re-run remains, so every caller (including one awaiting this
+    // right after a commit/sync/stage/merge) reliably observes a status
+    // fetched at-or-after its own call, not just whatever the in-flight fetch
+    // happened to already be doing.
     if (gitStatusRefreshInFlightRef.current) {
       gitStatusRefreshPendingRef.current = true;
-      return;
+      return gitStatusRefreshInFlightRef.current;
     }
-    gitStatusRefreshInFlightRef.current = true;
 
-    do {
-      gitStatusRefreshPendingRef.current = false;
-      try {
-        const status = await getGitStatus();
-        setGitStatus(status);
-        setGitStatusError(undefined);
-        setGitCommitSelectedPaths((current) => {
-          const validPaths = new Set(status.files.map((file) => file.path));
-          if (!gitStatusInitializedRef.current) {
-            gitStatusInitializedRef.current = true;
-            return validPaths;
-          }
-          const next = new Set<string>();
-          for (const path of current) {
-            if (validPaths.has(path)) next.add(path);
-          }
-          return next;
-        });
-        // A fresh Git status means every in-IDE save/create/rename/delete (they
-        // all funnel through refreshFiles → here) and every commit just landed,
-        // so any open diff tab may now be stale — reload them too.
-        void refreshOpenDiffTabs();
-      } catch (reason) {
-        setGitStatus(undefined);
-        setGitStatusError(`Unable to load Git status: ${String(reason)}`);
-      }
-    } while (gitStatusRefreshPendingRef.current);
+    const run = async () => {
+      do {
+        gitStatusRefreshPendingRef.current = false;
+        try {
+          const status = await getGitStatus();
+          setGitStatus(status);
+          setGitStatusError(undefined);
+          setGitCommitSelectedPaths((current) => {
+            const validPaths = new Set(status.files.map((file) => file.path));
+            if (!gitStatusInitializedRef.current) {
+              gitStatusInitializedRef.current = true;
+              return validPaths;
+            }
+            const next = new Set<string>();
+            for (const path of current) {
+              if (validPaths.has(path)) next.add(path);
+            }
+            return next;
+          });
+          // A fresh Git status means every in-IDE save/create/rename/delete (they
+          // all funnel through refreshFiles → here) and every commit just landed,
+          // so any open diff tab may now be stale — reload them too.
+          void refreshOpenDiffTabs();
+        } catch (reason) {
+          setGitStatus(undefined);
+          setGitStatusError(`Unable to load Git status: ${String(reason)}`);
+        }
+      } while (gitStatusRefreshPendingRef.current);
 
-    gitStatusRefreshInFlightRef.current = false;
+      gitStatusRefreshInFlightRef.current = null;
+    };
+
+    const promise = run();
+    gitStatusRefreshInFlightRef.current = promise;
+    return promise;
   }, [gitCommitEnabled, refreshOpenDiffTabs]);
 
   const refreshFiles = useCallback(async (options?: { singleFilePath?: string }) => {
@@ -1667,6 +1678,19 @@ export default function App() {
     }, 2000);
     return () => window.clearInterval(intervalId);
   }, [commitModeActive, mergeInProgress, refreshGitStatus]);
+
+  // A mergeConflict gitSyncResult is deliberately never auto-cleared (see the
+  // effect below) while the merge it describes is still unresolved — but once
+  // mergeInProgress flips back to false (the user completed or aborted it),
+  // that result describes a merge that no longer exists. Left alone it would
+  // reappear as "Merge conflicts on …" the moment gitMergeSuccess's own timer
+  // clears, even though the merge panel is already gone.
+  useEffect(() => {
+    if (mergeInProgress) return;
+    setGitSyncResult((current) =>
+      current?.outcome === "mergeConflict" ? undefined : current,
+    );
+  }, [mergeInProgress]);
 
   // Guards for the background auto-fetch below, read through a ref so the interval
   // sees current values without being torn down and rebuilt on every state change.
