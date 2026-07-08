@@ -488,7 +488,10 @@ fn commit_files_in_repo(
     let new_tree = editor
         .write()
         .map_err(|error| GitCommitError::Git(error.to_string()))?;
-    if !parents.is_empty() && new_tree.detach() == base_tree {
+    // Applies on an unborn HEAD too: selecting only paths that don't exist
+    // (already deleted, or never created) edits nothing, so the tree stays
+    // the empty tree and this would otherwise create an empty initial commit.
+    if new_tree.detach() == base_tree {
         return Err(GitCommitError::NoChanges);
     }
 
@@ -1022,6 +1025,24 @@ mod tests {
                 .trim(),
             "1"
         );
+    }
+
+    #[tokio::test]
+    async fn commit_rejects_no_changes_on_unborn_head() {
+        let dir = tempdir().unwrap();
+        init_repo(dir.path());
+        configure_identity(dir.path());
+
+        // Selecting a path that was never created edits nothing on an unborn
+        // HEAD (the tree stays the empty tree), so this must reject with
+        // NoChanges rather than creating an empty initial commit.
+        let error = commit_files(dir.path(), "Initial commit", &["missing.txt".to_string()])
+            .await
+            .unwrap_err();
+
+        assert!(matches!(error, GitCommitError::NoChanges));
+        // HEAD is still unborn — no commit was created.
+        assert!(git_stdout(dir.path(), ["rev-parse", "--verify", "HEAD"]).is_err());
     }
 
     #[tokio::test]

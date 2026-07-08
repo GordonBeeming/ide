@@ -976,7 +976,10 @@ button {
   outline-offset: -2px;
 }
 
-.tree-row span:last-child {
+/* Excludes `.tree-row__trailing`: that span is itself the last child whenever
+   status icons are shown, and this rule's ellipsis/hidden-overflow is meant
+   for the file/folder name, not the trailing icon slot. */
+.tree-row span:last-child:not(.tree-row__trailing) {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
