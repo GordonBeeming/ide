@@ -1027,6 +1027,8 @@ describe("Git status response normalization", () => {
           { path: "b.txt", status: "deleted", staged: false, unstaged: true },
           { path: "c.txt", status: "added", staged: false, unstaged: true },
         ],
+        mergeInProgress: false,
+        conflictedFiles: [],
       }),
     ).toEqual({
       status: "available",
@@ -1039,7 +1041,49 @@ describe("Git status response normalization", () => {
         { path: "b.txt", status: "deleted", staged: false, unstaged: true },
         { path: "c.txt", status: "added", staged: false, unstaged: true },
       ],
+      mergeInProgress: false,
+      conflictedFiles: [],
     });
+  });
+
+  it("carries merge state and conflicted files", async () => {
+    const { normalizeGitStatus } = await import("./tauri");
+
+    expect(
+      normalizeGitStatus({
+        status: "available",
+        branch: "main",
+        headDetached: false,
+        headUnborn: false,
+        files: [],
+        mergeInProgress: true,
+        conflictedFiles: ["conflict.txt"],
+      }),
+    ).toEqual({
+      status: "available",
+      unsupportedReason: undefined,
+      branch: "main",
+      headDetached: false,
+      headUnborn: false,
+      files: [],
+      mergeInProgress: true,
+      conflictedFiles: ["conflict.txt"],
+    });
+  });
+
+  it("defaults merge fields when an older backend omits them", async () => {
+    const { normalizeGitStatus } = await import("./tauri");
+
+    const status = normalizeGitStatus({
+      status: "available",
+      branch: "main",
+      headDetached: false,
+      headUnborn: false,
+      files: [],
+    });
+
+    expect(status?.mergeInProgress).toBe(false);
+    expect(status?.conflictedFiles).toEqual([]);
   });
 
   it("normalizes an unsupported status without a branch", async () => {
@@ -1052,6 +1096,8 @@ describe("Git status response normalization", () => {
         headDetached: false,
         headUnborn: false,
         files: [],
+        mergeInProgress: false,
+        conflictedFiles: [],
       }),
     ).toEqual({
       status: "unsupported",
@@ -1060,6 +1106,8 @@ describe("Git status response normalization", () => {
       headDetached: false,
       headUnborn: false,
       files: [],
+      mergeInProgress: false,
+      conflictedFiles: [],
     });
   });
 
@@ -1188,6 +1236,33 @@ describe("Git sync response normalization", () => {
     expect(
       normalizeGitSyncResult({ outcome: "mergeConflict", branch: "main", files: [1] }),
     ).toBeUndefined();
+  });
+});
+
+describe("Git merge-commit response normalization", () => {
+  it("normalizes a completed merge commit", async () => {
+    const { normalizeGitMergeCommit } = await import("./tauri");
+
+    expect(
+      normalizeGitMergeCommit({ sha: "abc123456789", shortSha: "abc12345", branch: "main" }),
+    ).toEqual({ sha: "abc123456789", shortSha: "abc12345", branch: "main" });
+  });
+
+  it("tolerates a missing branch (detached HEAD)", async () => {
+    const { normalizeGitMergeCommit } = await import("./tauri");
+
+    expect(normalizeGitMergeCommit({ sha: "abc", shortSha: "abc" })).toEqual({
+      sha: "abc",
+      shortSha: "abc",
+      branch: undefined,
+    });
+  });
+
+  it("rejects malformed merge payloads", async () => {
+    const { normalizeGitMergeCommit } = await import("./tauri");
+
+    expect(normalizeGitMergeCommit({ sha: "abc" })).toBeUndefined();
+    expect(normalizeGitMergeCommit(null)).toBeUndefined();
   });
 });
 

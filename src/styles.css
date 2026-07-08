@@ -744,6 +744,73 @@ button {
   word-break: break-word;
 }
 
+/* Live merge-resolution block: a bordered call-out that replaces the normal
+   sync notice while a merge is unfinished. */
+.commit-panel__merge {
+  display: grid;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid color-mix(in oklch, var(--danger) 42%, var(--border));
+  border-radius: 6px;
+  background: color-mix(in oklch, var(--danger) 8%, var(--panel));
+}
+
+.commit-panel__merge-files {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  /* Cap the list so a big conflict never pushes the actions off-panel; it
+     scrolls within the call-out instead. */
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+.commit-panel__merge-file {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.commit-panel__merge-file-open {
+  flex: 1;
+  min-width: 0;
+  padding: 2px 0;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.commit-panel__merge-file-open:hover,
+.commit-panel__merge-file-open:focus-visible {
+  color: var(--accent);
+  text-decoration: underline;
+  outline: 0;
+}
+
+.commit-panel__merge-resolve {
+  flex-shrink: 0;
+}
+
+.commit-panel__merge-tip {
+  margin: 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.commit-panel__merge-complete {
+  width: 100%;
+}
+
 /* The direct grid child of .editor-region (grid-template-rows: auto
    minmax(0,1fr)) — matches .editor-host's placement so the diff view fills
    the same row EditorPane does, whether or not the find-results panel (row

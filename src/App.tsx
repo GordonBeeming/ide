@@ -136,7 +136,9 @@ import {
   searchFiles,
   setWorkspaceRootPath,
   statFile,
+  stageResolvedFile,
   syncGit,
+  completeMerge,
   takeOpenedLaunchTargets,
   updateAgentContext,
   updateUiState,
@@ -601,6 +603,10 @@ export default function App() {
   const [gitSyncInFlight, setGitSyncInFlight] = useState(false);
   const [gitSyncResult, setGitSyncResult] = useState<GitSyncResult>();
   const [gitSyncError, setGitSyncError] = useState<string>();
+  const [gitMergeStagingPath, setGitMergeStagingPath] = useState<string>();
+  const [gitMergeInFlight, setGitMergeInFlight] = useState(false);
+  const [gitMergeError, setGitMergeError] = useState<string>();
+  const [gitMergeSuccess, setGitMergeSuccess] = useState<string>();
   const gitStatusInitializedRef = useRef(false);
   const sidebarFilterInputRef = useRef<HTMLInputElement | null>(null);
   const sidebarContentSearchInputRef = useRef<HTMLInputElement | null>(null);
@@ -652,6 +658,11 @@ export default function App() {
   const gitAttributionEnabled = isFeatureEnabled("gitAttribution", featureFlags);
   const gitCommitEnabled = isFeatureEnabled("gitCommit", featureFlags);
   const gitSyncEnabled = isFeatureEnabled("gitSync", featureFlags);
+  // Live merge state, read straight off the polled Git status so the conflict UI
+  // updates on its own as the user resolves files (rather than freezing on the
+  // one-shot sync result). Defaults tolerate an older status shape / test mock.
+  const mergeInProgress = gitSyncEnabled && (gitStatus?.mergeInProgress ?? false);
+  const conflictedFiles = gitStatus?.conflictedFiles ?? [];
   const activeGitAttribution =
     gitAttributionEnabled &&
     gitAttribution?.status === "available" &&
@@ -1432,7 +1443,17 @@ export default function App() {
     if (commitModeActive) return;
     setGitSyncResult(undefined);
     setGitSyncError(undefined);
+    setGitMergeError(undefined);
+    setGitMergeSuccess(undefined);
   }, [commitModeActive]);
+
+  // Clear the "Completed merge" line after a beat, matching the commit-success
+  // treatment — it's a transient confirmation, not persistent state.
+  useEffect(() => {
+    if (!gitMergeSuccess) return;
+    const timeoutId = window.setTimeout(() => setGitMergeSuccess(undefined), 5000);
+    return () => window.clearTimeout(timeoutId);
+  }, [gitMergeSuccess]);
 
   // Diff tabs are inspection surfaces scoped to commit mode — leaving it drops
   // every unpinned one so they don't accumulate; a double-clicked (pinned) tab
@@ -1530,6 +1551,53 @@ export default function App() {
       setGitSyncInFlight(false);
     }
   }, [gitSyncInFlight, refreshGitStatus]);
+
+  const handleStageResolved = useCallback(
+    async (path: string) => {
+      if (gitMergeStagingPath) return;
+      setGitMergeStagingPath(path);
+      setGitMergeError(undefined);
+      try {
+        await stageResolvedFile(path);
+        // The poll below also refreshes, but do it eagerly so the file drops
+        // from the list the moment staging succeeds.
+        await refreshGitStatus();
+      } catch (reason) {
+        setGitMergeError(`Unable to mark ${path} resolved: ${String(reason)}`);
+      } finally {
+        setGitMergeStagingPath(undefined);
+      }
+    },
+    [gitMergeStagingPath, refreshGitStatus],
+  );
+
+  const handleCompleteMerge = useCallback(async () => {
+    if (gitMergeInFlight) return;
+    setGitMergeInFlight(true);
+    setGitMergeError(undefined);
+    setGitMergeSuccess(undefined);
+    try {
+      const result = await completeMerge();
+      setGitMergeSuccess(`Completed merge as ${result.shortSha}`);
+      await refreshGitStatus();
+    } catch (reason) {
+      setGitMergeError(`Unable to complete merge: ${String(reason)}`);
+    } finally {
+      setGitMergeInFlight(false);
+    }
+  }, [gitMergeInFlight, refreshGitStatus]);
+
+  // While a merge is unfinished, actively re-poll Git status so the panel reflects
+  // resolutions the user makes (in-app or in a terminal) without a manual refresh —
+  // conflicted files drop out live, and the panel flips back to normal on its own
+  // once MERGE_HEAD clears. Only runs while the merge state is actually showing.
+  useEffect(() => {
+    if (!commitModeActive || !mergeInProgress) return;
+    const intervalId = window.setInterval(() => {
+      void refreshGitStatus();
+    }, 2000);
+    return () => window.clearInterval(intervalId);
+  }, [commitModeActive, mergeInProgress, refreshGitStatus]);
 
   const readOpenFileFromDisk = useCallback(async (path: string) => {
     const entry = await statFile(path);
@@ -4404,7 +4472,9 @@ export default function App() {
                   </span>
                   <button
                     className="command-button commit-panel__sync-button"
-                    disabled={gitSyncInFlight || gitStatus?.status !== "available"}
+                    disabled={
+                      gitSyncInFlight || gitStatus?.status !== "available" || mergeInProgress
+                    }
                     onClick={handleGitSync}
                   >
                     <RefreshCw
@@ -4414,26 +4484,69 @@ export default function App() {
                     {gitSyncInFlight ? "Syncing…" : "Sync"}
                   </button>
                 </div>
-                {gitSyncError ? (
+                {mergeInProgress ? (
+                  <div className="commit-panel__merge" role="group" aria-label="Resolve merge">
+                    <span className="commit-panel__sync-conflict-title">
+                      {conflictedFiles.length > 0
+                        ? "Merge conflicts — resolve each file, then complete the merge:"
+                        : "All conflicts resolved — complete the merge to finish."}
+                    </span>
+                    {conflictedFiles.length > 0 ? (
+                      <ul className="commit-panel__merge-files">
+                        {conflictedFiles.map((file) => (
+                          <li key={file} className="commit-panel__merge-file">
+                            <button
+                              type="button"
+                              className="commit-panel__merge-file-open"
+                              title={`Open ${file}`}
+                              onClick={() => void openDiffTab(file)}
+                            >
+                              {file}
+                            </button>
+                            <button
+                              type="button"
+                              className="command-button command-button--quiet commit-panel__merge-resolve"
+                              disabled={gitMergeStagingPath !== undefined}
+                              onClick={() => void handleStageResolved(file)}
+                            >
+                              {gitMergeStagingPath === file ? "Marking…" : "Mark resolved"}
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : null}
+                    <p className="commit-panel__merge-tip">
+                      Stuck? You can always ask your agent to fix this for you.
+                    </p>
+                    <button
+                      className="command-button command-button--primary commit-panel__merge-complete"
+                      disabled={conflictedFiles.length > 0 || gitMergeInFlight}
+                      onClick={handleCompleteMerge}
+                    >
+                      {gitMergeInFlight ? "Completing…" : "Complete merge"}
+                    </button>
+                    {gitMergeError ? (
+                      <div
+                        className="commit-panel__notice commit-panel__notice--error"
+                        role="alert"
+                      >
+                        {gitMergeError}
+                      </div>
+                    ) : null}
+                  </div>
+                ) : gitSyncError ? (
                   <div
                     className="commit-panel__notice commit-panel__notice--error"
                     role="alert"
                   >
                     {gitSyncError}
                   </div>
-                ) : gitSyncResult?.outcome === "mergeConflict" ? (
+                ) : gitMergeSuccess ? (
                   <div
-                    className="commit-panel__notice commit-panel__notice--error"
-                    role="alert"
+                    className="commit-panel__notice commit-panel__notice--success"
+                    role="status"
                   >
-                    <span className="commit-panel__sync-conflict-title">
-                      Merge conflicts — resolve these files, then commit the merge:
-                    </span>
-                    <ul className="commit-panel__sync-conflicts">
-                      {gitSyncResult.files.map((file) => (
-                        <li key={file}>{file}</li>
-                      ))}
-                    </ul>
+                    {gitMergeSuccess}
                   </div>
                 ) : gitSyncResult ? (
                   <div

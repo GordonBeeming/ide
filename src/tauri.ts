@@ -146,6 +146,8 @@ export interface GitStatus {
   headDetached: boolean;
   headUnborn: boolean;
   files: GitStatusEntry[];
+  mergeInProgress: boolean;
+  conflictedFiles: string[];
 }
 
 export interface GitCommitResult {
@@ -175,6 +177,12 @@ export interface GitSyncResult {
   pulled: number;
   pushed: number;
   files: string[];
+}
+
+export interface GitMergeCommit {
+  sha: string;
+  shortSha: string;
+  branch?: string;
 }
 
 export interface OpenFileRequest {
@@ -640,6 +648,28 @@ export function syncGit() {
   });
 }
 
+export function stageResolvedFile(path: string) {
+  return callApi<void>("git_stage_resolved", "/api/git-stage-resolved", {
+    method: "POST",
+    body: { path },
+    invokeArgs: { path },
+  });
+}
+
+export function completeMerge() {
+  return callApi<unknown>("git_complete_merge", "/api/git-complete-merge", {
+    method: "POST",
+    body: {},
+    invokeArgs: {},
+  }).then((value) => {
+    const normalized = normalizeGitMergeCommit(value);
+    if (!normalized) {
+      throw new Error("Git merge response had an unexpected shape");
+    }
+    return normalized;
+  });
+}
+
 export function loadGitFileDiff(path: string, maxOpenBytes?: number) {
   const params = new URLSearchParams({ path });
   if (maxOpenBytes !== undefined) {
@@ -679,6 +709,14 @@ export function normalizeGitStatus(value: unknown): GitStatus | undefined {
     .filter((entry): entry is GitStatusEntry => Boolean(entry));
   if (files.length !== candidate.files.length) return undefined;
 
+  // Merge fields are newer than the rest of GitStatus; tolerate their absence
+  // (default to "no merge") so an older backend response still normalizes.
+  const conflictedFiles =
+    Array.isArray(candidate.conflictedFiles) &&
+    candidate.conflictedFiles.every((path): path is string => typeof path === "string")
+      ? candidate.conflictedFiles
+      : [];
+
   return {
     status: candidate.status,
     unsupportedReason:
@@ -689,6 +727,8 @@ export function normalizeGitStatus(value: unknown): GitStatus | undefined {
     headDetached: candidate.headDetached,
     headUnborn: candidate.headUnborn,
     files,
+    mergeInProgress: candidate.mergeInProgress === true,
+    conflictedFiles,
   };
 }
 
@@ -788,6 +828,19 @@ export function normalizeGitSyncResult(value: unknown): GitSyncResult | undefine
     pulled: typeof candidate.pulled === "number" ? candidate.pulled : 0,
     pushed: typeof candidate.pushed === "number" ? candidate.pushed : 0,
     files,
+  };
+}
+
+export function normalizeGitMergeCommit(value: unknown): GitMergeCommit | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const candidate = value as Record<string, unknown>;
+  if (typeof candidate.sha !== "string" || typeof candidate.shortSha !== "string") {
+    return undefined;
+  }
+  return {
+    sha: candidate.sha,
+    shortSha: candidate.shortSha,
+    branch: typeof candidate.branch === "string" ? candidate.branch : undefined,
   };
 }
 
