@@ -146,6 +146,20 @@ export interface GitStatus {
   headDetached: boolean;
   headUnborn: boolean;
   files: GitStatusEntry[];
+  mergeInProgress: boolean;
+  conflictedFiles: string[];
+  // Commits ahead of / behind the upstream; both undefined when there's no
+  // upstream (or a detached/unborn HEAD) *and* when talking to a backend that
+  // predates this field.
+  ahead?: number;
+  behind?: number;
+  // True only for a confirmed no-upstream *branch* — the backend also nulls
+  // ahead/behind for a detached or unborn HEAD (which has no branch to
+  // compare against at all), and for a backend that predates the field
+  // entirely; this excludes both, so it means exactly "there is a checked-out
+  // branch and it has no upstream" everywhere it's read, with no separate
+  // headDetached/headUnborn check required at the call site.
+  noUpstream: boolean;
 }
 
 export interface GitCommitResult {
@@ -161,6 +175,26 @@ export interface GitFileDiff {
   status: GitFileStatus;
   isBinary: boolean;
   isTooLarge: boolean;
+}
+
+export type GitSyncOutcome = "upToDate" | "synced" | "noUpstream" | "mergeConflict";
+
+// The backend serializes an internally tagged enum (`outcome` discriminant), so
+// the fields that carry data are only meaningful for specific outcomes: `pulled`
+// / `pushed` for "synced", `files` for "mergeConflict". Absent fields default to
+// zero / empty here so callers can read them without narrowing first.
+export interface GitSyncResult {
+  outcome: GitSyncOutcome;
+  branch: string;
+  pulled: number;
+  pushed: number;
+  files: string[];
+}
+
+export interface GitMergeCommit {
+  sha: string;
+  shortSha: string;
+  branch?: string;
 }
 
 export interface OpenFileRequest {
@@ -210,6 +244,8 @@ export interface PersistedViewSettings {
   dateTimeFormat?: DateTimeFormatId;
   recentRelativeThreshold?: RecentRelativeThresholdId;
   diffViewMode?: DiffViewMode;
+  // Seconds between background auto-fetches; 0 disables it. Clamped on the backend.
+  autoFetchSeconds?: number;
   // Persisted feature-flag overrides only; defaults live in src/featureFlags.ts.
   featureFlags?: Record<string, boolean>;
 }
@@ -280,6 +316,7 @@ const defaultUiSnapshot: PersistedUiSnapshot = {
     dateTimeFormat: defaultDateTimeFormat,
     recentRelativeThreshold: defaultRecentRelativeThreshold,
     diffViewMode: defaultDiffViewMode,
+    autoFetchSeconds: 60,
     featureFlags: {},
   },
   workspace: {
@@ -612,6 +649,50 @@ export function commitGitChanges(message: string, paths: string[]) {
   });
 }
 
+export function syncGit() {
+  return callApi<unknown>("git_sync", "/api/git-sync", {
+    method: "POST",
+    body: {},
+    invokeArgs: {},
+  }).then((value) => {
+    const normalized = normalizeGitSyncResult(value);
+    if (!normalized) {
+      throw new Error("Git sync response had an unexpected shape");
+    }
+    return normalized;
+  });
+}
+
+export function fetchGit() {
+  return callApi<void>("git_fetch", "/api/git-fetch", {
+    method: "POST",
+    body: {},
+    invokeArgs: {},
+  });
+}
+
+export function stageResolvedFile(path: string) {
+  return callApi<void>("git_stage_resolved", "/api/git-stage-resolved", {
+    method: "POST",
+    body: { path },
+    invokeArgs: { path },
+  });
+}
+
+export function completeMerge() {
+  return callApi<unknown>("git_complete_merge", "/api/git-complete-merge", {
+    method: "POST",
+    body: {},
+    invokeArgs: {},
+  }).then((value) => {
+    const normalized = normalizeGitMergeCommit(value);
+    if (!normalized) {
+      throw new Error("Git merge response had an unexpected shape");
+    }
+    return normalized;
+  });
+}
+
 export function loadGitFileDiff(path: string, maxOpenBytes?: number) {
   const params = new URLSearchParams({ path });
   if (maxOpenBytes !== undefined) {
@@ -651,6 +732,38 @@ export function normalizeGitStatus(value: unknown): GitStatus | undefined {
     .filter((entry): entry is GitStatusEntry => Boolean(entry));
   if (files.length !== candidate.files.length) return undefined;
 
+  // Merge fields are newer than the rest of GitStatus; tolerate their absence
+  // (default to "no merge") so an older backend response still normalizes.
+  const conflictedFiles =
+    Array.isArray(candidate.conflictedFiles) &&
+    candidate.conflictedFiles.every((path): path is string => typeof path === "string")
+      ? candidate.conflictedFiles
+      : [];
+
+  // ahead/behind serialize as null (no upstream) → undefined; a non-negative
+  // integer otherwise. Anything else is treated as absent.
+  const ahead = normalizeTrackingCount(candidate.ahead);
+  const behind = normalizeTrackingCount(candidate.behind);
+  // The backend always sends `ahead` as a key (a number, or explicit `null`)
+  // once it knows about tracking counts at all — only a backend that predates
+  // this field omits the key entirely. So "key present but null" means a
+  // confirmed no-upstream state, while "key absent" means this backend hasn't
+  // told us either way. The backend only ever sets `ahead` and `behind`
+  // together (both a number or both null), but `behind` is checked too
+  // rather than trusting that invariant — a malformed or partial payload
+  // with `ahead: null` and a stray `behind` shouldn't read as confirmed
+  // no-upstream. That same null also covers a detached/unborn HEAD (no
+  // branch to compare against) — exclude both so `noUpstream` keeps its
+  // documented meaning ("a checked-out branch, confirmed to have no
+  // upstream") wherever it's read, rather than requiring every caller to
+  // separately re-check headDetached/headUnborn.
+  const noUpstream =
+    "ahead" in candidate &&
+    candidate.ahead === null &&
+    candidate.behind === null &&
+    candidate.headDetached === false &&
+    candidate.headUnborn === false;
+
   return {
     status: candidate.status,
     unsupportedReason:
@@ -661,7 +774,18 @@ export function normalizeGitStatus(value: unknown): GitStatus | undefined {
     headDetached: candidate.headDetached,
     headUnborn: candidate.headUnborn,
     files,
+    mergeInProgress: candidate.mergeInProgress === true,
+    conflictedFiles,
+    ahead,
+    behind,
+    noUpstream,
   };
+}
+
+function normalizeTrackingCount(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0
+    ? value
+    : undefined;
 }
 
 function isGitFileStatus(value: unknown): value is GitFileStatus {
@@ -724,6 +848,67 @@ export function normalizeGitCommitResult(value: unknown): GitCommitResult | unde
     shortSha: candidate.shortSha,
     branch: typeof candidate.branch === "string" ? candidate.branch : undefined,
     committedPaths: candidate.committedPaths,
+  };
+}
+
+function isGitSyncOutcome(value: unknown): value is GitSyncOutcome {
+  return (
+    value === "upToDate" ||
+    value === "synced" ||
+    value === "noUpstream" ||
+    value === "mergeConflict"
+  );
+}
+
+export function normalizeGitSyncResult(value: unknown): GitSyncResult | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const candidate = value as Record<string, unknown>;
+  if (!isGitSyncOutcome(candidate.outcome) || typeof candidate.branch !== "string") {
+    return undefined;
+  }
+  // Only the mergeConflict outcome carries `files`, but the backend's tagged
+  // enum always includes the key for that variant (even as an empty array) —
+  // a missing key there means a malformed payload, not "no conflicts", so
+  // it's required rather than silently defaulting to []. Other outcomes
+  // don't carry files at all; tolerate a well-formed list if present anyway,
+  // but don't require one.
+  let files: string[] = [];
+  if (candidate.outcome === "mergeConflict" || candidate.files !== undefined) {
+    if (
+      !Array.isArray(candidate.files) ||
+      !candidate.files.every((file): file is string => typeof file === "string")
+    ) {
+      return undefined;
+    }
+    files = candidate.files;
+  }
+  return {
+    outcome: candidate.outcome,
+    branch: candidate.branch,
+    pulled: normalizeNonNegativeCount(candidate.pulled),
+    pushed: normalizeNonNegativeCount(candidate.pushed),
+    files,
+  };
+}
+
+// Like normalizeTrackingCount, but falls back to 0 rather than undefined —
+// pulled/pushed are always-present counts, not "absent means no upstream"
+// fields, so a malformed value (negative, float, non-number) should read as
+// "nothing moved" rather than propagate a value the UI can't sensibly render.
+function normalizeNonNegativeCount(value: unknown): number {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : 0;
+}
+
+export function normalizeGitMergeCommit(value: unknown): GitMergeCommit | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const candidate = value as Record<string, unknown>;
+  if (typeof candidate.sha !== "string" || typeof candidate.shortSha !== "string") {
+    return undefined;
+  }
+  return {
+    sha: candidate.sha,
+    shortSha: candidate.shortSha,
+    branch: typeof candidate.branch === "string" ? candidate.branch : undefined,
   };
 }
 

@@ -136,6 +136,10 @@ import {
   searchFiles,
   setWorkspaceRootPath,
   statFile,
+  stageResolvedFile,
+  syncGit,
+  fetchGit,
+  completeMerge,
   takeOpenedLaunchTargets,
   updateAgentContext,
   updateUiState,
@@ -149,6 +153,7 @@ import {
   type GitCommitInfo,
   type GitStatus,
   type GitStatusEntry,
+  type GitSyncResult,
   type WorkspaceIndexStats,
   type WorkspaceDisplayContext,
   type WorkspaceUiState,
@@ -329,6 +334,10 @@ const editorFontSizeStep = 1;
 const minAppZoomPercent = 10;
 const defaultAppZoomPercent = 100;
 const appZoomStepPercent = 10;
+// Auto-fetch cadence bounds mirror the backend clamp (0 disables; else 15s..24h).
+const minAutoFetchSeconds = 15;
+const maxAutoFetchSeconds = 86400;
+const defaultAutoFetchSeconds = 60;
 const minSidebarWidth = 180;
 const maxSidebarWidth = 1040;
 const defaultSidebarWidth = 288;
@@ -353,6 +362,15 @@ function sanitizeNumberMinimum(value: number | undefined, min: number, fallback:
   if (!Number.isFinite(value)) return fallback;
   const finiteValue = value as number;
   return Math.max(min, Math.trunc(finiteValue));
+}
+
+// 0 stays disabled; any other cadence is clamped into the safe band, matching the
+// backend's sanitize_view_settings so the UI and persisted value never disagree.
+function sanitizeAutoFetchSeconds(value: number | undefined) {
+  if (!Number.isFinite(value)) return defaultAutoFetchSeconds;
+  const seconds = Math.trunc(value as number);
+  if (seconds <= 0) return 0;
+  return Math.min(maxAutoFetchSeconds, Math.max(minAutoFetchSeconds, seconds));
 }
 
 function sanitizeTreeScanLimit(value: number | undefined) {
@@ -395,6 +413,37 @@ function positiveWholeNumber(value: string) {
   if (!/^\d+$/.test(trimmed)) return undefined;
   const parsed = Number(trimmed);
   return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : undefined;
+}
+
+// Accessible label for the ahead/behind indicator; the visual is a compact
+// "↑2 ↓1", this is what screen readers and the hover title read.
+function describeTracking(ahead: number, behind: number): string {
+  if (ahead === 0 && behind === 0) return "Up to date with upstream";
+  const parts: string[] = [];
+  if (ahead > 0) parts.push(`${ahead} ahead`);
+  if (behind > 0) parts.push(`${behind} behind`);
+  return parts.join(", ");
+}
+
+// One-line summary of a non-conflict sync outcome for the commit panel's sync
+// footer. The mergeConflict outcome renders its own file list, so it never
+// reaches here.
+function formatGitSyncResult(result: GitSyncResult): string {
+  switch (result.outcome) {
+    case "upToDate":
+      return `${result.branch} is already up to date`;
+    case "synced": {
+      const parts: string[] = [];
+      if (result.pulled > 0) parts.push(`pulled ${result.pulled}`);
+      if (result.pushed > 0) parts.push(`pushed ${result.pushed}`);
+      const detail = parts.length > 0 ? ` (${parts.join(", ")})` : "";
+      return `Synced ${result.branch}${detail}`;
+    }
+    case "noUpstream":
+      return `No upstream configured for ${result.branch}`;
+    case "mergeConflict":
+      return `Merge conflicts on ${result.branch}`;
+  }
 }
 
 function emptyEditorStateForSelection(
@@ -539,6 +588,7 @@ export default function App() {
   const [recentRelativeThreshold, setRecentRelativeThreshold] =
     useState<RecentRelativeThresholdId>(defaultRecentRelativeThreshold);
   const [diffViewMode, setDiffViewMode] = useState<DiffViewMode>(defaultDiffViewMode);
+  const [autoFetchSeconds, setAutoFetchSeconds] = useState(defaultAutoFetchSeconds);
   const [featureFlags, setFeatureFlags] = useState<FeatureFlagOverrides>({});
   const [prefersDark, setPrefersDark] = useState(systemPrefersDark);
   const [uiStateLoaded, setUiStateLoaded] = useState(false);
@@ -575,7 +625,20 @@ export default function App() {
   const [gitCommitInFlight, setGitCommitInFlight] = useState(false);
   const [gitCommitError, setGitCommitError] = useState<string>();
   const [gitCommitSuccess, setGitCommitSuccess] = useState<string>();
+  const [gitSyncInFlight, setGitSyncInFlight] = useState(false);
+  const [gitSyncResult, setGitSyncResult] = useState<GitSyncResult>();
+  const [gitSyncError, setGitSyncError] = useState<string>();
+  const [gitMergeStagingPath, setGitMergeStagingPath] = useState<string>();
+  const [gitMergeInFlight, setGitMergeInFlight] = useState(false);
+  const [gitMergeError, setGitMergeError] = useState<string>();
+  const [gitMergeSuccess, setGitMergeSuccess] = useState<string>();
   const gitStatusInitializedRef = useRef(false);
+  // Holds the in-flight fetch's promise (not just a boolean) so a caller that
+  // arrives while one is running can await the same promise and reliably
+  // observe a status fetched at-or-after its own call, rather than resolving
+  // immediately against data that may predate whatever it just did.
+  const gitStatusRefreshInFlightRef = useRef<Promise<void> | null>(null);
+  const gitStatusRefreshPendingRef = useRef(false);
   const sidebarFilterInputRef = useRef<HTMLInputElement | null>(null);
   const sidebarContentSearchInputRef = useRef<HTMLInputElement | null>(null);
   const currentFindInputRef = useRef<HTMLInputElement | null>(null);
@@ -625,6 +688,24 @@ export default function App() {
   const cursorPosition = cursorStatus(activePath, cursor, revealTarget);
   const gitAttributionEnabled = isFeatureEnabled("gitAttribution", featureFlags);
   const gitCommitEnabled = isFeatureEnabled("gitCommit", featureFlags);
+  // Live merge state, read straight off the polled Git status so the conflict UI
+  // updates on its own as the user resolves files (rather than freezing on the
+  // one-shot sync result). Defaults tolerate an older status shape / test mock.
+  const mergeInProgress = gitStatus?.mergeInProgress ?? false;
+  // Ahead/behind the configured upstream, straight off the polled status. Both
+  // are undefined together when there's no upstream (or detached/unborn HEAD),
+  // in which case the footer shows no counts.
+  const aheadCount = gitStatus?.ahead;
+  const behindCount = gitStatus?.behind;
+  const hasUpstream = aheadCount !== undefined && behindCount !== undefined;
+  const conflictedFiles = gitStatus?.conflictedFiles ?? [];
+  // The polled status is the source of truth once it's loaded, even when its
+  // branch is undefined (detached/unborn HEAD) — that's a real "no branch"
+  // state, not a reason to fall back to a stale branch name from a previous
+  // sync result. The fallback to gitSyncResult only covers the gap before the
+  // first status poll resolves.
+  const syncBranchLabel =
+    gitStatus?.status === "available" ? gitStatus.branch : gitSyncResult?.branch;
   const activeGitAttribution =
     gitAttributionEnabled &&
     gitAttribution?.status === "available" &&
@@ -1033,6 +1114,7 @@ export default function App() {
       sanitizeRecentRelativeThreshold(snapshot.view.recentRelativeThreshold),
     );
     setDiffViewMode(sanitizeDiffViewMode(snapshot.view.diffViewMode));
+    setAutoFetchSeconds(sanitizeAutoFetchSeconds(snapshot.view.autoFetchSeconds));
     setFeatureFlags(sanitizeFeatureFlagOverrides(snapshot.view.featureFlags));
     setExpandedFolders(new Set(snapshot.workspace.expandedFolders));
     setTrustExternalWorkspace(Boolean(snapshot.workspace.trustExternalSymlinks));
@@ -1217,33 +1299,59 @@ export default function App() {
   // Declared ahead of `refreshFiles` so the workspace-scan callback (the
   // single choke point every save/create/rename/delete/refresh already
   // funnels through) can trigger it too, without a temporal-dead-zone issue.
-  const refreshGitStatus = useCallback(async () => {
-    if (!gitCommitEnabled) return;
-
-    try {
-      const status = await getGitStatus();
-      setGitStatus(status);
-      setGitStatusError(undefined);
-      setGitCommitSelectedPaths((current) => {
-        const validPaths = new Set(status.files.map((file) => file.path));
-        if (!gitStatusInitializedRef.current) {
-          gitStatusInitializedRef.current = true;
-          return validPaths;
-        }
-        const next = new Set<string>();
-        for (const path of current) {
-          if (validPaths.has(path)) next.add(path);
-        }
-        return next;
-      });
-      // A fresh Git status means every in-IDE save/create/rename/delete (they
-      // all funnel through refreshFiles → here) and every commit just landed,
-      // so any open diff tab may now be stale — reload them too.
-      void refreshOpenDiffTabs();
-    } catch (reason) {
-      setGitStatus(undefined);
-      setGitStatusError(`Unable to load Git status: ${String(reason)}`);
+  const refreshGitStatus = useCallback((): Promise<void> => {
+    if (!gitCommitEnabled) return Promise.resolve();
+    // The 2s merge-resolution poll (below) calls this on a timer regardless of
+    // whether the previous call has returned; without a guard, a slow
+    // getGitStatus() (a large repo, a loaded disk) can leave two requests in
+    // flight and let the older one's response land after the newer one's,
+    // flickering state backwards. A caller that lands mid-poll instead marks
+    // a re-run pending and awaits the SAME in-flight promise every other
+    // concurrent caller is awaiting — that promise only resolves once no
+    // pending re-run remains, so every caller (including one awaiting this
+    // right after a commit/sync/stage/merge) reliably observes a status
+    // fetched at-or-after its own call, not just whatever the in-flight fetch
+    // happened to already be doing.
+    if (gitStatusRefreshInFlightRef.current) {
+      gitStatusRefreshPendingRef.current = true;
+      return gitStatusRefreshInFlightRef.current;
     }
+
+    const run = async () => {
+      do {
+        gitStatusRefreshPendingRef.current = false;
+        try {
+          const status = await getGitStatus();
+          setGitStatus(status);
+          setGitStatusError(undefined);
+          setGitCommitSelectedPaths((current) => {
+            const validPaths = new Set(status.files.map((file) => file.path));
+            if (!gitStatusInitializedRef.current) {
+              gitStatusInitializedRef.current = true;
+              return validPaths;
+            }
+            const next = new Set<string>();
+            for (const path of current) {
+              if (validPaths.has(path)) next.add(path);
+            }
+            return next;
+          });
+          // A fresh Git status means every in-IDE save/create/rename/delete (they
+          // all funnel through refreshFiles → here) and every commit just landed,
+          // so any open diff tab may now be stale — reload them too.
+          void refreshOpenDiffTabs();
+        } catch (reason) {
+          setGitStatus(undefined);
+          setGitStatusError(`Unable to load Git status: ${String(reason)}`);
+        }
+      } while (gitStatusRefreshPendingRef.current);
+
+      gitStatusRefreshInFlightRef.current = null;
+    };
+
+    const promise = run();
+    gitStatusRefreshInFlightRef.current = promise;
+    return promise;
   }, [gitCommitEnabled, refreshOpenDiffTabs]);
 
   const refreshFiles = useCallback(async (options?: { singleFilePath?: string }) => {
@@ -1399,6 +1507,34 @@ export default function App() {
     return () => window.clearTimeout(timeoutId);
   }, [gitCommitSuccess]);
 
+  // Sync notices are scoped to a commit-panel session; clear them on the way out
+  // so reopening the panel doesn't show a stale "Synced"/conflict line.
+  useEffect(() => {
+    if (commitModeActive) return;
+    setGitSyncResult(undefined);
+    setGitSyncError(undefined);
+    setGitMergeError(undefined);
+    setGitMergeSuccess(undefined);
+  }, [commitModeActive]);
+
+  // Clear the "Completed merge" line after a beat, matching the commit-success
+  // treatment — it's a transient confirmation, not persistent state.
+  useEffect(() => {
+    if (!gitMergeSuccess) return;
+    const timeoutId = window.setTimeout(() => setGitMergeSuccess(undefined), 5000);
+    return () => window.clearTimeout(timeoutId);
+  }, [gitMergeSuccess]);
+
+  // The sync-result toast ("Synced main (pushed 1)", "Already up to date", …) is a
+  // transient confirmation too, so it fades and clears after a few seconds. The
+  // branch-line ahead/behind indicator is separate state and stays put. A merge
+  // conflict is not a toast — it drives the live panel — so it's left alone here.
+  useEffect(() => {
+    if (!gitSyncResult || gitSyncResult.outcome === "mergeConflict") return;
+    const timeoutId = window.setTimeout(() => setGitSyncResult(undefined), 5000);
+    return () => window.clearTimeout(timeoutId);
+  }, [gitSyncResult]);
+
   // Diff tabs are inspection surfaces scoped to commit mode — leaving it drops
   // every unpinned one so they don't accumulate; a double-clicked (pinned) tab
   // was a deliberate keep and survives.
@@ -1475,6 +1611,140 @@ export default function App() {
     gitCommitInFlight,
     gitCommitMessage,
     gitCommitSelectedPaths,
+    refreshGitStatus,
+  ]);
+
+  const handleGitSync = useCallback(async () => {
+    if (gitSyncInFlight) return;
+    setGitSyncInFlight(true);
+    setGitSyncError(undefined);
+    setGitSyncResult(undefined);
+    try {
+      const result = await syncGit();
+      setGitSyncResult(result);
+      // A pull can add or change files, so refresh the changes list to match
+      // what is now on disk.
+      await refreshGitStatus();
+    } catch (reason) {
+      setGitSyncError(`Unable to sync: ${String(reason)}`);
+    } finally {
+      setGitSyncInFlight(false);
+    }
+  }, [gitSyncInFlight, refreshGitStatus]);
+
+  const handleStageResolved = useCallback(
+    async (path: string) => {
+      if (gitMergeStagingPath) return;
+      setGitMergeStagingPath(path);
+      setGitMergeError(undefined);
+      try {
+        await stageResolvedFile(path);
+        // The poll below also refreshes, but do it eagerly so the file drops
+        // from the list the moment staging succeeds.
+        await refreshGitStatus();
+      } catch (reason) {
+        setGitMergeError(`Unable to mark ${path} resolved: ${String(reason)}`);
+      } finally {
+        setGitMergeStagingPath(undefined);
+      }
+    },
+    [gitMergeStagingPath, refreshGitStatus],
+  );
+
+  const handleCompleteMerge = useCallback(async () => {
+    if (gitMergeInFlight) return;
+    setGitMergeInFlight(true);
+    setGitMergeError(undefined);
+    setGitMergeSuccess(undefined);
+    try {
+      const result = await completeMerge();
+      setGitMergeSuccess(`Completed merge as ${result.shortSha}`);
+      await refreshGitStatus();
+    } catch (reason) {
+      setGitMergeError(`Unable to complete merge: ${String(reason)}`);
+    } finally {
+      setGitMergeInFlight(false);
+    }
+  }, [gitMergeInFlight, refreshGitStatus]);
+
+  // While a merge is unfinished, actively re-poll Git status so the panel reflects
+  // resolutions the user makes (in-app or in a terminal) without a manual refresh —
+  // conflicted files drop out live, and the panel flips back to normal on its own
+  // once MERGE_HEAD clears. Only runs while the merge state is actually showing.
+  useEffect(() => {
+    if (!commitModeActive || !mergeInProgress) return;
+    const intervalId = window.setInterval(() => {
+      void refreshGitStatus();
+    }, 2000);
+    return () => window.clearInterval(intervalId);
+  }, [commitModeActive, mergeInProgress, refreshGitStatus]);
+
+  // A mergeConflict gitSyncResult is deliberately never auto-cleared (see the
+  // effect below) while the merge it describes is still unresolved — but once
+  // mergeInProgress flips back to false (the user completed or aborted it),
+  // that result describes a merge that no longer exists. Left alone it would
+  // reappear as "Merge conflicts on …" the moment gitMergeSuccess's own timer
+  // clears, even though the merge panel is already gone.
+  useEffect(() => {
+    if (mergeInProgress) return;
+    setGitSyncResult((current) =>
+      current?.outcome === "mergeConflict" ? undefined : current,
+    );
+  }, [mergeInProgress]);
+
+  // Guards for the background auto-fetch below, read through a ref so the interval
+  // sees current values without being torn down and rebuilt on every state change.
+  const autoFetchInFlightRef = useRef(false);
+  const autoFetchGuardRef = useRef({ busy: false, noUpstream: false });
+  useEffect(() => {
+    autoFetchGuardRef.current = {
+      // A sync/merge already touches the remote or index — don't fetch over it.
+      busy: gitSyncInFlight || gitMergeInFlight || mergeInProgress,
+      // Only skip once a loaded status confirms there's no upstream; while status
+      // is unknown — or the backend predates this field — let the fetch run
+      // (the backend no-ops if there's truly none). `noUpstream` already
+      // excludes detached/unborn HEAD (see its definition in tauri.ts), so
+      // this doesn't need its own headDetached/headUnborn check.
+      noUpstream: gitStatus?.status === "available" && gitStatus.noUpstream,
+    };
+  }, [gitSyncInFlight, gitMergeInFlight, mergeInProgress, gitStatus]);
+
+  // Background auto-fetch: while a repo workspace is open, refresh the upstream
+  // tracking refs on the configured cadence so the ahead/behind counts stay current
+  // even before the commit panel is opened. Fetch-only (no pull/push), silent on
+  // failure, and never overlapping — a disabled cadence (0) turns it off entirely.
+  useEffect(() => {
+    if (!gitCommitEnabled || !workspaceRoot || singleFileMode) return;
+    // A workspace that isn't a Git repo (or hasn't loaded status yet) has
+    // nothing to fetch — installing the interval anyway would spawn a
+    // best-effort fetchGit() every cycle that always fails and gets silently
+    // swallowed, wasting cycles on a plain folder.
+    if (gitStatus?.status !== "available") return;
+    if (autoFetchSeconds <= 0) return;
+    const intervalId = window.setInterval(() => {
+      if (autoFetchInFlightRef.current) return;
+      const { busy, noUpstream } = autoFetchGuardRef.current;
+      if (busy || noUpstream) return;
+      autoFetchInFlightRef.current = true;
+      void fetchGit()
+        .then(() => refreshGitStatus())
+        .catch(() => {
+          // Best-effort: offline / auth / no-upstream must not spam the user.
+        })
+        .finally(() => {
+          autoFetchInFlightRef.current = false;
+        });
+    }, autoFetchSeconds * 1000);
+    return () => window.clearInterval(intervalId);
+  }, [
+    gitCommitEnabled,
+    workspaceRoot,
+    singleFileMode,
+    // Only the availability discriminant, not the whole gitStatus object —
+    // that changes every poll and would tear down/reinstall the interval
+    // constantly instead of just gating whether it exists at all.
+    gitStatus?.status,
+    autoFetchSeconds,
     refreshGitStatus,
   ]);
 
@@ -2072,6 +2342,7 @@ export default function App() {
           dateTimeFormat,
           recentRelativeThreshold,
           diffViewMode,
+          autoFetchSeconds,
           featureFlags,
         },
         {
@@ -2119,6 +2390,7 @@ export default function App() {
     dateTimeFormat,
     recentRelativeThreshold,
     diffViewMode,
+    autoFetchSeconds,
     featureFlags,
     uiStateLoaded,
     workspaceUiRestored,
@@ -4224,6 +4496,7 @@ export default function App() {
 
         {commitModeActive ? (
           <div className="commit-panel" aria-label="Git commit panel">
+            <div className="commit-panel__body">
             {gitStatusError || gitStatus?.status === "unsupported" ? (
               <div className="commit-panel__state" role="status">
                 <GitBranch size={22} />
@@ -4335,6 +4608,144 @@ export default function App() {
                 </div>
               </>
             )}
+            </div>
+            <div className="commit-panel__sync">
+              <div className="commit-panel__sync-action">
+                <button
+                  className="command-button commit-panel__sync-button"
+                  disabled={
+                    gitSyncInFlight ||
+                    gitStatus?.status !== "available" ||
+                    gitStatus?.headDetached ||
+                    gitStatus?.headUnborn ||
+                    mergeInProgress
+                  }
+                  onClick={handleGitSync}
+                >
+                  <RefreshCw
+                    size={14}
+                    className={gitSyncInFlight ? "commit-panel__sync-spin" : undefined}
+                  />
+                  {gitSyncInFlight ? "Syncing…" : "Sync"}
+                </button>
+                <div className="commit-panel__sync-info">
+                  <span className="commit-panel__sync-branch" title={syncBranchLabel}>
+                    <GitBranch size={12} />
+                    <span className="commit-panel__sync-branch-name">
+                      {syncBranchLabel ?? "No branch"}
+                    </span>
+                  </span>
+                  {hasUpstream ? (
+                    aheadCount === 0 && behindCount === 0 ? (
+                      <span
+                        className="commit-panel__sync-tracking"
+                        title="Up to date with upstream"
+                      >
+                        <Check size={12} />
+                        Up to date
+                      </span>
+                    ) : (
+                      <span
+                        className="commit-panel__sync-tracking"
+                        title={describeTracking(aheadCount, behindCount)}
+                        aria-label={describeTracking(aheadCount, behindCount)}
+                      >
+                        {aheadCount > 0 ? (
+                          <span className="commit-panel__sync-count">↑{aheadCount}</span>
+                        ) : null}
+                        {behindCount > 0 ? (
+                          <span className="commit-panel__sync-count">↓{behindCount}</span>
+                        ) : null}
+                      </span>
+                    )
+                  ) : null}
+                </div>
+              </div>
+              {mergeInProgress ? (
+                <div className="commit-panel__merge" role="group" aria-label="Resolve merge">
+                  <span className="commit-panel__sync-conflict-title">
+                    {conflictedFiles.length > 0
+                      ? "Merge conflicts — resolve each file, then complete the merge:"
+                      : // conflictedFiles is scoped to this workspace (see #50) — a
+                        // conflict elsewhere in the repo can still exist and block
+                        // the merge, so this can't claim "all" are resolved.
+                        "No conflicts detected in this workspace — complete the merge to finish."}
+                  </span>
+                  {conflictedFiles.length > 0 ? (
+                    <ul className="commit-panel__merge-files">
+                      {conflictedFiles.map((file) => (
+                        <li key={file} className="commit-panel__merge-file">
+                          <button
+                            type="button"
+                            className="commit-panel__merge-file-open"
+                            title={`Open ${file}`}
+                            onClick={() => void openDiffTab(file)}
+                          >
+                            {file}
+                          </button>
+                          <button
+                            type="button"
+                            className="command-button command-button--quiet commit-panel__merge-resolve"
+                            disabled={gitMergeStagingPath !== undefined}
+                            onClick={() => void handleStageResolved(file)}
+                          >
+                            {gitMergeStagingPath === file ? "Marking…" : "Mark resolved"}
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : null}
+                  <p className="commit-panel__merge-tip">
+                    Stuck? You can always ask your agent to fix this for you.
+                  </p>
+                  <button
+                    className="command-button command-button--primary commit-panel__merge-complete"
+                    disabled={conflictedFiles.length > 0 || gitMergeInFlight}
+                    onClick={handleCompleteMerge}
+                  >
+                    {gitMergeInFlight ? "Completing…" : "Complete merge"}
+                  </button>
+                  {gitMergeError ? (
+                    <div
+                      className="commit-panel__notice commit-panel__notice--error"
+                      role="alert"
+                    >
+                      {gitMergeError}
+                    </div>
+                  ) : null}
+                </div>
+              ) : gitSyncError ? (
+                <div
+                  className="commit-panel__notice commit-panel__notice--error"
+                  role="alert"
+                >
+                  {gitSyncError}
+                </div>
+              ) : gitMergeSuccess ? (
+                <div
+                  className="commit-panel__notice commit-panel__notice--success commit-panel__notice--fade"
+                  role="status"
+                >
+                  {gitMergeSuccess}
+                </div>
+              ) : gitSyncResult ? (
+                // mergeConflict is never auto-cleared (see the effect above) and
+                // isn't a success — the fade-out class would still visually fade
+                // it to invisible via CSS after 5s even though the JS state (and
+                // the merge UI it hands off to) stays live, so it gets the same
+                // persistent error treatment as gitSyncError instead.
+                <div
+                  className={
+                    gitSyncResult.outcome === "mergeConflict"
+                      ? "commit-panel__notice commit-panel__notice--error"
+                      : "commit-panel__notice commit-panel__notice--success commit-panel__notice--fade"
+                  }
+                  role={gitSyncResult.outcome === "mergeConflict" ? "alert" : "status"}
+                >
+                  {formatGitSyncResult(gitSyncResult)}
+                </div>
+              ) : null}
+            </div>
           </div>
         ) : null}
 
@@ -5412,6 +5823,31 @@ export default function App() {
                             );
                             setCommandPaletteResultLimit(next);
                             setStatus(`Command palette result limit set to ${next}`);
+                          }}
+                        />
+                      </label>
+                      <label className="dialog-field">
+                        <span>Auto-fetch from remote (seconds, 0 to turn off)</span>
+                        <input
+                          inputMode="numeric"
+                          min={0}
+                          max={maxAutoFetchSeconds}
+                          step={15}
+                          type="number"
+                          value={autoFetchSeconds}
+                          onChange={(event) => {
+                            // `valueAsNumber` (not `Number(event.target.value)`) is
+                            // NaN for a cleared field, which sanitizeAutoFetchSeconds
+                            // treats as "unset" and falls back to the default. 0 is
+                            // a real, distinct value here (turns auto-fetch off), so
+                            // Number("") === 0 would wrongly disable it while typing.
+                            const next = sanitizeAutoFetchSeconds(event.target.valueAsNumber);
+                            setAutoFetchSeconds(next);
+                            setStatus(
+                              next === 0
+                                ? "Auto-fetch turned off"
+                                : `Auto-fetch every ${next}s`,
+                            );
                           }}
                         />
                       </label>

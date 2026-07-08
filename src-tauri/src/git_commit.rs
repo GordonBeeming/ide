@@ -24,6 +24,20 @@ pub(crate) struct GitStatus {
     pub head_detached: bool,
     pub head_unborn: bool,
     pub files: Vec<GitStatusEntry>,
+    // True while a merge is unfinished (MERGE_HEAD present). Polling this lets the
+    // UI drive the conflict-resolution flow live instead of stranding the user in
+    // a one-shot result.
+    pub merge_in_progress: bool,
+    // Workspace-relative paths with unmerged index entries (conflict stages).
+    // Empties as the user stages resolutions, which is what re-enables completing
+    // the merge.
+    pub conflicted_files: Vec<String>,
+    // Commits HEAD is ahead of / behind its configured upstream. `None` when there
+    // is no upstream, or HEAD is detached/unborn. `behind` reflects the remote as
+    // of the last fetch (the standard Git behaviour) — a Sync fetches first, so the
+    // status re-poll right after it shows the up-to-date counts.
+    pub ahead: Option<usize>,
+    pub behind: Option<usize>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -171,6 +185,13 @@ fn status_for_workspace_blocking(workspace_root: &Path) -> GitStatus {
     let mut files: Vec<GitStatusEntry> = entries.into_values().collect();
     files.sort_by(|a, b| a.path.cmp(&b.path));
 
+    let merge_in_progress = repo.git_dir().join("MERGE_HEAD").exists();
+    let conflicted_files = collect_conflicted_files(&repo, prefix.as_deref());
+    let (ahead, behind) = match ahead_behind(&repo, &head) {
+        Some((ahead, behind)) => (Some(ahead), Some(behind)),
+        None => (None, None),
+    };
+
     GitStatus {
         status: GitStatusAvailability::Available,
         unsupported_reason: None,
@@ -178,7 +199,79 @@ fn status_for_workspace_blocking(workspace_root: &Path) -> GitStatus {
         head_detached,
         head_unborn,
         files,
+        merge_in_progress,
+        conflicted_files,
+        ahead,
+        behind,
     }
+}
+
+// Ahead/behind commit counts of HEAD versus its configured upstream tracking ref.
+// `behind` is measured against the remote-tracking ref as it stood at the last
+// fetch — the same thing `git status` reports — so a Sync (which fetches first)
+// followed by the status re-poll surfaces the current numbers.
+fn ahead_behind(repo: &gix::Repository, head: &gix::Head<'_>) -> Option<(usize, usize)> {
+    // A detached or unborn HEAD has no branch whose upstream we could compare to.
+    let ref_name = head.referent_name()?;
+    let head_id = head.id()?.detach();
+
+    let tracking =
+        match repo.branch_remote_tracking_ref_name(ref_name, gix::remote::Direction::Fetch)? {
+            Ok(name) => name.into_owned(),
+            Err(_) => return None,
+        };
+    let upstream_id = repo
+        .find_reference(tracking.as_ref())
+        .ok()?
+        .peel_to_id()
+        .ok()?
+        .detach();
+
+    // Each walk paints the hidden tip's ancestry as unwanted, so the count is
+    // exactly the commits on one side of the merge base. A per-commit walk
+    // error (a missing or corrupt object partway through the history) must
+    // fail the whole count rather than being silently dropped — filtering
+    // those out would undercount and report a plausible-looking but wrong
+    // divergence instead of admitting the count is unknown.
+    let ahead = repo
+        .rev_walk([head_id])
+        .with_hidden([upstream_id])
+        .all()
+        .ok()?
+        .try_fold(0usize, |count, info| info.map(|_| count + 1))
+        .ok()?;
+    let behind = repo
+        .rev_walk([upstream_id])
+        .with_hidden([head_id])
+        .all()
+        .ok()?
+        .try_fold(0usize, |count, info| info.map(|_| count + 1))
+        .ok()?;
+
+    Some((ahead, behind))
+}
+
+// Unmerged index entries carry a non-zero conflict stage (base/ours/theirs). A
+// path can appear at several stages, so a BTreeSet both dedups and sorts it.
+fn collect_conflicted_files(repo: &gix::Repository, prefix: Option<&str>) -> Vec<String> {
+    let Ok(index) = repo.open_index() else {
+        return Vec::new();
+    };
+    let mut seen = std::collections::BTreeSet::new();
+    for entry in index.entries() {
+        if entry.stage() == gix::index::entry::Stage::Unconflicted {
+            continue;
+        }
+        // A conflict outside this workspace's subdirectory has no
+        // workspace-relative path, so it's dropped here rather than exposed as
+        // a repo-relative one `stage_resolved` (workspace-scoped, rejects
+        // `..`) couldn't actually act on. Tracked in #50 to surface that state
+        // honestly (e.g. a count) instead of silently.
+        if let Some(path) = workspace_relative_path(prefix, entry.path(&index)) {
+            seen.insert(path);
+        }
+    }
+    seen.into_iter().collect()
 }
 
 fn workspace_prefix(repo_workdir: &Path, workspace_root: &Path) -> Option<String> {
@@ -325,6 +418,10 @@ fn unsupported_status(reason: impl Into<String>) -> GitStatus {
         head_detached: false,
         head_unborn: false,
         files: Vec::new(),
+        merge_in_progress: false,
+        conflicted_files: Vec::new(),
+        ahead: None,
+        behind: None,
     }
 }
 
@@ -869,6 +966,45 @@ mod tests {
             .map(|entry| entry.path.as_str())
             .collect();
         assert_eq!(paths, vec!["inside.txt"]);
+    }
+
+    #[tokio::test]
+    async fn conflicted_files_are_scoped_to_the_workspace_subdirectory() {
+        // `sync_workspace`/`complete_merge` (git_sync.rs) operate on the whole
+        // repo, not just this workspace's subdirectory, so a conflict can land
+        // on a file outside `sub/`. `conflicted_files` still scopes to the
+        // workspace here, the same as the ordinary (non-conflict) file list —
+        // `stage_resolved` resolves paths relative to `workspace_root` and
+        // rejects `..`, so a repo-relative path for `outside.txt` would be
+        // unusable, not just imprecise. `merge_in_progress` still flips true,
+        // so the merge state itself isn't hidden — only the specific file.
+        // Surfacing this conflict honestly (e.g. a count of conflicts outside
+        // the workspace) is tracked in #50.
+        let dir = tempdir().unwrap();
+        init_repo(dir.path());
+        // `git merge` checks committer identity up front even for a merge that
+        // ends in conflict (it never actually commits), so this needs identity
+        // configured despite `commit_all` above not requiring it.
+        configure_identity(dir.path());
+        fs::create_dir(dir.path().join("sub")).unwrap();
+        fs::write(dir.path().join("sub/inside.txt"), "one\n").unwrap();
+        fs::write(dir.path().join("outside.txt"), "base\n").unwrap();
+        commit_all(dir.path(), "Initial commit");
+
+        run_git(dir.path(), ["checkout", "-b", "other"]);
+        fs::write(dir.path().join("outside.txt"), "other change\n").unwrap();
+        commit_all(dir.path(), "Other change");
+
+        run_git(dir.path(), ["checkout", "main"]);
+        fs::write(dir.path().join("outside.txt"), "main change\n").unwrap();
+        commit_all(dir.path(), "Main change");
+
+        let _ = git_stdout(dir.path(), ["merge", "other", "--no-edit"]);
+
+        let status = status_for_workspace(&dir.path().join("sub")).await;
+
+        assert!(status.merge_in_progress);
+        assert_eq!(status.conflicted_files, Vec::<String>::new());
     }
 
     #[tokio::test]

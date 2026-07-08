@@ -351,6 +351,7 @@ describe("hosted Tauri API transport", () => {
         dateTimeFormat: "localMedium",
         recentRelativeThreshold: "oneWeek",
         diffViewMode: "inline",
+        autoFetchSeconds: 60,
         featureFlags: {},
       },
       workspace: {
@@ -1027,6 +1028,8 @@ describe("Git status response normalization", () => {
           { path: "b.txt", status: "deleted", staged: false, unstaged: true },
           { path: "c.txt", status: "added", staged: false, unstaged: true },
         ],
+        mergeInProgress: false,
+        conflictedFiles: [],
       }),
     ).toEqual({
       status: "available",
@@ -1039,7 +1042,114 @@ describe("Git status response normalization", () => {
         { path: "b.txt", status: "deleted", staged: false, unstaged: true },
         { path: "c.txt", status: "added", staged: false, unstaged: true },
       ],
+      mergeInProgress: false,
+      conflictedFiles: [],
+      noUpstream: false,
     });
+  });
+
+  it("carries merge state and conflicted files", async () => {
+    const { normalizeGitStatus } = await import("./tauri");
+
+    expect(
+      normalizeGitStatus({
+        status: "available",
+        branch: "main",
+        headDetached: false,
+        headUnborn: false,
+        files: [],
+        mergeInProgress: true,
+        conflictedFiles: ["conflict.txt"],
+      }),
+    ).toEqual({
+      status: "available",
+      unsupportedReason: undefined,
+      branch: "main",
+      headDetached: false,
+      headUnborn: false,
+      files: [],
+      mergeInProgress: true,
+      conflictedFiles: ["conflict.txt"],
+      noUpstream: false,
+    });
+  });
+
+  it("defaults merge fields when an older backend omits them", async () => {
+    const { normalizeGitStatus } = await import("./tauri");
+
+    const status = normalizeGitStatus({
+      status: "available",
+      branch: "main",
+      headDetached: false,
+      headUnborn: false,
+      files: [],
+    });
+
+    expect(status?.mergeInProgress).toBe(false);
+    expect(status?.conflictedFiles).toEqual([]);
+    expect(status?.ahead).toBeUndefined();
+    expect(status?.behind).toBeUndefined();
+  });
+
+  it("carries ahead/behind counts and rejects bad ones", async () => {
+    const { normalizeGitStatus } = await import("./tauri");
+
+    const base = {
+      status: "available" as const,
+      branch: "main",
+      headDetached: false,
+      headUnborn: false,
+      files: [],
+      mergeInProgress: false,
+      conflictedFiles: [],
+    };
+
+    const counted = normalizeGitStatus({ ...base, ahead: 2, behind: 1 });
+    expect(counted?.ahead).toBe(2);
+    expect(counted?.behind).toBe(1);
+    expect(counted?.noUpstream).toBe(false);
+
+    // No upstream serializes as null → undefined, and `noUpstream` becomes
+    // true since the backend explicitly reported the null (as opposed to the
+    // key being absent below).
+    const noUpstream = normalizeGitStatus({ ...base, ahead: null, behind: null });
+    expect(noUpstream?.ahead).toBeUndefined();
+    expect(noUpstream?.behind).toBeUndefined();
+    expect(noUpstream?.noUpstream).toBe(true);
+
+    // A detached or unborn HEAD also nulls ahead/behind (no branch to compare
+    // against), but that's not a confirmed no-upstream *branch* — noUpstream
+    // must stay false so it keeps meaning exactly what its name says
+    // everywhere it's read, not just at one call site that remembers to
+    // additionally check headDetached/headUnborn.
+    const detached = normalizeGitStatus({
+      ...base,
+      headDetached: true,
+      ahead: null,
+      behind: null,
+    });
+    expect(detached?.noUpstream).toBe(false);
+    const unborn = normalizeGitStatus({ ...base, headUnborn: true, ahead: null, behind: null });
+    expect(unborn?.noUpstream).toBe(false);
+
+    // The backend only ever sets ahead/behind together, but noUpstream
+    // doesn't just trust that — a malformed payload with one null and the
+    // other not must not read as a confirmed no-upstream branch.
+    const partiallyNull = normalizeGitStatus({ ...base, ahead: null, behind: 3 });
+    expect(partiallyNull?.noUpstream).toBe(false);
+
+    // Negative / non-integer values are treated as absent, same as null, but
+    // `noUpstream` only fires on an explicit null, not a merely-invalid value.
+    const bad = normalizeGitStatus({ ...base, ahead: -1, behind: 1.5 });
+    expect(bad?.ahead).toBeUndefined();
+    expect(bad?.behind).toBeUndefined();
+    expect(bad?.noUpstream).toBe(false);
+
+    // A backend that predates ahead/behind omits the key entirely — that must
+    // not be confused with a confirmed no-upstream state.
+    const legacy = normalizeGitStatus(base);
+    expect(legacy?.ahead).toBeUndefined();
+    expect(legacy?.noUpstream).toBe(false);
   });
 
   it("normalizes an unsupported status without a branch", async () => {
@@ -1052,6 +1162,8 @@ describe("Git status response normalization", () => {
         headDetached: false,
         headUnborn: false,
         files: [],
+        mergeInProgress: false,
+        conflictedFiles: [],
       }),
     ).toEqual({
       status: "unsupported",
@@ -1060,6 +1172,9 @@ describe("Git status response normalization", () => {
       headDetached: false,
       headUnborn: false,
       files: [],
+      mergeInProgress: false,
+      conflictedFiles: [],
+      noUpstream: false,
     });
   });
 
@@ -1125,6 +1240,121 @@ describe("Git commit response normalization", () => {
         committedPaths: [1, 2],
       }),
     ).toBeUndefined();
+  });
+});
+
+describe("Git sync response normalization", () => {
+  it("normalizes a synced result with pull/push counts", async () => {
+    const { normalizeGitSyncResult } = await import("./tauri");
+
+    expect(
+      normalizeGitSyncResult({
+        outcome: "synced",
+        branch: "main",
+        pulled: 2,
+        pushed: 1,
+      }),
+    ).toEqual({
+      outcome: "synced",
+      branch: "main",
+      pulled: 2,
+      pushed: 1,
+      files: [],
+    });
+  });
+
+  it("defaults missing counts to zero for an up-to-date result", async () => {
+    const { normalizeGitSyncResult } = await import("./tauri");
+
+    expect(
+      normalizeGitSyncResult({ outcome: "upToDate", branch: "main" }),
+    ).toEqual({
+      outcome: "upToDate",
+      branch: "main",
+      pulled: 0,
+      pushed: 0,
+      files: [],
+    });
+  });
+
+  it("treats negative or non-integer counts as zero", async () => {
+    const { normalizeGitSyncResult } = await import("./tauri");
+
+    expect(
+      normalizeGitSyncResult({
+        outcome: "synced",
+        branch: "main",
+        pulled: -1,
+        pushed: 1.5,
+      }),
+    ).toEqual({
+      outcome: "synced",
+      branch: "main",
+      pulled: 0,
+      pushed: 0,
+      files: [],
+    });
+  });
+
+  it("carries the conflicted file list for a merge conflict", async () => {
+    const { normalizeGitSyncResult } = await import("./tauri");
+
+    expect(
+      normalizeGitSyncResult({
+        outcome: "mergeConflict",
+        branch: "main",
+        files: ["conflict.txt"],
+      }),
+    ).toEqual({
+      outcome: "mergeConflict",
+      branch: "main",
+      pulled: 0,
+      pushed: 0,
+      files: ["conflict.txt"],
+    });
+  });
+
+  it("rejects malformed sync payloads", async () => {
+    const { normalizeGitSyncResult } = await import("./tauri");
+
+    expect(normalizeGitSyncResult({ outcome: "synced" })).toBeUndefined();
+    expect(normalizeGitSyncResult({ outcome: "bogus", branch: "main" })).toBeUndefined();
+    expect(
+      normalizeGitSyncResult({ outcome: "mergeConflict", branch: "main", files: [1] }),
+    ).toBeUndefined();
+    // The backend's tagged enum always includes `files` for mergeConflict
+    // (even as []) — a missing key is a malformed payload, not "no
+    // conflicts", and must not silently normalize to an empty list.
+    expect(
+      normalizeGitSyncResult({ outcome: "mergeConflict", branch: "main" }),
+    ).toBeUndefined();
+  });
+});
+
+describe("Git merge-commit response normalization", () => {
+  it("normalizes a completed merge commit", async () => {
+    const { normalizeGitMergeCommit } = await import("./tauri");
+
+    expect(
+      normalizeGitMergeCommit({ sha: "abc123456789", shortSha: "abc12345", branch: "main" }),
+    ).toEqual({ sha: "abc123456789", shortSha: "abc12345", branch: "main" });
+  });
+
+  it("tolerates a missing branch (detached HEAD)", async () => {
+    const { normalizeGitMergeCommit } = await import("./tauri");
+
+    expect(normalizeGitMergeCommit({ sha: "abc", shortSha: "abc" })).toEqual({
+      sha: "abc",
+      shortSha: "abc",
+      branch: undefined,
+    });
+  });
+
+  it("rejects malformed merge payloads", async () => {
+    const { normalizeGitMergeCommit } = await import("./tauri");
+
+    expect(normalizeGitMergeCommit({ sha: "abc" })).toBeUndefined();
+    expect(normalizeGitMergeCommit(null)).toBeUndefined();
   });
 });
 

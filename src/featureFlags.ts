@@ -46,12 +46,12 @@ export const FEATURE_FLAGS: Record<FeatureFlagId, FeatureFlagDefinition> = {
     id: "gitCommit",
     label: "Git commit",
     description:
-      "Commit selected changed files from the sidebar without leaving the editor.",
+      "Commit selected changed files from the sidebar, and sync (fetch, pull, push) the current branch, without leaving the editor.",
     defaultEnabled: true,
     visibility: "preview",
     lifecycle: "preview",
     graduationCriteria:
-      "Selective commit is reliable across large repos and worktree edge cases (symlinks, executable bits, unborn/detached HEAD). Once stable, promote to a Git settings category or make it always-on and remove this flag.",
+      "Selective commit and sync are reliable across large repos and worktree edge cases (symlinks, executable bits, unborn/detached HEAD, merge conflicts). Once stable, promote to a Git settings category or make it always-on and remove this flag.",
     promotionNote: "Promote into a future Git/source-control settings category.",
   },
 };

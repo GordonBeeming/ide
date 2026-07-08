@@ -9,7 +9,10 @@ import {
 
 describe("feature flags", () => {
   it("falls back to the registry default when there is no override", () => {
-    expect(resolveFeatureFlags({})).toEqual({ gitAttribution: false, gitCommit: true });
+    expect(resolveFeatureFlags({})).toEqual({
+      gitAttribution: false,
+      gitCommit: true,
+    });
     expect(isFeatureEnabled("gitAttribution", {})).toBe(false);
     expect(isFeatureEnabled("gitCommit", {})).toBe(true);
   });
