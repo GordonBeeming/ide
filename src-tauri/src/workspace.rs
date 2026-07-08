@@ -830,7 +830,10 @@ fn case_insensitive_match_end_byte(
     lowered.starts_with(normalized_query).then_some(line.len())
 }
 
-fn resolve_workspace_path(root: &Path, relative: &str) -> Result<PathBuf, WorkspaceError> {
+pub(crate) fn resolve_workspace_path(
+    root: &Path,
+    relative: &str,
+) -> Result<PathBuf, WorkspaceError> {
     resolve_workspace_path_inner(root, relative, false)
 }
 
@@ -1001,7 +1004,7 @@ fn resolve_existing_workspace_entry_path(
     Ok(canonical)
 }
 
-fn normalize_path(path: &Path) -> String {
+pub(crate) fn normalize_path(path: &Path) -> String {
     path.components()
         .map(|component| component.as_os_str().to_string_lossy())
         .collect::<Vec<_>>()

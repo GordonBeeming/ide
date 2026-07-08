@@ -13,6 +13,7 @@ import {
 } from "react";
 import { listen } from "@tauri-apps/api/event";
 import {
+  Check,
   ChevronRight,
   Circle,
   Copy,
@@ -23,8 +24,12 @@ import {
   FileCog,
   FolderOpen,
   FolderPlus,
+  GitBranch,
+  GitCommitHorizontal,
+  GitCompareArrows,
   ListOrdered,
   ListFilter,
+  Loader,
   PanelLeftClose,
   PanelLeftOpen,
   Pencil,
@@ -98,12 +103,14 @@ import {
   LspServerStatus,
   SearchMatch,
   advanceWorkspaceIndex,
+  commitGitChanges,
   createFile,
   createFolder,
   deleteFile,
   getClaudeBridgeStatus,
   getCodexMcpStatus,
   getGitAttribution,
+  getGitStatus,
   getHttpEndpoint,
   getInitialFile,
   getAppInfo,
@@ -116,6 +123,7 @@ import {
   isNativeTauri,
   listDirectory,
   listFiles,
+  loadGitFileDiff,
   normalizeFileListResult,
   normalizeSearchResult,
   pickOpenFile,
@@ -123,6 +131,7 @@ import {
   readFile,
   recordRecentFile,
   renameFile,
+  sanitizeDiffViewMode,
   searchIndexedFiles,
   searchFiles,
   setWorkspaceRootPath,
@@ -131,11 +140,15 @@ import {
   updateAgentContext,
   updateUiState,
   writeFile,
+  defaultDiffViewMode,
+  type DiffViewMode,
   type OpenLaunchRequest,
   type PersistedUiSnapshot,
   type SettingsLocations,
   type GitAttribution,
   type GitCommitInfo,
+  type GitStatus,
+  type GitStatusEntry,
   type WorkspaceIndexStats,
   type WorkspaceDisplayContext,
   type WorkspaceUiState,
@@ -158,6 +171,7 @@ import {
   tabCloseRequiresConfirmation,
   updateTabContents,
   type EditorTab,
+  type EditorTabDiff,
 } from "./tabs";
 import {
   editorCommandLabel,
@@ -168,6 +182,7 @@ import {
 import { cursorStatus, type EditorCursor } from "./editorCursor";
 
 const EditorPane = lazy(() => import("./EditorPane"));
+const DiffPane = lazy(() => import("./DiffPane"));
 
 const fallbackAppInfo: AppInfo = {
   name: "ide",
@@ -207,7 +222,7 @@ interface OpenFailure {
   reason: string;
 }
 
-type SidebarSearchMode = "filter" | "content";
+type SidebarPanelMode = "filter" | "content" | "commit";
 type SettingsCategory =
   | "view"
   | "performance"
@@ -318,6 +333,10 @@ const minSidebarWidth = 180;
 const maxSidebarWidth = 1040;
 const defaultSidebarWidth = 288;
 const sidebarWidthStep = 16;
+const minCommitMessageHeight = 56;
+const maxCommitMessageHeight = 600;
+const defaultCommitMessageHeight = 112;
+const commitMessageHeightStep = 16;
 
 function sanitizeNumberLimit(
   value: number | undefined,
@@ -433,7 +452,7 @@ export default function App() {
   const [replaceQuery, setReplaceQuery] = useState("");
   const [replaceVisible, setReplaceVisible] = useState(false);
   const [activeSidebarSearch, setActiveSidebarSearch] =
-    useState<SidebarSearchMode>();
+    useState<SidebarPanelMode>();
   const [currentFindOpen, setCurrentFindOpen] = useState(false);
   const [currentFindIndex, setCurrentFindIndex] = useState(-1);
   const [editorCommand, setEditorCommand] = useState<EditorCommandRequest>();
@@ -469,6 +488,7 @@ export default function App() {
     useState<PendingReloadRequest>();
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [sidebarWidth, setSidebarWidth] = useState(defaultSidebarWidth);
+  const [commitMessageHeight, setCommitMessageHeight] = useState(defaultCommitMessageHeight);
   const [pendingClosePath, setPendingClosePath] = useState<string>();
   const [pendingCloseAll, setPendingCloseAll] = useState(false);
   const [pendingAppClose, setPendingAppClose] = useState(false);
@@ -518,6 +538,7 @@ export default function App() {
     useState<DateTimeFormatId>(defaultDateTimeFormat);
   const [recentRelativeThreshold, setRecentRelativeThreshold] =
     useState<RecentRelativeThresholdId>(defaultRecentRelativeThreshold);
+  const [diffViewMode, setDiffViewMode] = useState<DiffViewMode>(defaultDiffViewMode);
   const [featureFlags, setFeatureFlags] = useState<FeatureFlagOverrides>({});
   const [prefersDark, setPrefersDark] = useState(systemPrefersDark);
   const [uiStateLoaded, setUiStateLoaded] = useState(false);
@@ -545,6 +566,16 @@ export default function App() {
   const [claudeBridge, setClaudeBridge] = useState<ClaudeBridgeStatus>();
   const [gitAttribution, setGitAttribution] = useState<GitAttribution>();
   const [gitCommitPopover, setGitCommitPopover] = useState<GitCommitInfo>();
+  const [gitStatus, setGitStatus] = useState<GitStatus>();
+  const [gitStatusError, setGitStatusError] = useState<string>();
+  const [gitCommitSelectedPaths, setGitCommitSelectedPaths] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const [gitCommitMessage, setGitCommitMessage] = useState("");
+  const [gitCommitInFlight, setGitCommitInFlight] = useState(false);
+  const [gitCommitError, setGitCommitError] = useState<string>();
+  const [gitCommitSuccess, setGitCommitSuccess] = useState<string>();
+  const gitStatusInitializedRef = useRef(false);
   const sidebarFilterInputRef = useRef<HTMLInputElement | null>(null);
   const sidebarContentSearchInputRef = useRef<HTMLInputElement | null>(null);
   const currentFindInputRef = useRef<HTMLInputElement | null>(null);
@@ -574,6 +605,9 @@ export default function App() {
   const sidebarResizeRef = useRef<{ startX: number; startWidth: number } | undefined>(
     undefined,
   );
+  const commitMessageResizeRef = useRef<
+    { startY: number; startHeight: number } | undefined
+  >(undefined);
 
   const activeFile = openFiles.find((file) => file.path === activePath);
   const pendingCloseFile = openFiles.find((file) => file.path === pendingClosePath);
@@ -590,6 +624,7 @@ export default function App() {
   const activeSelection = selection?.filePath === activePath ? selection : undefined;
   const cursorPosition = cursorStatus(activePath, cursor, revealTarget);
   const gitAttributionEnabled = isFeatureEnabled("gitAttribution", featureFlags);
+  const gitCommitEnabled = isFeatureEnabled("gitCommit", featureFlags);
   const activeGitAttribution =
     gitAttributionEnabled &&
     gitAttribution?.status === "available" &&
@@ -618,6 +653,46 @@ export default function App() {
     () => filterTree(tree, filter.trim().toLowerCase()),
     [filter, tree],
   );
+  const changedFiles =
+    gitCommitEnabled && gitStatus?.status === "available" ? gitStatus.files : [];
+  const changedFilePaths = useMemo(
+    () => changedFiles.map((file) => file.path),
+    [changedFiles],
+  );
+  // Badge/dot overlay for the main tree (Part 2) — undefined (not just empty)
+  // when there's nothing to show, so `TreeItem` renders byte-for-byte as it
+  // does today when the flag is off or status hasn't loaded.
+  const fileStatusByPath = useMemo(() => {
+    if (changedFiles.length === 0) return undefined;
+    return new Map(changedFiles.map((file) => [file.path, file.status]));
+  }, [changedFiles]);
+  const changedFolderPaths = useMemo(() => {
+    if (changedFiles.length === 0) return undefined;
+    const folders = new Set<string>();
+    for (const file of changedFiles) {
+      const segments = file.path.split("/");
+      for (let index = 1; index < segments.length; index += 1) {
+        folders.add(segments.slice(0, index).join("/"));
+      }
+    }
+    return folders;
+  }, [changedFiles]);
+  // Commit mode reuses the same tree/TreeItem as normal browsing (Part 3),
+  // filtered down to changed files plus their ancestor folders. Deleted
+  // files don't exist in `sidebarFiles` (the workspace scan can't see them),
+  // so they're injected as synthetic leaf entries before filtering.
+  const changedFilesTree = useMemo(() => {
+    if (changedFiles.length === 0) return [];
+    const existingPaths = new Set(sidebarFiles.map((file) => file.path));
+    const syntheticEntries = syntheticMissingFileEntries(changedFiles, existingPaths);
+    const combinedEntries =
+      syntheticEntries.length > 0 ? [...sidebarFiles, ...syntheticEntries] : sidebarFiles;
+    const fullTree = buildTree(combinedEntries);
+    return filterTreeToPaths(fullTree, new Set(changedFilePaths));
+  }, [changedFiles, changedFilePaths, sidebarFiles]);
+  const allChangedFilesSelected =
+    changedFilePaths.length > 0 &&
+    changedFilePaths.every((path) => gitCommitSelectedPaths.has(path));
   const quickOpenCandidates = useMemo(
     () => mergeFileEntries(sidebarFiles, quickOpenIndexedResults),
     [quickOpenIndexedResults, sidebarFiles],
@@ -628,7 +703,7 @@ export default function App() {
   );
   const currentFindResults = useMemo(
     () =>
-      activeFile
+      activeFile && !activeFile.diff
         ? currentFileMatches(
             activeFile.path,
             activeFile.contents,
@@ -664,7 +739,11 @@ export default function App() {
     [keyBindingsQuery],
   );
   const filterExpanded = activeSidebarSearch === "filter" || filter.trim().length > 0;
-  const filterVisible = activeSidebarSearch !== "content" && filterExpanded;
+  // Gated on the flag so disabling `gitCommit` mid-session always drops the
+  // app out of commit mode, even if `activeSidebarSearch` is still "commit"
+  // from before the flag flipped off.
+  const commitModeActive = gitCommitEnabled && activeSidebarSearch === "commit";
+  const filterVisible = activeSidebarSearch !== "content" && !commitModeActive && filterExpanded;
   const contentSearchActive = activeSidebarSearch === "content";
   const contentSearchReady = contentQuery.trim().length >= 2;
   const contentSearchStatsText =
@@ -673,8 +752,13 @@ export default function App() {
       : `${searchStats.searchedFiles.toLocaleString()} files searched${
           searchStats.skippedFiles ? `, ${searchStats.skippedFiles.toLocaleString()} skipped` : ""
         }`;
+  // Diff tabs are read-only synthetic surfaces — find-in-file (like save and
+  // the disk-state check) must no-op for them rather than searching/labeling
+  // against the synthetic `diff://` path.
   const currentFindExpanded =
-    Boolean(activeFile) && (currentFindOpen || currentFileQuery.trim().length > 0);
+    Boolean(activeFile) &&
+    !activeFile?.diff &&
+    (currentFindOpen || currentFileQuery.trim().length > 0);
   const suggestedNewFilePath = useMemo(
     () => suggestNewFilePath(selectedPath, files),
     [files, selectedPath],
@@ -773,7 +857,7 @@ export default function App() {
   }, [activeFile]);
 
   useEffect(() => {
-    if (!gitAttributionEnabled || !activePath || !activeFile) {
+    if (!gitAttributionEnabled || !activePath || !activeFile || activeFile.diff) {
       setGitAttribution(undefined);
       setGitCommitPopover(undefined);
       return;
@@ -948,6 +1032,7 @@ export default function App() {
     setRecentRelativeThreshold(
       sanitizeRecentRelativeThreshold(snapshot.view.recentRelativeThreshold),
     );
+    setDiffViewMode(sanitizeDiffViewMode(snapshot.view.diffViewMode));
     setFeatureFlags(sanitizeFeatureFlagOverrides(snapshot.view.featureFlags));
     setExpandedFolders(new Set(snapshot.workspace.expandedFolders));
     setTrustExternalWorkspace(Boolean(snapshot.workspace.trustExternalSymlinks));
@@ -958,6 +1043,14 @@ export default function App() {
         minSidebarWidth,
         maxSidebarWidth,
         defaultSidebarWidth,
+      ),
+    );
+    setCommitMessageHeight(
+      sanitizeNumberLimit(
+        snapshot.workspace.commitMessageHeight,
+        minCommitMessageHeight,
+        maxCommitMessageHeight,
+        defaultCommitMessageHeight,
       ),
     );
   }, []);
@@ -1043,6 +1136,116 @@ export default function App() {
     }
   }, []);
 
+  // Fetches the latest diff for one open diff tab and returns the updated
+  // payload, or undefined if the fetch failed or nothing actually changed —
+  // callers skip the state update entirely in that case, so an unrelated
+  // refresh never re-renders a diff tab that's still accurate. Shares the
+  // disk-check in-flight guard with real files, keyed by the same tab path
+  // (the synthetic `diff://<filePath>` key), so a slow fetch can't overlap
+  // with itself from two triggers (background poll + focus, say).
+  const fetchDiffTabUpdate = useCallback(
+    async (tab: EditorTab): Promise<EditorTabDiff | undefined> => {
+      const existing = tab.diff;
+      if (!existing) return undefined;
+      if (diskCheckInFlightRef.current.has(tab.path)) return undefined;
+
+      diskCheckInFlightRef.current.add(tab.path);
+      try {
+        const diff = await loadGitFileDiff(existing.filePath, maxOpenFileKb * 1024);
+        const changed =
+          diff.original !== existing.original ||
+          diff.modified !== existing.modified ||
+          diff.status !== existing.status ||
+          diff.isBinary !== existing.isBinary ||
+          diff.isTooLarge !== existing.isTooLarge;
+        return changed ? { filePath: existing.filePath, ...diff } : undefined;
+      } catch {
+        // A transient status-check failure shouldn't blank an open diff —
+        // leave the tab showing its last known-good snapshot.
+        return undefined;
+      } finally {
+        diskCheckInFlightRef.current.delete(tab.path);
+      }
+    },
+    [maxOpenFileKb],
+  );
+
+  // Single-tab path used by checkOpenFileDiskState (background poll, focus,
+  // tab activation) so an externally-changed file's diff reloads the same
+  // way a real open file's contents do.
+  const refreshOpenDiffTab = useCallback(
+    async (path: string) => {
+      const tab = openFilesRef.current.find((file) => file.path === path && file.diff);
+      if (!tab) return;
+      const update = await fetchDiffTabUpdate(tab);
+      if (!update) return;
+      setOpenFiles((current) =>
+        current.map((file) =>
+          file.path === path ? { ...file, contents: update.modified, diff: update } : file,
+        ),
+      );
+    },
+    [fetchDiffTabUpdate],
+  );
+
+  // Bulk path used after a Git status refresh (in-IDE save/create/rename/
+  // delete, and post-commit) — every open diff tab is re-checked in
+  // parallel, and the updates are applied in a single setOpenFiles call so
+  // a tab whose diff didn't change keeps the exact same object reference
+  // (no needless re-render).
+  const refreshOpenDiffTabs = useCallback(async () => {
+    const diffTabs = openFilesRef.current.filter((file) => file.diff);
+    if (diffTabs.length === 0) return;
+
+    const updates = new Map<string, EditorTabDiff>();
+    await Promise.all(
+      diffTabs.map(async (tab) => {
+        const update = await fetchDiffTabUpdate(tab);
+        if (update) updates.set(tab.path, update);
+      }),
+    );
+    if (updates.size === 0) return;
+
+    setOpenFiles((current) =>
+      current.map((file) => {
+        const update = updates.get(file.path);
+        return update ? { ...file, contents: update.modified, diff: update } : file;
+      }),
+    );
+  }, [fetchDiffTabUpdate]);
+
+  // Declared ahead of `refreshFiles` so the workspace-scan callback (the
+  // single choke point every save/create/rename/delete/refresh already
+  // funnels through) can trigger it too, without a temporal-dead-zone issue.
+  const refreshGitStatus = useCallback(async () => {
+    if (!gitCommitEnabled) return;
+
+    try {
+      const status = await getGitStatus();
+      setGitStatus(status);
+      setGitStatusError(undefined);
+      setGitCommitSelectedPaths((current) => {
+        const validPaths = new Set(status.files.map((file) => file.path));
+        if (!gitStatusInitializedRef.current) {
+          gitStatusInitializedRef.current = true;
+          return validPaths;
+        }
+        const next = new Set<string>();
+        for (const path of current) {
+          if (validPaths.has(path)) next.add(path);
+        }
+        return next;
+      });
+      // A fresh Git status means every in-IDE save/create/rename/delete (they
+      // all funnel through refreshFiles → here) and every commit just landed,
+      // so any open diff tab may now be stale — reload them too.
+      void refreshOpenDiffTabs();
+    } catch (reason) {
+      setGitStatus(undefined);
+      setGitStatusError(`Unable to load Git status: ${String(reason)}`);
+    }
+  }, [gitCommitEnabled, refreshOpenDiffTabs]);
+
   const refreshFiles = useCallback(async (options?: { singleFilePath?: string }) => {
     const effectiveSingleFilePath =
       options && "singleFilePath" in options ? options.singleFilePath : singleFilePath;
@@ -1088,6 +1291,12 @@ export default function App() {
       loadingFoldersRef.current.clear();
       setWorkspaceLoadFailed(false);
       await refreshIntegrationStatus();
+      // This is the single choke point every workspace load/refresh and
+      // save/create/rename/delete already funnels through, so hooking Git
+      // status here (flag-gated inside refreshGitStatus) covers all of them
+      // without each caller needing its own explicit call. Fire-and-forget:
+      // the scan result below shouldn't wait on an extra round trip.
+      void refreshGitStatus();
       return entries;
     } catch (reason) {
       setWorkspaceLoadFailed(true);
@@ -1096,6 +1305,7 @@ export default function App() {
       setWorkspaceLoading(false);
     }
   }, [
+    refreshGitStatus,
     refreshIntegrationStatus,
     showDotfiles,
     showGeneratedInternal,
@@ -1134,6 +1344,9 @@ export default function App() {
     setError(undefined);
     setStatus("Refreshing files");
     try {
+      // `refreshFiles` itself refreshes Git status (flag-gated) on success, so
+      // every save/create/rename/delete that already calls it gets fresh
+      // status for free — this explicit refresh-button path is covered too.
       await refreshFiles();
       setStatus("Ready");
     } catch (reason) {
@@ -1141,6 +1354,129 @@ export default function App() {
       setStatus("Workspace load failed");
     }
   }, [refreshFiles]);
+
+  useEffect(() => {
+    if (!commitModeActive) {
+      gitStatusInitializedRef.current = false;
+      return;
+    }
+    void refreshGitStatus();
+  }, [commitModeActive, refreshGitStatus]);
+
+  // Auto-expand the ancestor folders of every changed file on entering commit
+  // mode, so the (now filtered, not force-expanded) shared tree shows them
+  // without a manual expand. Only ever adds to `expandedFolders` — a manual
+  // collapse afterward (in either mode) is never overridden, and it carries
+  // over when leaving/re-entering commit mode since it's the same Set.
+  useEffect(() => {
+    if (!commitModeActive || changedFilePaths.length === 0) return;
+    const ancestorPaths = new Set<string>();
+    for (const path of changedFilePaths) {
+      const segments = path.split("/");
+      for (let index = 1; index < segments.length; index += 1) {
+        ancestorPaths.add(segments.slice(0, index).join("/"));
+      }
+    }
+    if (ancestorPaths.size === 0) return;
+    setExpandedFolders((current) => {
+      let changed = false;
+      const next = new Set(current);
+      for (const path of ancestorPaths) {
+        if (!next.has(path)) {
+          next.add(path);
+          changed = true;
+        }
+      }
+      return changed ? next : current;
+    });
+  }, [commitModeActive, changedFilePaths]);
+
+  // Success is transient — clear it after a few seconds (or immediately on the
+  // next edit, via handleGitCommit) so the panel doesn't carry a stale line.
+  useEffect(() => {
+    if (!gitCommitSuccess) return;
+    const timeoutId = window.setTimeout(() => setGitCommitSuccess(undefined), 5000);
+    return () => window.clearTimeout(timeoutId);
+  }, [gitCommitSuccess]);
+
+  // Diff tabs are inspection surfaces scoped to commit mode — leaving it drops
+  // every unpinned one so they don't accumulate; a double-clicked (pinned) tab
+  // was a deliberate keep and survives.
+  useEffect(() => {
+    if (commitModeActive) return;
+    setOpenFiles((current) => {
+      const kept = current.filter((file) => !file.diff || file.pinned);
+      if (kept.length === current.length) return current;
+      setActivePath((currentActivePath) =>
+        currentActivePath && kept.some((file) => file.path === currentActivePath)
+          ? currentActivePath
+          : kept.at(-1)?.path,
+      );
+      return kept;
+    });
+  }, [commitModeActive]);
+
+  const toggleGitCommitSelection = useCallback((path: string) => {
+    setGitCommitSelectedPaths((current) => {
+      const next = new Set(current);
+      if (next.has(path)) {
+        next.delete(path);
+      } else {
+        next.add(path);
+      }
+      return next;
+    });
+  }, []);
+
+  const selectAllChangedFiles = useCallback(() => {
+    setGitCommitSelectedPaths(new Set(changedFilePaths));
+  }, [changedFilePaths]);
+
+  const deselectAllChangedFiles = useCallback(() => {
+    setGitCommitSelectedPaths(new Set());
+  }, []);
+
+  // Bulk-selects/deselects a folder's whole leaf set for the tri-state folder
+  // checkboxes — a single toggle affects every file beneath that folder node.
+  const setGitCommitPathsSelected = useCallback((paths: string[], selected: boolean) => {
+    setGitCommitSelectedPaths((current) => {
+      const next = new Set(current);
+      for (const path of paths) {
+        if (selected) {
+          next.add(path);
+        } else {
+          next.delete(path);
+        }
+      }
+      return next;
+    });
+  }, []);
+
+  const handleGitCommit = useCallback(async () => {
+    const trimmedMessage = gitCommitMessage.trim();
+    const selectedPaths = changedFilePaths.filter((path) => gitCommitSelectedPaths.has(path));
+    if (!trimmedMessage || selectedPaths.length === 0 || gitCommitInFlight) return;
+
+    setGitCommitInFlight(true);
+    setGitCommitError(undefined);
+    setGitCommitSuccess(undefined);
+    try {
+      const result = await commitGitChanges(trimmedMessage, selectedPaths);
+      setGitCommitMessage("");
+      setGitCommitSuccess(`Committed ${result.committedPaths.length} file(s) as ${result.shortSha}`);
+      await refreshGitStatus();
+    } catch (reason) {
+      setGitCommitError(`Unable to commit: ${String(reason)}`);
+    } finally {
+      setGitCommitInFlight(false);
+    }
+  }, [
+    changedFilePaths,
+    gitCommitInFlight,
+    gitCommitMessage,
+    gitCommitSelectedPaths,
+    refreshGitStatus,
+  ]);
 
   const readOpenFileFromDisk = useCallback(async (path: string) => {
     const entry = await statFile(path);
@@ -1191,6 +1527,15 @@ export default function App() {
 
       const openFile = openFilesRef.current.find((file) => file.path === path);
       if (!openFile) return;
+      // Diff tabs are synthetic and read-only — there's no real file at this
+      // path to stat, and none of the reload/dirty machinery below applies.
+      // They still need to catch up to an externally-changed file though, so
+      // the background poller / focus / tab-activation callers of this
+      // function double as the diff tab's own reload trigger.
+      if (openFile.diff) {
+        await refreshOpenDiffTab(path);
+        return;
+      }
 
       diskCheckInFlightRef.current.add(path);
       try {
@@ -1223,7 +1568,7 @@ export default function App() {
         diskCheckInFlightRef.current.delete(path);
       }
     },
-    [applyCleanDiskUpdate],
+    [applyCleanDiskUpdate, refreshOpenDiffTab],
   );
 
   const checkOpenFilesDiskState = useCallback(
@@ -1398,9 +1743,14 @@ export default function App() {
   }, [refreshLspStatus]);
 
   useEffect(() => {
+    // Diff tabs are a synthetic inspection surface, not a real open file — an
+    // agent asking "what's open" shouldn't see the `diff://` pseudo-path.
+    const realOpenFiles = openFiles.filter((file) => !file.diff);
     const context: AgentContext = {
-      activeFile: activePath,
-      openFiles: openFiles.map((file) => file.path),
+      activeFile: realOpenFiles.some((file) => file.path === activePath)
+        ? activePath
+        : undefined,
+      openFiles: realOpenFiles.map((file) => file.path),
       selection: activeSelection,
       diagnostics,
     };
@@ -1517,7 +1867,9 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!trackActiveFile || !activePath || singleFileMode) return;
+    // Diff tabs are a synthetic key with no corresponding workspace tree
+    // node, so there's nothing real to select or expand toward.
+    if (!trackActiveFile || !activePath || singleFileMode || activeFile?.diff) return;
 
     setSelectedPath(activePath);
     const parentPaths = parentFolderPaths(activePath);
@@ -1545,6 +1897,31 @@ export default function App() {
       await openPath(entry, pinned, lineNumber);
     },
     [files, openPath, quickOpenIndexedResults],
+  );
+
+  // Opens a read-only worktree-vs-HEAD diff under the synthetic `diff://`
+  // key, as a preview (unpinned) tab — the same idiom as single-clicking a
+  // tree file, so opening a second diff replaces the first unless pinned.
+  const openDiffTab = useCallback(
+    async (filePath: string) => {
+      const key = `diff://${filePath}`;
+      try {
+        const diff = await loadGitFileDiff(filePath, maxOpenFileKb * 1024);
+        setOpenFiles((current) =>
+          addPreviewTab(current, {
+            path: key,
+            contents: diff.modified,
+            dirty: false,
+            pinned: false,
+            diff: { filePath, ...diff },
+          }),
+        );
+        setActivePath(key);
+      } catch (reason) {
+        setGitCommitError(`Unable to load diff for ${filePath}: ${String(reason)}`);
+      }
+    },
+    [maxOpenFileKb],
   );
 
   useEffect(() => {
@@ -1694,14 +2071,18 @@ export default function App() {
           appZoomPercent,
           dateTimeFormat,
           recentRelativeThreshold,
+          diffViewMode,
           featureFlags,
         },
         {
           expandedFolders: [...expandedFolders],
-          openFiles: openFiles.map((file) => file.path),
-          activeFile: activePath,
+          // Diff tabs are synthetic (`diff://…`) and must not survive a
+          // relaunch — persist only the real open-file paths.
+          openFiles: openFiles.filter((file) => !file.diff).map((file) => file.path),
+          activeFile: activeFile?.diff ? undefined : activePath,
           selectedPath,
           sidebarWidth,
+          commitMessageHeight,
           trustExternalSymlinks: trustExternalWorkspace,
         },
       ).catch((reason) => {
@@ -1717,6 +2098,7 @@ export default function App() {
     openFilePathSignature,
     selectedPath,
     sidebarWidth,
+    commitMessageHeight,
     showDotfiles,
     showGeneratedInternal,
     showGitignoredFiles,
@@ -1736,6 +2118,7 @@ export default function App() {
     appZoomPercent,
     dateTimeFormat,
     recentRelativeThreshold,
+    diffViewMode,
     featureFlags,
     uiStateLoaded,
     workspaceUiRestored,
@@ -1923,6 +2306,61 @@ export default function App() {
       window.removeEventListener("pointerup", handlePointerUp);
     };
   }, [appZoomPercent, setBoundedSidebarWidth]);
+
+  const setBoundedCommitMessageHeight = useCallback((value: number) => {
+    setCommitMessageHeight(
+      sanitizeNumberLimit(
+        value,
+        minCommitMessageHeight,
+        maxCommitMessageHeight,
+        defaultCommitMessageHeight,
+      ),
+    );
+  }, []);
+
+  const beginCommitMessageResize = useCallback(
+    (event: ReactPointerEvent<HTMLElement>) => {
+      event.preventDefault();
+      commitMessageResizeRef.current = {
+        startY: event.clientY,
+        startHeight: commitMessageHeight,
+      };
+    },
+    [commitMessageHeight],
+  );
+
+  const handleCommitMessageResizeKeyDown = useCallback(
+    (event: ReactKeyboardEvent<HTMLElement>) => {
+      if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
+      event.preventDefault();
+      const direction = event.key === "ArrowUp" ? 1 : -1;
+      setBoundedCommitMessageHeight(commitMessageHeight + direction * commitMessageHeightStep);
+    },
+    [commitMessageHeight, setBoundedCommitMessageHeight],
+  );
+
+  useEffect(() => {
+    const handlePointerMove = (event: PointerEvent) => {
+      const resize = commitMessageResizeRef.current;
+      if (!resize) return;
+      const appZoom = appZoomPercent / 100;
+      // The handle sits above the textarea, so dragging it further up (a
+      // smaller clientY) should grow the box, not shrink it.
+      setBoundedCommitMessageHeight(
+        resize.startHeight + (resize.startY - event.clientY) / appZoom,
+      );
+    };
+    const handlePointerUp = () => {
+      commitMessageResizeRef.current = undefined;
+    };
+
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", handlePointerUp);
+    return () => {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", handlePointerUp);
+    };
+  }, [appZoomPercent, setBoundedCommitMessageHeight]);
 
   const openNewFileDialog = useCallback(() => {
     setError(undefined);
@@ -2312,7 +2750,7 @@ export default function App() {
   }, []);
 
   const openCurrentFileFind = useCallback(() => {
-    if (!activeFile) {
+    if (!activeFile || activeFile.diff) {
       setStatus("Find in file requires an open file");
       return;
     }
@@ -2321,7 +2759,7 @@ export default function App() {
   }, [activeFile]);
 
   const openGoToLineDialog = useCallback(() => {
-    if (!activeFile) {
+    if (!activeFile || activeFile.diff) {
       setStatus("Go to line requires an open file");
       return;
     }
@@ -2345,7 +2783,7 @@ export default function App() {
   }, []);
 
   const goToLine = useCallback(() => {
-    if (!activeFile) {
+    if (!activeFile || activeFile.diff) {
       closeGoToLineDialog();
       setStatus("Go to line requires an open file");
       return;
@@ -2883,15 +3321,18 @@ export default function App() {
         title: "Find in File",
         detail: "Search inside the active file",
         keywords: ["current file search"],
-        enabled: Boolean(activeFile),
+        enabled: Boolean(activeFile) && !activeFile?.diff,
         run: openCurrentFileFind,
       },
       {
         id: "go_to_line",
         title: "Go to Line",
-        detail: activeFile ? `Jump within ${activeFile.path}` : "Jump within the active file",
+        detail:
+          activeFile && !activeFile.diff
+            ? `Jump within ${activeFile.path}`
+            : "Jump within the active file",
         keywords: ["line number", "jump"],
-        enabled: Boolean(activeFile),
+        enabled: Boolean(activeFile) && !activeFile?.diff,
         run: openGoToLineDialog,
       },
       {
@@ -2933,9 +3374,10 @@ export default function App() {
       {
         id: "save_file",
         title: "Save",
-        detail: activeFile ? `Save ${activeFile.path}` : "Save the active file",
+        detail:
+          activeFile && !activeFile.diff ? `Save ${activeFile.path}` : "Save the active file",
         keywords: ["write file"],
-        enabled: Boolean(activeFile),
+        enabled: Boolean(activeFile) && !activeFile?.diff,
         run: () => {
           void saveActive();
         },
@@ -3644,6 +4086,10 @@ export default function App() {
             ].join(" ")}
             title="Filter files"
             aria-label="Filter files"
+            // Keep the focused input from blurring on mousedown: its empty-query
+            // onBlur would clear the mode first, making this click's toggle
+            // reopen the panel it was meant to close.
+            onMouseDown={(event) => event.preventDefault()}
             onClick={() =>
               setActiveSidebarSearch((current) => (current === "filter" ? undefined : "filter"))
             }
@@ -3657,12 +4103,29 @@ export default function App() {
             ].join(" ")}
             title="Search contents"
             aria-label="Search contents"
+            // Same blur-race guard as the filter toggle above.
+            onMouseDown={(event) => event.preventDefault()}
             onClick={() =>
               setActiveSidebarSearch((current) => (current === "content" ? undefined : "content"))
             }
           >
             <Search size={16} />
           </button>
+          {gitCommitEnabled ? (
+            <button
+              className={[
+                "icon-button",
+                commitModeActive ? "icon-button--active" : "",
+              ].join(" ")}
+              title="Commit changes"
+              aria-label="Commit changes"
+              onClick={() =>
+                setActiveSidebarSearch((current) => (current === "commit" ? undefined : "commit"))
+              }
+            >
+              <GitCommitHorizontal size={16} />
+            </button>
+          ) : null}
         </div>
 
         {filterVisible ? (
@@ -3759,7 +4222,123 @@ export default function App() {
           </div>
         ) : null}
 
-        {!contentSearchActive ? (
+        {commitModeActive ? (
+          <div className="commit-panel" aria-label="Git commit panel">
+            {gitStatusError || gitStatus?.status === "unsupported" ? (
+              <div className="commit-panel__state" role="status">
+                <GitBranch size={22} />
+                <span>{gitStatusError ?? gitStatus?.unsupportedReason}</span>
+              </div>
+            ) : !gitStatus ? (
+              <div className="commit-panel__state" role="status">
+                <Loader size={22} />
+                <span>Loading Git status…</span>
+              </div>
+            ) : changedFilePaths.length === 0 ? (
+              <div className="commit-panel__state" role="status">
+                <Check size={22} />
+                <span>No changes</span>
+              </div>
+            ) : (
+              <>
+                <div className="commit-panel__header">
+                  <TriStateCheckbox
+                    state={
+                      gitCommitSelectedPaths.size === 0
+                        ? "none"
+                        : allChangedFilesSelected
+                          ? "all"
+                          : "some"
+                    }
+                    onToggle={
+                      allChangedFilesSelected ? deselectAllChangedFiles : selectAllChangedFiles
+                    }
+                    ariaLabel={allChangedFilesSelected ? "Deselect all changes" : "Select all changes"}
+                  />
+                  <span className="commit-panel__title">Changes</span>
+                  <span className="commit-panel__count">
+                    {gitCommitSelectedPaths.size} / {changedFilePaths.length}
+                  </span>
+                </div>
+                <div className="commit-panel__tree" role="tree" aria-label="Changed files">
+                  {changedFilesTree.map((node) => (
+                    <TreeItem
+                      key={node.path}
+                      expandedFolders={expandedFolders}
+                      forceExpanded={false}
+                      node={node}
+                      selectedPath={selectedPath}
+                      onOpen={(entry) => void openDiffTab(entry.path)}
+                      onSelect={setSelectedPath}
+                      onToggleFolder={toggleFolder}
+                      fileStatusByPath={fileStatusByPath}
+                      changedFolderPaths={changedFolderPaths}
+                      selection={{
+                        selectedPaths: gitCommitSelectedPaths,
+                        onToggleFile: toggleGitCommitSelection,
+                        onSetFolderSelected: setGitCommitPathsSelected,
+                      }}
+                    />
+                  ))}
+                </div>
+                <div className="commit-panel__footer">
+                  <div
+                    className="commit-message-resizer"
+                    role="separator"
+                    tabIndex={0}
+                    aria-label="Resize commit message"
+                    aria-orientation="horizontal"
+                    aria-valuemin={minCommitMessageHeight}
+                    aria-valuemax={maxCommitMessageHeight}
+                    aria-valuenow={commitMessageHeight}
+                    onKeyDown={handleCommitMessageResizeKeyDown}
+                    onPointerDown={beginCommitMessageResize}
+                  />
+                  <textarea
+                    className="commit-panel__message"
+                    style={{ height: commitMessageHeight }}
+                    placeholder="Commit message"
+                    value={gitCommitMessage}
+                    onChange={(event) => setGitCommitMessage(event.target.value)}
+                    onKeyDown={(event) => {
+                      if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+                        event.preventDefault();
+                        void handleGitCommit();
+                      }
+                    }}
+                  />
+                  <button
+                    className="command-button command-button--primary commit-panel__commit"
+                    disabled={
+                      !gitCommitMessage.trim() ||
+                      gitCommitSelectedPaths.size === 0 ||
+                      gitCommitInFlight
+                    }
+                    onClick={handleGitCommit}
+                  >
+                    {gitCommitInFlight
+                      ? "Committing…"
+                      : gitCommitSelectedPaths.size > 0
+                        ? `Commit ${gitCommitSelectedPaths.size} file${gitCommitSelectedPaths.size === 1 ? "" : "s"}`
+                        : "Commit"}
+                  </button>
+                  {gitCommitError ? (
+                    <div className="commit-panel__notice commit-panel__notice--error" role="alert">
+                      {gitCommitError}
+                    </div>
+                  ) : null}
+                  {gitCommitSuccess ? (
+                    <div className="commit-panel__notice commit-panel__notice--success" role="status">
+                      {gitCommitSuccess}
+                    </div>
+                  ) : null}
+                </div>
+              </>
+            )}
+          </div>
+        ) : null}
+
+        {!contentSearchActive && !commitModeActive ? (
           <nav className="file-tree" role="tree" aria-label="Workspace files">
             {workspaceLoading && files.length === 0 ? (
               <div className="tree-empty" role="status">Loading workspace</div>
@@ -3785,6 +4364,8 @@ export default function App() {
                   onOpen={openPath}
                   onSelect={setSelectedPath}
                   onToggleFolder={toggleFolder}
+                  fileStatusByPath={fileStatusByPath}
+                  changedFolderPaths={changedFolderPaths}
                 />
               ))
             )}
@@ -3873,6 +4454,7 @@ export default function App() {
                     "tab",
                     file.path === activePath ? "tab--active" : "",
                     file.pinned ? "" : "tab--temp",
+                    file.diff ? "tab--diff" : "",
                   ].join(" ")}
                   key={file.path}
                   onClick={() => {
@@ -3891,9 +4473,9 @@ export default function App() {
                     )
                   }
                 >
-                  <FileCog size={15} />
-                  <span>{file.path}</span>
-                  {file.dirty ? <Circle className="dirty-dot" size={8} /> : null}
+                  {file.diff ? <GitCompareArrows size={15} /> : <FileCog size={15} />}
+                  <span>{file.diff ? `${file.diff.filePath} (Working Tree)` : file.path}</span>
+                  {!file.diff && file.dirty ? <Circle className="dirty-dot" size={8} /> : null}
                   <span
                     className="tab__close"
                     role="button"
@@ -4043,7 +4625,7 @@ export default function App() {
         </header>
 
         <div className={editorRegionClass()}>
-          {activeFile && currentFileQuery.trim() ? (
+          {activeFile && !activeFile.diff && currentFileQuery.trim() ? (
             <div className="current-find-results" aria-label="Current file search results">
               <div className="current-find-results__header">
                 <span>Find in {activeFile.path}</span>
@@ -4072,7 +4654,22 @@ export default function App() {
               ) : null}
             </div>
           ) : null}
-          {activeFile ? (
+          {activeFile?.diff ? (
+            <Suspense fallback={<div className="empty-state editor-loading-state">Loading diff</div>}>
+              <DiffPane
+                key={activeFile.path}
+                filePath={activeFile.diff.filePath}
+                original={activeFile.diff.original}
+                modified={activeFile.diff.modified}
+                isBinary={activeFile.diff.isBinary}
+                isTooLarge={activeFile.diff.isTooLarge}
+                prefersDark={prefersDark}
+                viewMode={diffViewMode}
+                onViewModeChange={setDiffViewMode}
+                commitModeActive={commitModeActive}
+              />
+            </Suspense>
+          ) : activeFile ? (
             <Suspense fallback={<div className="empty-state editor-loading-state">Loading editor</div>}>
               <EditorPane
                 contents={activeFile.contents}
@@ -4118,7 +4715,11 @@ export default function App() {
 
         <footer className="statusbar">
           <span className="statusbar__state">{status}</span>
-          <span className="statusbar__path">{activePath ?? workspaceRoot}</span>
+          <span className="statusbar__path">
+            {activeFile?.diff
+              ? `${activeFile.diff.filePath} (Working Tree)`
+              : activePath ?? workspaceRoot}
+          </span>
           {activeGitFileCommit ? (
             <button
               className="statusbar__git-attribution"
@@ -5510,6 +6111,12 @@ export default function App() {
   );
 }
 
+interface TreeItemSelection {
+  selectedPaths: Set<string>;
+  onToggleFile: (path: string) => void;
+  onSetFolderSelected: (paths: string[], selected: boolean) => void;
+}
+
 function TreeItem({
   expandedFolders,
   forceExpanded,
@@ -5518,6 +6125,9 @@ function TreeItem({
   onOpen,
   onSelect,
   onToggleFolder,
+  fileStatusByPath,
+  changedFolderPaths,
+  selection,
 }: {
   expandedFolders: Set<string>;
   forceExpanded: boolean;
@@ -5526,10 +6136,35 @@ function TreeItem({
   onOpen: (entry: FileEntry, pinned?: boolean) => void;
   onSelect: (path: string) => void;
   onToggleFolder: (path: string) => void;
+  // Git status overlay (Part 2) — present in both normal browsing and commit
+  // mode. `undefined` (not empty) when there's nothing to show, so the row
+  // renders exactly as it does today with the flag off.
+  fileStatusByPath?: Map<string, GitStatusEntry["status"]>;
+  changedFolderPaths?: Set<string>;
+  // Presence alone means "commit/selection mode" — adds the leading checkbox
+  // column and is the only thing that changes between browsing and committing;
+  // expand/collapse, and everything else, stays identical in both.
+  selection?: TreeItemSelection;
 }) {
   const expanded = forceExpanded || expandedFolders.has(node.path);
   const Icon = iconForFile(node.name, node.isDir);
   const isActive = selectedPath === node.path;
+  const fileStatus = !node.isDir ? fileStatusByPath?.get(node.path) : undefined;
+  const isDeleted = fileStatus === "deleted";
+  const hasChangedDescendant = node.isDir && Boolean(changedFolderPaths?.has(node.path));
+  // Depends on `node` and a plain boolean, not the `selection` object itself —
+  // `selection.selectedPaths` gets a new identity on every checkbox toggle,
+  // and a node's leaf set never changes just because the selection did, so
+  // keying on `selection` would recompute (and re-walk the whole subtree)
+  // on every toggle instead of only when the tree itself changes.
+  const hasSelection = Boolean(selection);
+  const leafPaths = useMemo(
+    () => (node.isDir && hasSelection ? collectTreeLeafPaths(node) : undefined),
+    [node, hasSelection],
+  );
+  const folderSelectionState =
+    leafPaths && selection ? treeSelectionState(leafPaths, selection.selectedPaths) : undefined;
+  const showTrailing = node.isSymlink || Boolean(fileStatus) || hasChangedDescendant;
   const handleKeyDown = (event: ReactKeyboardEvent<HTMLButtonElement>) => {
     const activatesRow =
       event.key === "Enter" || event.key === " " || event.key === "Spacebar";
@@ -5567,56 +6202,97 @@ function TreeItem({
 
   return (
     <div>
-      <button
-        className={`tree-row ${isActive ? "tree-row--active" : ""}`}
-        role="treeitem"
-        aria-expanded={node.isDir ? expanded : undefined}
-        aria-level={node.depth + 1}
-        aria-selected={isActive}
-        style={{ paddingLeft: 8 + node.depth * 14 }}
-        onClick={() => {
-          onSelect(node.path);
-          if (node.isDir) {
-            onToggleFolder(node.path);
-          } else {
-            onOpen(node, false);
-          }
-        }}
-        onDoubleClick={() => {
-          if (!node.isDir) {
-            onOpen(node, true);
-          }
-        }}
-        onKeyDown={handleKeyDown}
-      >
-        {node.isDir ? (
-          <ChevronRight
-            className={expanded ? "chevron chevron--open" : "chevron"}
-            size={14}
-          />
-        ) : (
-          <span className="tree-row__spacer" />
-        )}
-        <Icon size={15} />
-        <span className="tree-row__name">{node.name}</span>
-        {node.isSymlink ? (
-          node.isExternal ? (
-            <ExternalLink
-              className="tree-row__symlink tree-row__symlink--external"
-              size={12}
-              aria-label="External symbolic link"
-              data-testid="tree-symlink-external"
+      <div className="tree-row-line" style={{ paddingLeft: 8 + node.depth * 14 }}>
+        {selection ? (
+          node.isDir ? (
+            <TriStateCheckbox
+              state={folderSelectionState ?? "none"}
+              onToggle={() =>
+                selection.onSetFolderSelected(leafPaths ?? [], folderSelectionState !== "all")
+              }
+              ariaLabel={`${folderSelectionState === "all" ? "Deselect" : "Select"} folder ${node.path}`}
             />
           ) : (
-            <Link2
-              className="tree-row__symlink"
-              size={12}
-              aria-label="Symbolic link"
-              data-testid="tree-symlink"
+            <input
+              type="checkbox"
+              className="tree-row__check"
+              checked={selection.selectedPaths.has(node.path)}
+              onChange={() => selection.onToggleFile(node.path)}
+              aria-label={`${selection.selectedPaths.has(node.path) ? "Deselect" : "Select"} ${node.path}`}
             />
           )
         ) : null}
-      </button>
+        <button
+          className={[
+            "tree-row",
+            isActive ? "tree-row--active" : "",
+            isDeleted ? "tree-row--deleted" : "",
+          ]
+            .filter(Boolean)
+            .join(" ")}
+          role="treeitem"
+          aria-expanded={node.isDir ? expanded : undefined}
+          aria-level={node.depth + 1}
+          aria-selected={isActive}
+          onClick={() => {
+            onSelect(node.path);
+            if (node.isDir) {
+              onToggleFolder(node.path);
+            } else {
+              onOpen(node, false);
+            }
+          }}
+          onDoubleClick={() => {
+            if (!node.isDir) {
+              onOpen(node, true);
+            }
+          }}
+          onKeyDown={handleKeyDown}
+        >
+          {node.isDir ? (
+            <ChevronRight
+              className={expanded ? "chevron chevron--open" : "chevron"}
+              size={14}
+            />
+          ) : (
+            <span className="tree-row__spacer" />
+          )}
+          <Icon className="tree-row__icon" size={15} />
+          <span className="tree-row__name">{node.name}</span>
+          {showTrailing ? (
+            <span className="tree-row__trailing">
+              {node.isSymlink ? (
+                node.isExternal ? (
+                  <ExternalLink
+                    className="tree-row__symlink tree-row__symlink--external"
+                    size={12}
+                    aria-label="External symbolic link"
+                    data-testid="tree-symlink-external"
+                  />
+                ) : (
+                  <Link2
+                    className="tree-row__symlink"
+                    size={12}
+                    aria-label="Symbolic link"
+                    data-testid="tree-symlink"
+                  />
+                )
+              ) : null}
+              {fileStatus ? (
+                <span
+                  className={`tree-row__status tree-row__status--${fileStatus}`}
+                  aria-hidden="true"
+                >
+                  {gitFileStatusLabel(fileStatus)}
+                </span>
+              ) : null}
+              {hasChangedDescendant ? (
+                <span className="tree-row__status-dot" aria-hidden="true" />
+              ) : null}
+            </span>
+          ) : null}
+        </button>
+      </div>
       {node.isDir && expanded
         ? node.children.map((child) => (
             <TreeItem
@@ -5628,6 +6304,9 @@ function TreeItem({
               onOpen={onOpen}
               onSelect={onSelect}
               onToggleFolder={onToggleFolder}
+              fileStatusByPath={fileStatusByPath}
+              changedFolderPaths={changedFolderPaths}
+              selection={selection}
             />
           ))
         : null}
@@ -5656,6 +6335,98 @@ function buildTree(entries: FileEntry[]): TreeNode[] {
   };
   sortNodes(roots);
   return roots;
+}
+
+function gitFileStatusLabel(status: GitStatusEntry["status"]): string {
+  if (status === "added") return "A";
+  if (status === "deleted") return "D";
+  return "M";
+}
+
+// All file (leaf) paths beneath a node — folders drive selection of their
+// descendants via these, since a folder itself is never in the selected set.
+function collectTreeLeafPaths(node: TreeNode): string[] {
+  return node.isDir ? node.children.flatMap(collectTreeLeafPaths) : [node.path];
+}
+
+type TreeSelectionState = "none" | "some" | "all";
+
+function treeSelectionState(paths: string[], selected: Set<string>): TreeSelectionState {
+  let selectedCount = 0;
+  for (const path of paths) {
+    if (selected.has(path)) selectedCount += 1;
+  }
+  if (selectedCount === 0) return "none";
+  return selectedCount === paths.length ? "all" : "some";
+}
+
+// `indeterminate` is a DOM-only property React can't set from JSX, so it's
+// applied imperatively whenever the tri-state changes.
+function TriStateCheckbox({
+  state,
+  onToggle,
+  ariaLabel,
+}: {
+  state: TreeSelectionState;
+  onToggle: () => void;
+  ariaLabel: string;
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (inputRef.current) inputRef.current.indeterminate = state === "some";
+  }, [state]);
+  return (
+    <input
+      ref={inputRef}
+      type="checkbox"
+      className="tree-row__check"
+      checked={state === "all"}
+      aria-checked={state === "some" ? "mixed" : state === "all"}
+      onChange={onToggle}
+      aria-label={ariaLabel}
+    />
+  );
+}
+
+// Builds stub FileEntry rows for changed paths the workspace scan doesn't
+// have — always true for deletions (the file is gone from disk), and
+// possible for anything else too (a lazily-loaded folder that hasn't been
+// scanned yet, a file created outside the IDE since the last scan). Covering
+// every status, not just deleted, keeps a changed file from silently
+// vanishing from the commit-mode tree just because the scan hasn't caught up.
+function syntheticMissingFileEntries(
+  changedFiles: GitStatusEntry[],
+  existingPaths: Set<string>,
+): FileEntry[] {
+  return changedFiles
+    .filter((file) => !existingPaths.has(file.path))
+    .map((file) => {
+      const segments = file.path.split("/");
+      const parent = segments.length > 1 ? segments.slice(0, -1).join("/") : undefined;
+      return {
+        path: file.path,
+        name: segments[segments.length - 1],
+        parent,
+        isDir: false,
+        depth: segments.length - 1,
+        size: 0,
+      };
+    });
+}
+
+// Prunes a tree down to the file nodes whose path is in `paths`, plus their
+// ancestor folders — the commit panel's "changed files + the folders that
+// contain them" view over the exact same tree the workspace browser renders.
+function filterTreeToPaths(nodes: TreeNode[], paths: Set<string>): TreeNode[] {
+  return nodes
+    .map((node) => {
+      const children = filterTreeToPaths(node.children, paths);
+      if ((!node.isDir && paths.has(node.path)) || children.length > 0) {
+        return { ...node, children };
+      }
+      return undefined;
+    })
+    .filter((node): node is TreeNode => Boolean(node));
 }
 
 function mergeFileEntries(current: FileEntry[], nextEntries: FileEntry[]) {

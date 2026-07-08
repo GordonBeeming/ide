@@ -9,12 +9,14 @@ import {
 
 describe("feature flags", () => {
   it("falls back to the registry default when there is no override", () => {
-    expect(resolveFeatureFlags({})).toEqual({ gitAttribution: false });
+    expect(resolveFeatureFlags({})).toEqual({ gitAttribution: false, gitCommit: true });
     expect(isFeatureEnabled("gitAttribution", {})).toBe(false);
+    expect(isFeatureEnabled("gitCommit", {})).toBe(true);
   });
 
   it("lets a user override win over the default", () => {
     expect(isFeatureEnabled("gitAttribution", { gitAttribution: true })).toBe(true);
+    expect(isFeatureEnabled("gitCommit", { gitCommit: false })).toBe(false);
   });
 
   it("ignores unknown flag ids", () => {
@@ -48,6 +50,7 @@ describe("feature flags", () => {
 
     expect(preview.every((flag) => flag.visibility === "preview")).toBe(true);
     expect(preview.map((flag) => flag.id)).toContain("gitAttribution");
+    expect(preview.map((flag) => flag.id)).toContain("gitCommit");
   });
 
   it("keeps the registry self-consistent (id matches key)", () => {

@@ -128,6 +128,41 @@ export interface GitAttribution {
   uncommittedLines?: number[];
 }
 
+export type GitStatusAvailability = "available" | "unsupported";
+
+export type GitFileStatus = "added" | "modified" | "deleted";
+
+export interface GitStatusEntry {
+  path: string;
+  status: GitFileStatus;
+  staged: boolean;
+  unstaged: boolean;
+}
+
+export interface GitStatus {
+  status: GitStatusAvailability;
+  unsupportedReason?: string;
+  branch?: string;
+  headDetached: boolean;
+  headUnborn: boolean;
+  files: GitStatusEntry[];
+}
+
+export interface GitCommitResult {
+  sha: string;
+  shortSha: string;
+  branch?: string;
+  committedPaths: string[];
+}
+
+export interface GitFileDiff {
+  original: string;
+  modified: string;
+  status: GitFileStatus;
+  isBinary: boolean;
+  isTooLarge: boolean;
+}
+
 export interface OpenFileRequest {
   workspaceRoot: string;
   path: string;
@@ -145,6 +180,14 @@ export type OpenLaunchRequest =
       path: string;
       singleFile: boolean;
     };
+
+export type DiffViewMode = "inline" | "sideBySide";
+
+export const defaultDiffViewMode: DiffViewMode = "inline";
+
+export function sanitizeDiffViewMode(value: unknown): DiffViewMode {
+  return value === "inline" || value === "sideBySide" ? value : defaultDiffViewMode;
+}
 
 export interface PersistedViewSettings {
   showDotfiles: boolean;
@@ -166,6 +209,7 @@ export interface PersistedViewSettings {
   appZoomPercent?: number;
   dateTimeFormat?: DateTimeFormatId;
   recentRelativeThreshold?: RecentRelativeThresholdId;
+  diffViewMode?: DiffViewMode;
   // Persisted feature-flag overrides only; defaults live in src/featureFlags.ts.
   featureFlags?: Record<string, boolean>;
 }
@@ -176,6 +220,7 @@ export interface WorkspaceUiState {
   activeFile?: string;
   selectedPath?: string;
   sidebarWidth?: number;
+  commitMessageHeight?: number;
   trustExternalSymlinks?: boolean;
 }
 
@@ -234,6 +279,7 @@ const defaultUiSnapshot: PersistedUiSnapshot = {
     appZoomPercent: 100,
     dateTimeFormat: defaultDateTimeFormat,
     recentRelativeThreshold: defaultRecentRelativeThreshold,
+    diffViewMode: defaultDiffViewMode,
     featureFlags: {},
   },
   workspace: {
@@ -540,6 +586,145 @@ export function writeFile(
     body: { path, contents, expectedModifiedMs },
     invokeArgs: { path, contents, expectedModifiedMs, allowExternalSymlinks },
   });
+}
+
+export function getGitStatus() {
+  return callApi<unknown>("get_git_status", "/api/git-status").then((value) => {
+    const normalized = normalizeGitStatus(value);
+    if (!normalized) {
+      throw new Error("Git status response had an unexpected shape");
+    }
+    return normalized;
+  });
+}
+
+export function commitGitChanges(message: string, paths: string[]) {
+  return callApi<unknown>("git_commit", "/api/git-commit", {
+    method: "POST",
+    body: { message, paths },
+    invokeArgs: { message, paths },
+  }).then((value) => {
+    const normalized = normalizeGitCommitResult(value);
+    if (!normalized) {
+      throw new Error("Git commit response had an unexpected shape");
+    }
+    return normalized;
+  });
+}
+
+export function loadGitFileDiff(path: string, maxOpenBytes?: number) {
+  const params = new URLSearchParams({ path });
+  if (maxOpenBytes !== undefined) {
+    params.set("maxOpenBytes", String(maxOpenBytes));
+  }
+  return callApi<unknown>("git_file_diff", `/api/git-file-diff?${params.toString()}`, {
+    method: "GET",
+    invokeArgs: {
+      path,
+      ...(maxOpenBytes === undefined ? {} : { maxOpenBytes }),
+    },
+  }).then((value) => {
+    const normalized = normalizeGitFileDiff(value);
+    if (!normalized) {
+      throw new Error("Git file diff response had an unexpected shape");
+    }
+    return normalized;
+  });
+}
+
+export function normalizeGitStatus(value: unknown): GitStatus | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const candidate = value as Record<string, unknown>;
+  if (candidate.status !== "available" && candidate.status !== "unsupported") {
+    return undefined;
+  }
+  if (
+    typeof candidate.headDetached !== "boolean" ||
+    typeof candidate.headUnborn !== "boolean" ||
+    !Array.isArray(candidate.files)
+  ) {
+    return undefined;
+  }
+
+  const files = candidate.files
+    .map(normalizeGitStatusEntry)
+    .filter((entry): entry is GitStatusEntry => Boolean(entry));
+  if (files.length !== candidate.files.length) return undefined;
+
+  return {
+    status: candidate.status,
+    unsupportedReason:
+      typeof candidate.unsupportedReason === "string"
+        ? candidate.unsupportedReason
+        : undefined,
+    branch: typeof candidate.branch === "string" ? candidate.branch : undefined,
+    headDetached: candidate.headDetached,
+    headUnborn: candidate.headUnborn,
+    files,
+  };
+}
+
+function isGitFileStatus(value: unknown): value is GitFileStatus {
+  return value === "added" || value === "modified" || value === "deleted";
+}
+
+function normalizeGitStatusEntry(value: unknown): GitStatusEntry | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const candidate = value as Record<string, unknown>;
+  if (
+    typeof candidate.path !== "string" ||
+    !isGitFileStatus(candidate.status) ||
+    typeof candidate.staged !== "boolean" ||
+    typeof candidate.unstaged !== "boolean"
+  ) {
+    return undefined;
+  }
+  return {
+    path: candidate.path,
+    status: candidate.status,
+    staged: candidate.staged,
+    unstaged: candidate.unstaged,
+  };
+}
+
+export function normalizeGitFileDiff(value: unknown): GitFileDiff | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const candidate = value as Record<string, unknown>;
+  if (
+    typeof candidate.original !== "string" ||
+    typeof candidate.modified !== "string" ||
+    !isGitFileStatus(candidate.status) ||
+    typeof candidate.isBinary !== "boolean" ||
+    typeof candidate.isTooLarge !== "boolean"
+  ) {
+    return undefined;
+  }
+  return {
+    original: candidate.original,
+    modified: candidate.modified,
+    status: candidate.status,
+    isBinary: candidate.isBinary,
+    isTooLarge: candidate.isTooLarge,
+  };
+}
+
+export function normalizeGitCommitResult(value: unknown): GitCommitResult | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const candidate = value as Record<string, unknown>;
+  if (
+    typeof candidate.sha !== "string" ||
+    typeof candidate.shortSha !== "string" ||
+    !Array.isArray(candidate.committedPaths) ||
+    !candidate.committedPaths.every((path): path is string => typeof path === "string")
+  ) {
+    return undefined;
+  }
+  return {
+    sha: candidate.sha,
+    shortSha: candidate.shortSha,
+    branch: typeof candidate.branch === "string" ? candidate.branch : undefined,
+    committedPaths: candidate.committedPaths,
+  };
 }
 
 export function normalizeGitAttribution(value: unknown): GitAttribution | undefined {

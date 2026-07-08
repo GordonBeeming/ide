@@ -1,5 +1,6 @@
 mod claude_bridge;
 mod git_attribution;
+mod git_commit;
 mod http_server;
 mod lsp;
 mod workspace;
@@ -196,6 +197,8 @@ struct PersistedViewSettings {
     date_time_format: String,
     #[serde(default = "default_recent_relative_threshold")]
     recent_relative_threshold: String,
+    #[serde(default = "default_diff_view_mode")]
+    diff_view_mode: String,
     // Persisted feature-flag overrides only. Defaults and metadata live in the
     // frontend registry (src/featureFlags.ts); unknown/retired ids are pruned by
     // sanitize_view_settings so the settings file stays tidy as flags retire.
@@ -225,6 +228,7 @@ impl Default for PersistedViewSettings {
             app_zoom_percent: default_app_zoom_percent(),
             date_time_format: default_date_time_format(),
             recent_relative_threshold: default_recent_relative_threshold(),
+            diff_view_mode: default_diff_view_mode(),
             feature_flags: BTreeMap::new(),
         }
     }
@@ -233,7 +237,7 @@ impl Default for PersistedViewSettings {
 // Flag ids the app currently knows about. Persisted overrides for any id not in
 // this list are pruned on load, so retiring a flag is just removing it here (and
 // from the frontend registry). Keep in sync with src/featureFlags.ts.
-const KNOWN_FEATURE_FLAGS: &[&str] = &["gitAttribution"];
+const KNOWN_FEATURE_FLAGS: &[&str] = &["gitAttribution", "gitCommit"];
 
 fn default_show_gitignored_files() -> bool {
     false
@@ -275,6 +279,8 @@ const MIN_APP_ZOOM_PERCENT: usize = 10;
 const DEFAULT_APP_ZOOM_PERCENT: usize = 100;
 const MIN_SIDEBAR_WIDTH: usize = 180;
 const MAX_SIDEBAR_WIDTH: usize = 1040;
+const MIN_COMMIT_MESSAGE_HEIGHT: usize = 56;
+const MAX_COMMIT_MESSAGE_HEIGHT: usize = 600;
 const CODEX_MCP_TOKEN_FILE: &str = "codex-mcp-token";
 const DEFAULT_DATE_TIME_FORMAT: &str = "localMedium";
 const DEFAULT_RECENT_RELATIVE_THRESHOLD: &str = "oneWeek";
@@ -292,6 +298,8 @@ const KNOWN_DATE_TIME_FORMATS: &[&str] = &[
 const KNOWN_RECENT_RELATIVE_THRESHOLDS: &[&str] = &[
     "never", "oneDay", "twoDays", "oneWeek", "twoWeeks", "oneMonth",
 ];
+const DEFAULT_DIFF_VIEW_MODE: &str = "inline";
+const KNOWN_DIFF_VIEW_MODES: &[&str] = &["inline", "sideBySide"];
 
 fn default_tree_scan_limit() -> usize {
     DEFAULT_TREE_SCAN_LIMIT
@@ -353,6 +361,10 @@ fn default_recent_relative_threshold() -> String {
     DEFAULT_RECENT_RELATIVE_THRESHOLD.to_string()
 }
 
+fn default_diff_view_mode() -> String {
+    DEFAULT_DIFF_VIEW_MODE.to_string()
+}
+
 fn sanitize_view_settings(mut settings: PersistedViewSettings) -> PersistedViewSettings {
     settings.tree_scan_limit = settings
         .tree_scan_limit
@@ -398,6 +410,9 @@ fn sanitize_view_settings(mut settings: PersistedViewSettings) -> PersistedViewS
     if !KNOWN_RECENT_RELATIVE_THRESHOLDS.contains(&settings.recent_relative_threshold.as_str()) {
         settings.recent_relative_threshold = default_recent_relative_threshold();
     }
+    if !KNOWN_DIFF_VIEW_MODES.contains(&settings.diff_view_mode.as_str()) {
+        settings.diff_view_mode = default_diff_view_mode();
+    }
     settings
         .feature_flags
         .retain(|id, _| KNOWN_FEATURE_FLAGS.contains(&id.as_str()));
@@ -418,6 +433,8 @@ struct PersistedWorkspaceUiState {
     selected_path: Option<String>,
     #[serde(default)]
     sidebar_width: Option<usize>,
+    #[serde(default)]
+    commit_message_height: Option<usize>,
     // "Trust for workspace" decision for following symlinks whose target escapes
     // the workspace root; persisted so it survives restart.
     #[serde(default)]
@@ -433,6 +450,8 @@ struct WorkspaceUiStatePayload {
     active_file: Option<String>,
     selected_path: Option<String>,
     sidebar_width: Option<usize>,
+    #[serde(default)]
+    commit_message_height: Option<usize>,
     #[serde(default)]
     trust_external_symlinks: bool,
 }
@@ -497,6 +516,10 @@ enum CommandError {
     WorkspaceIndex(#[from] workspace_index::WorkspaceIndexError),
     #[error("workspace index failed: {0}")]
     WorkspaceIndexAdvance(#[from] workspace_index::WorkspaceIndexAdvanceError),
+    #[error("{0}")]
+    GitCommit(#[from] git_commit::GitCommitError),
+    #[error("{0}")]
+    GitFileDiff(#[from] git_commit::GitFileDiffError),
 }
 
 impl serde::Serialize for CommandError {
@@ -844,18 +867,7 @@ async fn read_file(
     allow_external_symlinks: Option<bool>,
 ) -> Result<String, CommandError> {
     let workspace_root = workspace_root_for_window(&state, &window).await;
-    let max_open_bytes = max_open_bytes
-        .unwrap_or_else(|| {
-            state
-                .max_open_file_bytes
-                .read()
-                .map(|limit| *limit)
-                .unwrap_or_else(|_| default_max_open_file_kb().saturating_mul(1024))
-        })
-        .clamp(
-            MIN_MAX_OPEN_FILE_KB.saturating_mul(1024),
-            MAX_MAX_OPEN_FILE_KB.saturating_mul(1024),
-        );
+    let max_open_bytes = resolve_max_open_file_bytes(&state, max_open_bytes);
     read_workspace_file(
         &workspace_root,
         &path,
@@ -883,6 +895,60 @@ async fn get_git_attribution(
 ) -> Result<git_attribution::GitAttribution, CommandError> {
     let workspace_root = workspace_root_for_window(&state, &window).await;
     Ok(git_attribution::attribution_for_file(&workspace_root, &path).await)
+}
+
+#[tauri::command]
+async fn get_git_status(
+    window: tauri::Window,
+    state: State<'_, AppState>,
+) -> Result<git_commit::GitStatus, CommandError> {
+    let workspace_root = workspace_root_for_window(&state, &window).await;
+    Ok(git_commit::status_for_workspace(&workspace_root).await)
+}
+
+#[tauri::command]
+async fn git_commit(
+    window: tauri::Window,
+    state: State<'_, AppState>,
+    message: String,
+    paths: Vec<String>,
+) -> Result<git_commit::GitCommitResult, CommandError> {
+    let workspace_root = workspace_root_for_window(&state, &window).await;
+    git_commit::commit_files(&workspace_root, &message, &paths)
+        .await
+        .map_err(CommandError::from)
+}
+
+#[tauri::command]
+async fn git_file_diff(
+    window: tauri::Window,
+    state: State<'_, AppState>,
+    path: String,
+    max_open_bytes: Option<u64>,
+) -> Result<git_commit::GitFileDiff, CommandError> {
+    let workspace_root = workspace_root_for_window(&state, &window).await;
+    let max_open_bytes = resolve_max_open_file_bytes(&state, max_open_bytes);
+    git_commit::file_diff(&workspace_root, &path, max_open_bytes)
+        .await
+        .map_err(CommandError::from)
+}
+
+// Shared by `read_file` and `git_file_diff` — the frontend passes its
+// `maxOpenFileKb` setting explicitly; absent that, fall back to the app's
+// configured default and clamp to the same bounds either way.
+fn resolve_max_open_file_bytes(state: &AppState, max_open_bytes: Option<u64>) -> u64 {
+    max_open_bytes
+        .unwrap_or_else(|| {
+            state
+                .max_open_file_bytes
+                .read()
+                .map(|limit| *limit)
+                .unwrap_or_else(|_| default_max_open_file_kb().saturating_mul(1024))
+        })
+        .clamp(
+            MIN_MAX_OPEN_FILE_KB.saturating_mul(1024),
+            MAX_MAX_OPEN_FILE_KB.saturating_mul(1024),
+        )
 }
 
 #[tauri::command]
@@ -1212,6 +1278,7 @@ async fn update_ui_state(
         active_file: workspace.active_file.take(),
         selected_path: workspace.selected_path.take(),
         sidebar_width: workspace.sidebar_width,
+        commit_message_height: workspace.commit_message_height,
         trust_external_symlinks: workspace.trust_external_symlinks,
         updated_at: now_ms(),
     };
@@ -1858,6 +1925,9 @@ pub fn run() {
             read_file,
             stat_file,
             get_git_attribution,
+            get_git_status,
+            git_commit,
+            git_file_diff,
             write_file,
             create_file,
             create_folder,
@@ -2348,6 +2418,7 @@ fn workspace_ui_snapshot_for_root(
             active_file: workspace.active_file.clone(),
             selected_path: workspace.selected_path.clone(),
             sidebar_width: workspace.sidebar_width,
+            commit_message_height: workspace.commit_message_height,
             trust_external_symlinks: workspace.trust_external_symlinks,
         })
         .unwrap_or_default();
@@ -2380,6 +2451,9 @@ fn sanitize_workspace_ui_state(state: WorkspaceUiStatePayload) -> WorkspaceUiSta
     let sidebar_width = state
         .sidebar_width
         .map(|width| width.clamp(MIN_SIDEBAR_WIDTH, MAX_SIDEBAR_WIDTH));
+    let commit_message_height = state
+        .commit_message_height
+        .map(|height| height.clamp(MIN_COMMIT_MESSAGE_HEIGHT, MAX_COMMIT_MESSAGE_HEIGHT));
 
     WorkspaceUiStatePayload {
         expanded_folders,
@@ -2387,6 +2461,7 @@ fn sanitize_workspace_ui_state(state: WorkspaceUiStatePayload) -> WorkspaceUiSta
         active_file,
         selected_path,
         sidebar_width,
+        commit_message_height,
         trust_external_symlinks: state.trust_external_symlinks,
     }
 }
@@ -3228,6 +3303,7 @@ mod tests {
                     active_file: None,
                     selected_path: None,
                     sidebar_width: None,
+                    commit_message_height: None,
                     trust_external_symlinks: false,
                     updated_at: 1,
                 },
@@ -3238,6 +3314,7 @@ mod tests {
                     active_file: None,
                     selected_path: None,
                     sidebar_width: None,
+                    commit_message_height: None,
                     trust_external_symlinks: false,
                     updated_at: 2,
                 },
@@ -3327,6 +3404,7 @@ mod tests {
             active_file: Some("src/App.tsx".to_string()),
             selected_path: Some("/tmp".to_string()),
             sidebar_width: Some(9_999),
+            commit_message_height: Some(9_999),
             trust_external_symlinks: false,
         });
 
@@ -3338,6 +3416,10 @@ mod tests {
         assert_eq!(workspace.active_file, Some("src/App.tsx".to_string()));
         assert_eq!(workspace.selected_path, None);
         assert_eq!(workspace.sidebar_width, Some(MAX_SIDEBAR_WIDTH));
+        assert_eq!(
+            workspace.commit_message_height,
+            Some(MAX_COMMIT_MESSAGE_HEIGHT)
+        );
 
         *state.ui_state.write().unwrap() = AppUiState {
             view: PersistedViewSettings {
@@ -3360,6 +3442,7 @@ mod tests {
                 app_zoom_percent: 350,
                 date_time_format: "yyyyMmDdHhMm".to_string(),
                 recent_relative_threshold: "twoDays".to_string(),
+                diff_view_mode: "sideBySide".to_string(),
                 feature_flags: BTreeMap::new(),
             },
             workspaces: vec![PersistedWorkspaceUiState {
@@ -3369,6 +3452,7 @@ mod tests {
                 active_file: workspace.active_file,
                 selected_path: workspace.selected_path,
                 sidebar_width: workspace.sidebar_width,
+                commit_message_height: workspace.commit_message_height,
                 trust_external_symlinks: workspace.trust_external_symlinks,
                 updated_at: 123,
             }],
@@ -3392,7 +3476,12 @@ mod tests {
         assert_eq!(loaded.view.app_zoom_percent, 350);
         assert_eq!(loaded.view.date_time_format, "yyyyMmDdHhMm");
         assert_eq!(loaded.view.recent_relative_threshold, "twoDays");
+        assert_eq!(loaded.view.diff_view_mode, "sideBySide");
         assert_eq!(loaded.workspaces.len(), 1);
+        assert_eq!(
+            loaded.workspaces[0].commit_message_height,
+            Some(MAX_COMMIT_MESSAGE_HEIGHT)
+        );
 
         *state.ui_state.write().unwrap() = loaded;
         let snapshot = workspace_ui_snapshot_for_root(&state, "/workspace").unwrap();
@@ -3404,6 +3493,27 @@ mod tests {
         assert_eq!(
             snapshot.workspace.active_file,
             Some("src/App.tsx".to_string())
+        );
+    }
+
+    #[test]
+    fn commit_message_height_clamps_in_both_directions() {
+        let too_tall = sanitize_workspace_ui_state(WorkspaceUiStatePayload {
+            commit_message_height: Some(9_999),
+            ..WorkspaceUiStatePayload::default()
+        });
+        assert_eq!(
+            too_tall.commit_message_height,
+            Some(MAX_COMMIT_MESSAGE_HEIGHT)
+        );
+
+        let too_short = sanitize_workspace_ui_state(WorkspaceUiStatePayload {
+            commit_message_height: Some(1),
+            ..WorkspaceUiStatePayload::default()
+        });
+        assert_eq!(
+            too_short.commit_message_height,
+            Some(MIN_COMMIT_MESSAGE_HEIGHT)
         );
     }
 
@@ -3445,7 +3555,7 @@ mod tests {
 
         std::fs::write(
             &ui_state_path,
-            r#"{"view":{"showDotfiles":false,"showGeneratedInternal":false,"dateTimeFormat":"relative","recentRelativeThreshold":"bogus","featureFlags":{"gitAttribution":false,"ghostFlag":true}},"workspaces":[]}"#,
+            r#"{"view":{"showDotfiles":false,"showGeneratedInternal":false,"dateTimeFormat":"relative","recentRelativeThreshold":"bogus","diffViewMode":"bogus","featureFlags":{"gitAttribution":false,"ghostFlag":true}},"workspaces":[]}"#,
         )
         .unwrap();
 
@@ -3456,6 +3566,7 @@ mod tests {
             loaded.view.recent_relative_threshold,
             DEFAULT_RECENT_RELATIVE_THRESHOLD
         );
+        assert_eq!(loaded.view.diff_view_mode, DEFAULT_DIFF_VIEW_MODE);
         assert_eq!(
             loaded.view.feature_flags.get("gitAttribution"),
             Some(&false)

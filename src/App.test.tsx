@@ -86,6 +86,9 @@ const tauriMocks = vi.hoisted(() => ({
   getClaudeBridgeStatus: vi.fn(),
   getCodexMcpStatus: vi.fn(),
   getGitAttribution: vi.fn(),
+  getGitStatus: vi.fn(),
+  commitGitChanges: vi.fn(),
+  loadGitFileDiff: vi.fn(),
 }));
 
 const appWindowMocks = vi.hoisted(() => ({
@@ -151,6 +154,9 @@ vi.mock("./tauri", async () => {
     getClaudeBridgeStatus: tauriMocks.getClaudeBridgeStatus,
     getCodexMcpStatus: tauriMocks.getCodexMcpStatus,
     getGitAttribution: tauriMocks.getGitAttribution,
+    getGitStatus: tauriMocks.getGitStatus,
+    commitGitChanges: tauriMocks.commitGitChanges,
+    loadGitFileDiff: tauriMocks.loadGitFileDiff,
   };
 });
 
@@ -220,6 +226,42 @@ vi.mock("./EditorPane", () => ({
         </span>
       ) : null}
       {revealLine ? <span>Reveal line {revealLine}</span> : null}
+    </div>
+  ),
+}));
+
+vi.mock("./DiffPane", () => ({
+  default: ({
+    filePath,
+    original,
+    modified,
+    isBinary,
+    isTooLarge,
+    viewMode,
+    onViewModeChange,
+  }: {
+    filePath: string;
+    original: string;
+    modified: string;
+    isBinary: boolean;
+    isTooLarge: boolean;
+    viewMode: "inline" | "sideBySide";
+    onViewModeChange: (mode: "inline" | "sideBySide") => void;
+  }) => (
+    <div aria-label={`Diff ${filePath}`}>
+      <span>view mode: {viewMode}</span>
+      <button onClick={() => onViewModeChange("inline")}>Inline diff</button>
+      <button onClick={() => onViewModeChange("sideBySide")}>Side-by-side diff</button>
+      {isBinary ? (
+        <span>Binary diff</span>
+      ) : isTooLarge ? (
+        <span>Diff too large</span>
+      ) : (
+        <>
+          <span>original: {original}</span>
+          <span>modified: {modified}</span>
+        </>
+      )}
     </div>
   ),
 }));
@@ -342,6 +384,29 @@ describe("App shell interactions", () => {
       status: "unsupported",
       unsupportedReason: "File is not tracked by Git",
       lines: [],
+    });
+    tauriMocks.getGitStatus.mockResolvedValue({
+      status: "available",
+      branch: "main",
+      headDetached: false,
+      headUnborn: false,
+      files: [
+        { path: "README.md", status: "modified", staged: false, unstaged: true },
+        { path: "src/App.tsx", status: "modified", staged: true, unstaged: false },
+      ],
+    });
+    tauriMocks.commitGitChanges.mockResolvedValue({
+      sha: "abc123456789",
+      shortSha: "abc1234",
+      branch: "main",
+      committedPaths: ["README.md"],
+    });
+    tauriMocks.loadGitFileDiff.mockResolvedValue({
+      original: "before\n",
+      modified: "after\n",
+      status: "modified",
+      isBinary: false,
+      isTooLarge: false,
     });
   });
 
@@ -1688,6 +1753,31 @@ describe("App shell interactions", () => {
     fireEvent.keyDown(window, { key: "Escape" });
 
     expect(screen.queryByRole("dialog", { name: "ide Test" })).not.toBeInTheDocument();
+  });
+
+  it("closes filter and search via their icons without the blur race reopening them", async () => {
+    render(<App />);
+    await treeButton("README.md");
+    // In a real browser, mousedown on the icon blurs the focused empty input,
+    // whose onBlur clears the mode before the click toggles — reopening the
+    // panel it was meant to close. The guard is preventDefault on the icons'
+    // mousedown, which keeps the input focused through the click so onBlur
+    // never pre-clears the mode. jsdom can't replay that race (it doesn't
+    // move focus on mousedown), and dispatching ANY synthetic mousedown here
+    // corrupts selection bookkeeping for later editor-selection tests — so
+    // this test pins the user-visible contract only: the icon click closes
+    // the focused panel and it stays closed.
+    for (const title of ["Filter files", "Search contents"]) {
+      fireEvent.click(screen.getByTitle(title));
+      const input = await screen.findByPlaceholderText(title);
+      expect(input).toHaveFocus();
+
+      fireEvent.click(screen.getByTitle(title));
+      await waitFor(() =>
+        expect(screen.queryByPlaceholderText(title)).not.toBeInTheDocument(),
+      );
+      expect(await treeButton("README.md")).toBeInTheDocument();
+    }
   });
 
   it("keeps search fields collapsed until the search controls are used", async () => {
@@ -3857,6 +3947,468 @@ describe("App shell interactions", () => {
 
     await screen.findByText("Error: permission denied");
     expect(screen.getByRole("alertdialog", { name: "Delete file?" })).toBeInTheDocument();
+  });
+});
+
+describe("Git commit sidebar", () => {
+  it("toggles the commit panel open and closed", async () => {
+    render(<App />);
+
+    expect(await treeButton("README.md")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Git commit panel")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByTitle("Commit changes"));
+    expect(await screen.findByLabelText("Git commit panel")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Workspace files")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByTitle("Commit changes"));
+    await waitFor(() =>
+      expect(screen.queryByLabelText("Git commit panel")).not.toBeInTheDocument(),
+    );
+    expect(await treeButton("README.md")).toBeInTheDocument();
+  });
+
+  it("selects all changed files by default and supports the master tri-state checkbox", async () => {
+    render(<App />);
+
+    expect(await treeButton("README.md")).toBeInTheDocument();
+    fireEvent.click(screen.getByTitle("Commit changes"));
+
+    const panel = await screen.findByLabelText("Git commit panel");
+    await waitFor(() => expect(within(panel).getByText("2 / 2")).toBeInTheDocument());
+    const checkboxes = within(panel).getAllByRole("checkbox") as HTMLInputElement[];
+    expect(checkboxes).toHaveLength(4); // master + folder(src) + 2 files
+    expect(checkboxes.every((checkbox) => checkbox.checked)).toBe(true);
+
+    fireEvent.click(within(panel).getByLabelText("Deselect all changes"));
+    await waitFor(() => expect(within(panel).getByText("0 / 2")).toBeInTheDocument());
+    expect(
+      (within(panel).getAllByRole("checkbox") as HTMLInputElement[]).every(
+        (checkbox) => !checkbox.checked,
+      ),
+    ).toBe(true);
+
+    fireEvent.click(within(panel).getByLabelText("Select all changes"));
+    await waitFor(() => expect(within(panel).getByText("2 / 2")).toBeInTheDocument());
+  });
+
+  it("disables the Commit button until a message and a selection both exist", async () => {
+    render(<App />);
+
+    expect(await treeButton("README.md")).toBeInTheDocument();
+    fireEvent.click(screen.getByTitle("Commit changes"));
+
+    const panel = await screen.findByLabelText("Git commit panel");
+    await waitFor(() => expect(within(panel).getByText("2 / 2")).toBeInTheDocument());
+    const commitButton = within(panel).getByRole("button", { name: /^Commit/ });
+    expect(commitButton).toBeDisabled();
+
+    fireEvent.change(within(panel).getByPlaceholderText("Commit message"), {
+      target: { value: "Update readme" },
+    });
+    expect(commitButton).not.toBeDisabled();
+
+    fireEvent.click(within(panel).getByLabelText("Deselect all changes"));
+    expect(commitButton).toBeDisabled();
+  });
+
+  it("commits only the selected paths and refreshes the status afterward", async () => {
+    render(<App />);
+
+    expect(await treeButton("README.md")).toBeInTheDocument();
+    fireEvent.click(screen.getByTitle("Commit changes"));
+
+    const panel = await screen.findByLabelText("Git commit panel");
+    await waitFor(() => expect(within(panel).getByText("2 / 2")).toBeInTheDocument());
+
+    fireEvent.click(within(panel).getByLabelText("Deselect src/App.tsx"));
+    await waitFor(() => expect(within(panel).getByText("1 / 2")).toBeInTheDocument());
+
+    fireEvent.change(within(panel).getByPlaceholderText("Commit message"), {
+      target: { value: "Update readme" },
+    });
+
+    tauriMocks.getGitStatus.mockResolvedValueOnce({
+      status: "available",
+      branch: "main",
+      headDetached: false,
+      headUnborn: false,
+      files: [{ path: "src/App.tsx", status: "modified", staged: false, unstaged: true }],
+    });
+
+    fireEvent.click(within(panel).getByRole("button", { name: /^Commit/ }));
+
+    await waitFor(() =>
+      expect(tauriMocks.commitGitChanges).toHaveBeenCalledWith("Update readme", ["README.md"]),
+    );
+    await waitFor(() =>
+      expect(within(panel).getByText(/Committed 1 file\(s\) as abc1234/)).toBeInTheDocument(),
+    );
+    // src/App.tsx had been deselected before the commit, so the refreshed list
+    // (now missing the just-committed README.md) still shows it unselected.
+    await waitFor(() => expect(within(panel).getByText("0 / 1")).toBeInTheDocument());
+    expect(within(panel).getByPlaceholderText("Commit message")).toHaveValue("");
+  });
+
+  it("commits when Cmd/Ctrl+Enter is pressed in the message textarea", async () => {
+    render(<App />);
+
+    expect(await treeButton("README.md")).toBeInTheDocument();
+    fireEvent.click(screen.getByTitle("Commit changes"));
+
+    const panel = await screen.findByLabelText("Git commit panel");
+    await waitFor(() => expect(within(panel).getByText("2 / 2")).toBeInTheDocument());
+
+    const message = within(panel).getByPlaceholderText("Commit message");
+    fireEvent.change(message, { target: { value: "Quick commit" } });
+    fireEvent.keyDown(message, { key: "Enter", metaKey: true });
+
+    await waitFor(() =>
+      expect(tauriMocks.commitGitChanges).toHaveBeenCalledWith("Quick commit", [
+        "README.md",
+        "src/App.tsx",
+      ]),
+    );
+  });
+
+  it("gives a folder checkbox tri-state selection over its descendant files", async () => {
+    // Queued twice: `getGitStatus` now fires once on the initial workspace
+    // load (Part 2) and again on entering commit mode, both before this test
+    // reads the panel — a single `mockResolvedValueOnce` would be consumed
+    // by the mount call, leaving the entering-commit-mode call to fall
+    // through to the describe-inherited baseline (README.md/src/App.tsx).
+    const customStatus = {
+      status: "available" as const,
+      branch: "main",
+      headDetached: false,
+      headUnborn: false,
+      files: [
+        { path: "src/a.ts", status: "modified" as const, staged: false, unstaged: true },
+        { path: "src/b.ts", status: "modified" as const, staged: false, unstaged: true },
+      ],
+    };
+    tauriMocks.getGitStatus.mockResolvedValueOnce(customStatus);
+    tauriMocks.getGitStatus.mockResolvedValueOnce(customStatus);
+    render(<App />);
+
+    expect(await treeButton("README.md")).toBeInTheDocument();
+    fireEvent.click(screen.getByTitle("Commit changes"));
+
+    const panel = await screen.findByLabelText("Git commit panel");
+    await waitFor(() => expect(within(panel).getByText("2 / 2")).toBeInTheDocument());
+    const folderCheckbox = within(panel).getByLabelText(
+      "Deselect folder src",
+    ) as HTMLInputElement;
+    expect(folderCheckbox.checked).toBe(true);
+
+    fireEvent.click(within(panel).getByLabelText("Deselect src/a.ts"));
+    await waitFor(() => expect(within(panel).getByText("1 / 2")).toBeInTheDocument());
+    const partialFolderCheckbox = within(panel).getByLabelText(
+      "Select folder src",
+    ) as HTMLInputElement;
+    expect(partialFolderCheckbox.checked).toBe(false);
+    expect(partialFolderCheckbox.indeterminate).toBe(true);
+
+    fireEvent.click(partialFolderCheckbox);
+    await waitFor(() => expect(within(panel).getByText("2 / 2")).toBeInTheDocument());
+  });
+
+  it("opens a diff tab for a changed file, including deleted rows", async () => {
+    // Queued twice — see the tri-state test above for why one isn't enough.
+    const customStatus = {
+      status: "available" as const,
+      branch: "main",
+      headDetached: false,
+      headUnborn: false,
+      files: [{ path: "gone.txt", status: "deleted" as const, staged: false, unstaged: true }],
+    };
+    tauriMocks.getGitStatus.mockResolvedValueOnce(customStatus);
+    tauriMocks.getGitStatus.mockResolvedValueOnce(customStatus);
+    tauriMocks.loadGitFileDiff.mockResolvedValueOnce({
+      original: "bye\n",
+      modified: "",
+      status: "deleted",
+      isBinary: false,
+      isTooLarge: false,
+    });
+    render(<App />);
+
+    expect(await treeButton("README.md")).toBeInTheDocument();
+    fireEvent.click(screen.getByTitle("Commit changes"));
+
+    const panel = await screen.findByLabelText("Git commit panel");
+    const row = await within(panel).findByText("gone.txt");
+    fireEvent.click(row.closest("button")!);
+
+    await waitFor(() =>
+      expect(tauriMocks.loadGitFileDiff).toHaveBeenCalledWith("gone.txt", 5120 * 1024),
+    );
+    expect(await screen.findByLabelText("Diff gone.txt")).toBeInTheDocument();
+  });
+
+  it("shows the qualified path in the status bar for a diff tab, never the synthetic key", async () => {
+    render(<App />);
+
+    expect(await treeButton("README.md")).toBeInTheDocument();
+    fireEvent.click(screen.getByTitle("Commit changes"));
+
+    const panel = await screen.findByLabelText("Git commit panel");
+    const readmeRow = await within(panel).findByText("README.md");
+    fireEvent.click(readmeRow.closest("button")!);
+    await screen.findByLabelText("Diff README.md");
+
+    expect(document.querySelector(".statusbar__path")).toHaveTextContent(
+      "README.md (Working Tree)",
+    );
+    expect(screen.queryByText(/^diff:\/\//)).not.toBeInTheDocument();
+  });
+
+  it("closes unpinned diff tabs on leaving commit mode but keeps pinned ones", async () => {
+    render(<App />);
+
+    expect(await treeButton("README.md")).toBeInTheDocument();
+    fireEvent.click(screen.getByTitle("Commit changes"));
+
+    const panel = await screen.findByLabelText("Git commit panel");
+    const readmeRow = await within(panel).findByText("README.md");
+    fireEvent.click(readmeRow.closest("button")!);
+    await screen.findByLabelText("Diff README.md");
+    // Pin the README diff before opening another one — an unpinned preview
+    // diff tab is replaced by the next one opened, same as a file preview tab.
+    // Use the .tab-strip-scoped helper: the status bar now also shows the
+    // "(Working Tree)" label, so a page-wide text query would be ambiguous.
+    await waitFor(() => expect(tabButton("README.md (Working Tree)")).toBeTruthy());
+    fireEvent.doubleClick(tabButton("README.md (Working Tree)")!);
+
+    const appRow = await within(panel).findByText("App.tsx");
+    fireEvent.click(appRow.closest("button")!);
+    await screen.findByLabelText("Diff src/App.tsx");
+
+    fireEvent.click(screen.getByTitle("Commit changes"));
+
+    await waitFor(() => expect(tabButton("src/App.tsx (Working Tree)")).toBeUndefined());
+    expect(tabButton("README.md (Working Tree)")).toBeTruthy();
+  });
+
+  it("shows Git status badges and a folder dot in the main tree outside commit mode", async () => {
+    render(<App />);
+
+    const readmeButton = await treeButton("README.md");
+    await waitFor(() =>
+      expect(readmeButton.querySelector(".tree-row__status")).toHaveTextContent("M"),
+    );
+    expect(readmeButton.querySelector(".tree-row__status")).toHaveClass(
+      "tree-row__status--modified",
+    );
+
+    // "src" starts collapsed (expandedFolders is empty by default), but the
+    // dot on the folder row itself should still be visible without expanding.
+    const srcButton = await treeButton("src");
+    expect(srcButton.querySelector(".tree-row__status-dot")).toBeInTheDocument();
+
+    fireEvent.click(srcButton);
+    const appButton = await treeButton("App.tsx");
+    expect(appButton.querySelector(".tree-row__status")).toHaveTextContent("M");
+
+    // No selection checkboxes outside commit mode — same tree, same rows.
+    expect(screen.queryByLabelText("Select README.md")).not.toBeInTheDocument();
+  });
+
+  it("collapses a folder in commit mode and the collapse carries back to browsing", async () => {
+    render(<App />);
+
+    expect(await treeButton("README.md")).toBeInTheDocument();
+    fireEvent.click(screen.getByTitle("Commit changes"));
+
+    const panel = await screen.findByLabelText("Git commit panel");
+    // Entering commit mode auto-expands ancestors of changed paths, so "src"
+    // (containing the changed src/App.tsx) starts expanded here even though
+    // it's collapsed by default in normal browsing.
+    const srcRow = await within(panel).findByText("src");
+    const srcButton = srcRow.closest("button")!;
+    await waitFor(() => expect(srcButton).toHaveAttribute("aria-expanded", "true"));
+    expect(within(panel).getByText("App.tsx")).toBeInTheDocument();
+
+    fireEvent.click(srcButton);
+    await waitFor(() => expect(srcButton).toHaveAttribute("aria-expanded", "false"));
+    expect(within(panel).queryByText("App.tsx")).not.toBeInTheDocument();
+
+    // Leave commit mode — the manual collapse carries over to normal browsing.
+    fireEvent.click(screen.getByTitle("Commit changes"));
+    const tree = await screen.findByLabelText("Workspace files");
+    const browsingSrcRow = await within(tree).findByText("src");
+    expect(browsingSrcRow.closest("button")).toHaveAttribute("aria-expanded", "false");
+    expect(within(tree).queryByText("App.tsx")).not.toBeInTheDocument();
+  });
+
+  it("reloads an open diff tab when the underlying file changes, keeping it pinned", async () => {
+    render(<App />);
+
+    expect(await treeButton("README.md")).toBeInTheDocument();
+    fireEvent.click(screen.getByTitle("Commit changes"));
+
+    const panel = await screen.findByLabelText("Git commit panel");
+    const readmeRow = await within(panel).findByText("README.md");
+    fireEvent.click(readmeRow.closest("button")!);
+    await screen.findByLabelText("Diff README.md");
+    expect(screen.getByText("modified: after")).toBeInTheDocument();
+
+    await waitFor(() => expect(tabButton("README.md (Working Tree)")).toBeTruthy());
+    fireEvent.doubleClick(tabButton("README.md (Working Tree)")!);
+    expect(tabButton("README.md (Working Tree)")).not.toHaveClass("tab--temp");
+
+    // Same trigger a background poll/window-focus/tab-reactivation would use
+    // for a real file — a diff tab rides the same disk-state check.
+    tauriMocks.loadGitFileDiff.mockResolvedValueOnce({
+      original: "before\n",
+      modified: "after v2\n",
+      status: "modified",
+      isBinary: false,
+      isTooLarge: false,
+    });
+    window.dispatchEvent(new Event("focus"));
+
+    await waitFor(() =>
+      expect(screen.getByLabelText("Diff README.md")).toHaveTextContent("modified: after v2"),
+    );
+    // Reloading in place must not disturb the pin.
+    expect(tabButton("README.md (Working Tree)")).toBeTruthy();
+    expect(tabButton("README.md (Working Tree)")).not.toHaveClass("tab--temp");
+  });
+
+  it("leaves an open diff tab untouched when a refresh finds no change", async () => {
+    render(<App />);
+
+    expect(await treeButton("README.md")).toBeInTheDocument();
+    fireEvent.click(screen.getByTitle("Commit changes"));
+
+    const panel = await screen.findByLabelText("Git commit panel");
+    const readmeRow = await within(panel).findByText("README.md");
+    fireEvent.click(readmeRow.closest("button")!);
+    await screen.findByLabelText("Diff README.md");
+    expect(screen.getByText("modified: after")).toBeInTheDocument();
+
+    const fetchesBefore = tauriMocks.loadGitFileDiff.mock.calls.length;
+    // updateAgentContext depends directly on the raw `openFiles` array
+    // reference (see the effect in App.tsx), so it's an existing, precise
+    // proxy for "did a setOpenFiles call happen" — it must NOT fire again if
+    // the refreshed diff is identical to what the tab already holds.
+    await waitFor(() => expect(tauriMocks.updateAgentContext).toHaveBeenCalled());
+    const agentContextCallsBefore = tauriMocks.updateAgentContext.mock.calls.length;
+
+    tauriMocks.loadGitFileDiff.mockResolvedValueOnce({
+      original: "before\n",
+      modified: "after\n",
+      status: "modified",
+      isBinary: false,
+      isTooLarge: false,
+    });
+    window.dispatchEvent(new Event("focus"));
+
+    await waitFor(() =>
+      expect(tauriMocks.loadGitFileDiff.mock.calls.length).toBeGreaterThan(fetchesBefore),
+    );
+    expect(tauriMocks.updateAgentContext.mock.calls.length).toBe(agentContextCallsBefore);
+    expect(screen.getByText("modified: after")).toBeInTheDocument();
+  });
+
+  it("toggles the diff view mode and persists it as an app-level setting", async () => {
+    render(<App />);
+
+    expect(await treeButton("README.md")).toBeInTheDocument();
+    fireEvent.click(screen.getByTitle("Commit changes"));
+
+    const panel = await screen.findByLabelText("Git commit panel");
+    const readmeRow = await within(panel).findByText("README.md");
+    fireEvent.click(readmeRow.closest("button")!);
+    const diff = await screen.findByLabelText("Diff README.md");
+    expect(within(diff).getByText("view mode: inline")).toBeInTheDocument();
+
+    fireEvent.click(within(diff).getByText("Side-by-side diff"));
+    expect(within(diff).getByText("view mode: sideBySide")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(tauriMocks.updateUiState).toHaveBeenCalledWith(
+        expect.objectContaining({ diffViewMode: "sideBySide" }),
+        expect.any(Object),
+      ),
+    );
+
+    // The setting is app-level, not per-tab — a second diff tab opens in the
+    // same mode without needing its own toggle.
+    const appRow = await within(panel).findByText("App.tsx");
+    fireEvent.click(appRow.closest("button")!);
+    const appDiff = await screen.findByLabelText("Diff src/App.tsx");
+    expect(within(appDiff).getByText("view mode: sideBySide")).toBeInTheDocument();
+  });
+
+  it("defaults the commit message box to 112px when nothing is persisted", async () => {
+    render(<App />);
+
+    expect(await treeButton("README.md")).toBeInTheDocument();
+    fireEvent.click(screen.getByTitle("Commit changes"));
+
+    const panel = await screen.findByLabelText("Git commit panel");
+    const message = within(panel).getByPlaceholderText("Commit message");
+    expect(message).toHaveStyle({ height: "112px" });
+
+    const resizer = screen.getByRole("separator", { name: "Resize commit message" });
+    expect(resizer).toHaveAttribute("aria-valuenow", "112");
+    expect(resizer).toHaveAttribute("aria-valuemin", "56");
+    expect(resizer).toHaveAttribute("aria-valuemax", "600");
+  });
+
+  it("applies a persisted commit message height on load", async () => {
+    tauriMocks.getUiState.mockResolvedValueOnce({
+      view: {
+        showDotfiles: false,
+        showGeneratedInternal: false,
+        showDiagnosticsPanel: false,
+      },
+      workspace: {
+        expandedFolders: [],
+        openFiles: [],
+        commitMessageHeight: 220,
+      },
+    });
+    render(<App />);
+
+    expect(await treeButton("README.md")).toBeInTheDocument();
+    fireEvent.click(screen.getByTitle("Commit changes"));
+
+    const panel = await screen.findByLabelText("Git commit panel");
+    const message = within(panel).getByPlaceholderText("Commit message");
+    expect(message).toHaveStyle({ height: "220px" });
+    expect(screen.getByRole("separator", { name: "Resize commit message" })).toHaveAttribute(
+      "aria-valuenow",
+      "220",
+    );
+  });
+
+  it("resizes the commit message box with the keyboard and persists it", async () => {
+    render(<App />);
+
+    expect(await treeButton("README.md")).toBeInTheDocument();
+    fireEvent.click(screen.getByTitle("Commit changes"));
+
+    const panel = await screen.findByLabelText("Git commit panel");
+    const message = within(panel).getByPlaceholderText("Commit message");
+    const resizer = screen.getByRole("separator", { name: "Resize commit message" });
+
+    // Dragging the handle up (or pressing ArrowUp) grows the box.
+    fireEvent.keyDown(resizer, { key: "ArrowUp" });
+    expect(message).toHaveStyle({ height: "128px" });
+    expect(resizer).toHaveAttribute("aria-valuenow", "128");
+
+    fireEvent.keyDown(resizer, { key: "ArrowDown" });
+    fireEvent.keyDown(resizer, { key: "ArrowDown" });
+    expect(message).toHaveStyle({ height: "96px" });
+
+    await waitFor(() =>
+      expect(tauriMocks.updateUiState).toHaveBeenCalledWith(
+        expect.any(Object),
+        expect.objectContaining({ commitMessageHeight: 96 }),
+      ),
+    );
   });
 });
 

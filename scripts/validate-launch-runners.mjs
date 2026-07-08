@@ -26,12 +26,18 @@ try {
   assertIncludes(runScript, "$api_base/api/open-path");
   assertIncludes(runScript, 'if [ -n "$OPEN_PATH" ] && handoff_to_running_app "$OPEN_PATH"; then');
   assertIncludes(runScript, "running_app_reachable()");
-  assertIncludes(runScript, "activate_running_app()");
+  assertIncludes(runScript, "stop_running_app()");
+  assertIncludes(runScript, 'tell application id "com.gordonbeeming.ide" to quit');
+  assertIncludes(runScript, 'pkill -f "/Applications/ide.app/Contents/MacOS/ide"');
+  assertIncludes(runScript, 'pkill -f "$ROOT_DIR/src-tauri/target/debug/ide"');
   assertIncludes(runScript, 'if [ -z "$OPEN_PATH" ] && running_app_reachable; then');
-  assertIncludes(runScript, "ide is already running; not starting a duplicate dev instance.");
+  assertIncludes(runScript, "stop_running_app");
+  assertNotIncludes(runScript, "not starting a duplicate dev instance");
   assertIncludes(runScript, "ensure_dev_port_available");
   assertOrdered(runScript, "handoff_to_running_app \"$OPEN_PATH\"", "ensure_dev_port_available");
   assertOrdered(runScript, "running_app_reachable", "ensure_dev_port_available");
+  // The graceful quit must be attempted before the force-kill escalation.
+  assertOrdered(runScript, 'tell application id "com.gordonbeeming.ide" to quit', "pkill -f");
 
   const buildScript = readExecutable(buildScriptPath, "build.sh");
   assertIncludes(buildScript, "npm run tauri -- build --bundles app");

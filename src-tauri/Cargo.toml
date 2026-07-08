@@ -18,6 +18,8 @@ futures-util = "=0.3.32"
 gix = { version = "=0.84.0", default-features = false, features = [
   "blame",
   "sha1",
+  "status",
+  "tree-editor",
 ] }
 ignore = "=0.4.25"
 # gix-date allows newer jiff 0.2.x releases, but 0.2.25+ records optional

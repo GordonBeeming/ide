@@ -350,6 +350,7 @@ describe("hosted Tauri API transport", () => {
         appZoomPercent: 100,
         dateTimeFormat: "localMedium",
         recentRelativeThreshold: "oneWeek",
+        diffViewMode: "inline",
         featureFlags: {},
       },
       workspace: {
@@ -1008,5 +1009,190 @@ describe("Git attribution response normalization", () => {
         uncommittedLines: [1, 0],
       }),
     ).toBeUndefined();
+  });
+});
+
+describe("Git status response normalization", () => {
+  it("normalizes an available status with mixed file states", async () => {
+    const { normalizeGitStatus } = await import("./tauri");
+
+    expect(
+      normalizeGitStatus({
+        status: "available",
+        branch: "main",
+        headDetached: false,
+        headUnborn: false,
+        files: [
+          { path: "a.txt", status: "modified", staged: true, unstaged: false },
+          { path: "b.txt", status: "deleted", staged: false, unstaged: true },
+          { path: "c.txt", status: "added", staged: false, unstaged: true },
+        ],
+      }),
+    ).toEqual({
+      status: "available",
+      unsupportedReason: undefined,
+      branch: "main",
+      headDetached: false,
+      headUnborn: false,
+      files: [
+        { path: "a.txt", status: "modified", staged: true, unstaged: false },
+        { path: "b.txt", status: "deleted", staged: false, unstaged: true },
+        { path: "c.txt", status: "added", staged: false, unstaged: true },
+      ],
+    });
+  });
+
+  it("normalizes an unsupported status without a branch", async () => {
+    const { normalizeGitStatus } = await import("./tauri");
+
+    expect(
+      normalizeGitStatus({
+        status: "unsupported",
+        unsupportedReason: "Workspace is not inside a Git repository",
+        headDetached: false,
+        headUnborn: false,
+        files: [],
+      }),
+    ).toEqual({
+      status: "unsupported",
+      unsupportedReason: "Workspace is not inside a Git repository",
+      branch: undefined,
+      headDetached: false,
+      headUnborn: false,
+      files: [],
+    });
+  });
+
+  it("rejects malformed status payloads", async () => {
+    const { normalizeGitStatus } = await import("./tauri");
+
+    expect(normalizeGitStatus({ status: "available" })).toBeUndefined();
+    expect(
+      normalizeGitStatus({
+        status: "available",
+        headDetached: false,
+        headUnborn: false,
+        files: [{ path: "a.txt", status: "renamed", staged: true, unstaged: false }],
+      }),
+    ).toBeUndefined();
+  });
+});
+
+describe("Git commit response normalization", () => {
+  it("normalizes a commit result", async () => {
+    const { normalizeGitCommitResult } = await import("./tauri");
+
+    expect(
+      normalizeGitCommitResult({
+        sha: "abc123456789",
+        shortSha: "abc12345",
+        branch: "main",
+        committedPaths: ["a.txt", "b.txt"],
+      }),
+    ).toEqual({
+      sha: "abc123456789",
+      shortSha: "abc12345",
+      branch: "main",
+      committedPaths: ["a.txt", "b.txt"],
+    });
+  });
+
+  it("normalizes a detached-HEAD commit result without a branch", async () => {
+    const { normalizeGitCommitResult } = await import("./tauri");
+
+    expect(
+      normalizeGitCommitResult({
+        sha: "abc123456789",
+        shortSha: "abc12345",
+        committedPaths: [],
+      }),
+    ).toEqual({
+      sha: "abc123456789",
+      shortSha: "abc12345",
+      branch: undefined,
+      committedPaths: [],
+    });
+  });
+
+  it("rejects malformed commit result payloads", async () => {
+    const { normalizeGitCommitResult } = await import("./tauri");
+
+    expect(normalizeGitCommitResult({ sha: "abc" })).toBeUndefined();
+    expect(
+      normalizeGitCommitResult({
+        sha: "abc",
+        shortSha: "abc",
+        committedPaths: [1, 2],
+      }),
+    ).toBeUndefined();
+  });
+});
+
+describe("Git file diff response normalization", () => {
+  it("normalizes a modified-file diff", async () => {
+    const { normalizeGitFileDiff } = await import("./tauri");
+
+    expect(
+      normalizeGitFileDiff({
+        original: "before\n",
+        modified: "after\n",
+        status: "modified",
+        isBinary: false,
+        isTooLarge: false,
+      }),
+    ).toEqual({
+      original: "before\n",
+      modified: "after\n",
+      status: "modified",
+      isBinary: false,
+      isTooLarge: false,
+    });
+  });
+
+  it("normalizes a binary diff with empty text sides", async () => {
+    const { normalizeGitFileDiff } = await import("./tauri");
+
+    expect(
+      normalizeGitFileDiff({
+        original: "",
+        modified: "",
+        status: "added",
+        isBinary: true,
+        isTooLarge: false,
+      }),
+    ).toEqual({
+      original: "",
+      modified: "",
+      status: "added",
+      isBinary: true,
+      isTooLarge: false,
+    });
+  });
+
+  it("rejects malformed diff payloads", async () => {
+    const { normalizeGitFileDiff } = await import("./tauri");
+
+    expect(normalizeGitFileDiff({ original: "a", modified: "b" })).toBeUndefined();
+    expect(
+      normalizeGitFileDiff({
+        original: "a",
+        modified: "b",
+        status: "renamed",
+        isBinary: false,
+        isTooLarge: false,
+      }),
+    ).toBeUndefined();
+  });
+});
+
+describe("Diff view mode sanitization", () => {
+  it("keeps known values and falls back to inline for anything else", async () => {
+    const { sanitizeDiffViewMode } = await import("./tauri");
+
+    expect(sanitizeDiffViewMode("inline")).toBe("inline");
+    expect(sanitizeDiffViewMode("sideBySide")).toBe("sideBySide");
+    expect(sanitizeDiffViewMode("split")).toBe("inline");
+    expect(sanitizeDiffViewMode(undefined)).toBe("inline");
+    expect(sanitizeDiffViewMode(null)).toBe("inline");
   });
 });
