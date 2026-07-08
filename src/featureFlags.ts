@@ -8,7 +8,7 @@
 // and from KNOWN_FEATURE_FLAGS in src-tauri/src/lib.rs prunes any stale override
 // the next time settings load.
 
-export type FeatureFlagId = "gitAttribution" | "gitCommit" | "gitSync";
+export type FeatureFlagId = "gitAttribution" | "gitCommit";
 
 // "preview" flags surface in Settings → Preview Features for opt-in/opt-out.
 // "internal" flags are gated in code only and never rendered as a user toggle.
@@ -46,24 +46,12 @@ export const FEATURE_FLAGS: Record<FeatureFlagId, FeatureFlagDefinition> = {
     id: "gitCommit",
     label: "Git commit",
     description:
-      "Commit selected changed files from the sidebar without leaving the editor.",
+      "Commit selected changed files from the sidebar, and sync (fetch, pull, push) the current branch, without leaving the editor.",
     defaultEnabled: true,
     visibility: "preview",
     lifecycle: "preview",
     graduationCriteria:
-      "Selective commit is reliable across large repos and worktree edge cases (symlinks, executable bits, unborn/detached HEAD). Once stable, promote to a Git settings category or make it always-on and remove this flag.",
-    promotionNote: "Promote into a future Git/source-control settings category.",
-  },
-  gitSync: {
-    id: "gitSync",
-    label: "Git sync",
-    description:
-      "Fetch, pull, and push the current branch from the commit panel without leaving the editor.",
-    defaultEnabled: false,
-    visibility: "preview",
-    lifecycle: "preview",
-    graduationCriteria:
-      "Sync handles the everyday remote states (up to date, ahead, behind, no upstream) and shows merge conflicts clearly. Once stable, promote to a Git settings category or make it always-on and remove this flag.",
+      "Selective commit and sync are reliable across large repos and worktree edge cases (symlinks, executable bits, unborn/detached HEAD, merge conflicts). Once stable, promote to a Git settings category or make it always-on and remove this flag.",
     promotionNote: "Promote into a future Git/source-control settings category.",
   },
 };

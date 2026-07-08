@@ -657,11 +657,10 @@ export default function App() {
   const cursorPosition = cursorStatus(activePath, cursor, revealTarget);
   const gitAttributionEnabled = isFeatureEnabled("gitAttribution", featureFlags);
   const gitCommitEnabled = isFeatureEnabled("gitCommit", featureFlags);
-  const gitSyncEnabled = isFeatureEnabled("gitSync", featureFlags);
   // Live merge state, read straight off the polled Git status so the conflict UI
   // updates on its own as the user resolves files (rather than freezing on the
   // one-shot sync result). Defaults tolerate an older status shape / test mock.
-  const mergeInProgress = gitSyncEnabled && (gitStatus?.mergeInProgress ?? false);
+  const mergeInProgress = gitStatus?.mergeInProgress ?? false;
   const conflictedFiles = gitStatus?.conflictedFiles ?? [];
   const activeGitAttribution =
     gitAttributionEnabled &&
@@ -4458,106 +4457,104 @@ export default function App() {
               </>
             )}
             </div>
-            {gitSyncEnabled ? (
-              <div className="commit-panel__sync">
-                <div className="commit-panel__sync-action">
-                  <button
-                    className="command-button commit-panel__sync-button"
-                    disabled={
-                      gitSyncInFlight || gitStatus?.status !== "available" || mergeInProgress
-                    }
-                    onClick={handleGitSync}
-                  >
-                    <RefreshCw
-                      size={14}
-                      className={gitSyncInFlight ? "commit-panel__sync-spin" : undefined}
-                    />
-                    {gitSyncInFlight ? "Syncing…" : "Sync"}
-                  </button>
-                  <span
-                    className="commit-panel__sync-branch"
-                    title={gitStatus?.branch ?? gitSyncResult?.branch}
-                  >
-                    <GitBranch size={12} />
-                    <span className="commit-panel__sync-branch-name">
-                      {gitStatus?.branch ?? gitSyncResult?.branch ?? "No branch"}
-                    </span>
+            <div className="commit-panel__sync">
+              <div className="commit-panel__sync-action">
+                <button
+                  className="command-button commit-panel__sync-button"
+                  disabled={
+                    gitSyncInFlight || gitStatus?.status !== "available" || mergeInProgress
+                  }
+                  onClick={handleGitSync}
+                >
+                  <RefreshCw
+                    size={14}
+                    className={gitSyncInFlight ? "commit-panel__sync-spin" : undefined}
+                  />
+                  {gitSyncInFlight ? "Syncing…" : "Sync"}
+                </button>
+                <span
+                  className="commit-panel__sync-branch"
+                  title={gitStatus?.branch ?? gitSyncResult?.branch}
+                >
+                  <GitBranch size={12} />
+                  <span className="commit-panel__sync-branch-name">
+                    {gitStatus?.branch ?? gitSyncResult?.branch ?? "No branch"}
                   </span>
-                </div>
-                {mergeInProgress ? (
-                  <div className="commit-panel__merge" role="group" aria-label="Resolve merge">
-                    <span className="commit-panel__sync-conflict-title">
-                      {conflictedFiles.length > 0
-                        ? "Merge conflicts — resolve each file, then complete the merge:"
-                        : "All conflicts resolved — complete the merge to finish."}
-                    </span>
-                    {conflictedFiles.length > 0 ? (
-                      <ul className="commit-panel__merge-files">
-                        {conflictedFiles.map((file) => (
-                          <li key={file} className="commit-panel__merge-file">
-                            <button
-                              type="button"
-                              className="commit-panel__merge-file-open"
-                              title={`Open ${file}`}
-                              onClick={() => void openDiffTab(file)}
-                            >
-                              {file}
-                            </button>
-                            <button
-                              type="button"
-                              className="command-button command-button--quiet commit-panel__merge-resolve"
-                              disabled={gitMergeStagingPath !== undefined}
-                              onClick={() => void handleStageResolved(file)}
-                            >
-                              {gitMergeStagingPath === file ? "Marking…" : "Mark resolved"}
-                            </button>
-                          </li>
-                        ))}
-                      </ul>
-                    ) : null}
-                    <p className="commit-panel__merge-tip">
-                      Stuck? You can always ask your agent to fix this for you.
-                    </p>
-                    <button
-                      className="command-button command-button--primary commit-panel__merge-complete"
-                      disabled={conflictedFiles.length > 0 || gitMergeInFlight}
-                      onClick={handleCompleteMerge}
-                    >
-                      {gitMergeInFlight ? "Completing…" : "Complete merge"}
-                    </button>
-                    {gitMergeError ? (
-                      <div
-                        className="commit-panel__notice commit-panel__notice--error"
-                        role="alert"
-                      >
-                        {gitMergeError}
-                      </div>
-                    ) : null}
-                  </div>
-                ) : gitSyncError ? (
-                  <div
-                    className="commit-panel__notice commit-panel__notice--error"
-                    role="alert"
-                  >
-                    {gitSyncError}
-                  </div>
-                ) : gitMergeSuccess ? (
-                  <div
-                    className="commit-panel__notice commit-panel__notice--success"
-                    role="status"
-                  >
-                    {gitMergeSuccess}
-                  </div>
-                ) : gitSyncResult ? (
-                  <div
-                    className="commit-panel__notice commit-panel__notice--success"
-                    role="status"
-                  >
-                    {formatGitSyncResult(gitSyncResult)}
-                  </div>
-                ) : null}
+                </span>
               </div>
-            ) : null}
+              {mergeInProgress ? (
+                <div className="commit-panel__merge" role="group" aria-label="Resolve merge">
+                  <span className="commit-panel__sync-conflict-title">
+                    {conflictedFiles.length > 0
+                      ? "Merge conflicts — resolve each file, then complete the merge:"
+                      : "All conflicts resolved — complete the merge to finish."}
+                  </span>
+                  {conflictedFiles.length > 0 ? (
+                    <ul className="commit-panel__merge-files">
+                      {conflictedFiles.map((file) => (
+                        <li key={file} className="commit-panel__merge-file">
+                          <button
+                            type="button"
+                            className="commit-panel__merge-file-open"
+                            title={`Open ${file}`}
+                            onClick={() => void openDiffTab(file)}
+                          >
+                            {file}
+                          </button>
+                          <button
+                            type="button"
+                            className="command-button command-button--quiet commit-panel__merge-resolve"
+                            disabled={gitMergeStagingPath !== undefined}
+                            onClick={() => void handleStageResolved(file)}
+                          >
+                            {gitMergeStagingPath === file ? "Marking…" : "Mark resolved"}
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : null}
+                  <p className="commit-panel__merge-tip">
+                    Stuck? You can always ask your agent to fix this for you.
+                  </p>
+                  <button
+                    className="command-button command-button--primary commit-panel__merge-complete"
+                    disabled={conflictedFiles.length > 0 || gitMergeInFlight}
+                    onClick={handleCompleteMerge}
+                  >
+                    {gitMergeInFlight ? "Completing…" : "Complete merge"}
+                  </button>
+                  {gitMergeError ? (
+                    <div
+                      className="commit-panel__notice commit-panel__notice--error"
+                      role="alert"
+                    >
+                      {gitMergeError}
+                    </div>
+                  ) : null}
+                </div>
+              ) : gitSyncError ? (
+                <div
+                  className="commit-panel__notice commit-panel__notice--error"
+                  role="alert"
+                >
+                  {gitSyncError}
+                </div>
+              ) : gitMergeSuccess ? (
+                <div
+                  className="commit-panel__notice commit-panel__notice--success"
+                  role="status"
+                >
+                  {gitMergeSuccess}
+                </div>
+              ) : gitSyncResult ? (
+                <div
+                  className="commit-panel__notice commit-panel__notice--success"
+                  role="status"
+                >
+                  {formatGitSyncResult(gitSyncResult)}
+                </div>
+              ) : null}
+            </div>
           </div>
         ) : null}
 

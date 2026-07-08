@@ -238,7 +238,7 @@ impl Default for PersistedViewSettings {
 // Flag ids the app currently knows about. Persisted overrides for any id not in
 // this list are pruned on load, so retiring a flag is just removing it here (and
 // from the frontend registry). Keep in sync with src/featureFlags.ts.
-const KNOWN_FEATURE_FLAGS: &[&str] = &["gitAttribution", "gitCommit", "gitSync"];
+const KNOWN_FEATURE_FLAGS: &[&str] = &["gitAttribution", "gitCommit"];
 
 fn default_show_gitignored_files() -> bool {
     false

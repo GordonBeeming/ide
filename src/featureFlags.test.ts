@@ -12,17 +12,14 @@ describe("feature flags", () => {
     expect(resolveFeatureFlags({})).toEqual({
       gitAttribution: false,
       gitCommit: true,
-      gitSync: false,
     });
     expect(isFeatureEnabled("gitAttribution", {})).toBe(false);
     expect(isFeatureEnabled("gitCommit", {})).toBe(true);
-    expect(isFeatureEnabled("gitSync", {})).toBe(false);
   });
 
   it("lets a user override win over the default", () => {
     expect(isFeatureEnabled("gitAttribution", { gitAttribution: true })).toBe(true);
     expect(isFeatureEnabled("gitCommit", { gitCommit: false })).toBe(false);
-    expect(isFeatureEnabled("gitSync", { gitSync: true })).toBe(true);
   });
 
   it("ignores unknown flag ids", () => {
@@ -57,7 +54,6 @@ describe("feature flags", () => {
     expect(preview.every((flag) => flag.visibility === "preview")).toBe(true);
     expect(preview.map((flag) => flag.id)).toContain("gitAttribution");
     expect(preview.map((flag) => flag.id)).toContain("gitCommit");
-    expect(preview.map((flag) => flag.id)).toContain("gitSync");
   });
 
   it("keeps the registry self-consistent (id matches key)", () => {
