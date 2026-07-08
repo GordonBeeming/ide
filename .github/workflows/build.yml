@@ -248,7 +248,7 @@ jobs:
             desc "Lean local IDE"
             homepage "https://github.com/gordonbeeming/ide"
 
-            depends_on macos: ">= :sonoma"
+            depends_on macos: :sonoma
 
             app "ide.app"
 
