@@ -206,6 +206,7 @@ export default function DiffPane({
         type="button"
         className={`tiny-icon-button ${viewMode === "inline" ? "tiny-icon-button--active" : ""}`}
         aria-pressed={viewMode === "inline"}
+        aria-label="Inline diff"
         title="Inline diff"
         onClick={() => onViewModeChange("inline")}
       >
@@ -215,6 +216,7 @@ export default function DiffPane({
         type="button"
         className={`tiny-icon-button ${viewMode === "sideBySide" ? "tiny-icon-button--active" : ""}`}
         aria-pressed={viewMode === "sideBySide"}
+        aria-label="Side-by-side diff"
         title="Side-by-side diff"
         onClick={() => onViewModeChange("sideBySide")}
       >

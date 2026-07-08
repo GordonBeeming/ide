@@ -653,7 +653,8 @@ export default function App() {
     () => filterTree(tree, filter.trim().toLowerCase()),
     [filter, tree],
   );
-  const changedFiles = gitStatus?.status === "available" ? gitStatus.files : [];
+  const changedFiles =
+    gitCommitEnabled && gitStatus?.status === "available" ? gitStatus.files : [];
   const changedFilePaths = useMemo(
     () => changedFiles.map((file) => file.path),
     [changedFiles],
@@ -738,10 +739,12 @@ export default function App() {
     [keyBindingsQuery],
   );
   const filterExpanded = activeSidebarSearch === "filter" || filter.trim().length > 0;
-  const filterVisible =
-    activeSidebarSearch !== "content" && activeSidebarSearch !== "commit" && filterExpanded;
+  // Gated on the flag so disabling `gitCommit` mid-session always drops the
+  // app out of commit mode, even if `activeSidebarSearch` is still "commit"
+  // from before the flag flipped off.
+  const commitModeActive = gitCommitEnabled && activeSidebarSearch === "commit";
+  const filterVisible = activeSidebarSearch !== "content" && !commitModeActive && filterExpanded;
   const contentSearchActive = activeSidebarSearch === "content";
-  const commitModeActive = activeSidebarSearch === "commit";
   const contentSearchReady = contentQuery.trim().length >= 2;
   const contentSearchStatsText =
     searchStats.searchedFiles === undefined

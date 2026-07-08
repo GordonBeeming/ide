@@ -648,9 +648,9 @@ fn file_diff_blocking(
 
     // Unborn HEAD (nothing committed yet) means every tracked-looking path is
     // effectively absent from HEAD, same as any other untracked/new file.
-    let head_bytes = match repo.head_commit() {
-        Ok(head_commit) => head_blob_bytes(&head_commit, &repo_relative)?,
-        Err(_) => None,
+    let head_side = match repo.head_commit() {
+        Ok(head_commit) => head_diff_side(&repo, &head_commit, &repo_relative, max_bytes)?,
+        Err(_) => DiffSide::Absent,
     };
 
     // `fs::symlink_metadata` does not follow symlinks, so a symlink's own
@@ -658,40 +658,57 @@ fn file_diff_blocking(
     // for links) is compared against HEAD rather than the target file's
     // content — otherwise an unchanged symlink diffs as modified, and a
     // broken symlink's `NotFound` is misread as a deletion.
-    let disk_bytes = match fs::symlink_metadata(&absolute) {
+    let disk_side = match fs::symlink_metadata(&absolute) {
         Ok(metadata) if metadata.is_dir() => {
             return Err(GitFileDiffError::PathIsDirectory(relative.to_string()));
         }
         Ok(metadata) if metadata.file_type().is_symlink() => {
-            Some(symlink_target_bytes(&absolute).map_err(WorkspaceError::Io)?)
+            let target = symlink_target_bytes(&absolute).map_err(WorkspaceError::Io)?;
+            DiffSide::Present {
+                size: target.len() as u64,
+                bytes: Some(target),
+            }
         }
-        Ok(_) => Some(fs::read(&absolute).map_err(WorkspaceError::Io)?),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        // Stat the size before reading so a multi-GB changed file never gets
+        // pulled fully into memory just to learn it's over `max_bytes` — the
+        // bytes are only read when they'll actually be used for a diff.
+        Ok(metadata) => {
+            let size = metadata.len();
+            let bytes = if size > max_bytes {
+                None
+            } else {
+                Some(fs::read(&absolute).map_err(WorkspaceError::Io)?)
+            };
+            DiffSide::Present { size, bytes }
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => DiffSide::Absent,
         Err(error) => return Err(GitFileDiffError::Workspace(WorkspaceError::Io(error))),
     };
 
-    let status = match (&head_bytes, &disk_bytes) {
-        (None, None) => return Err(GitFileDiffError::NotFound),
-        (None, Some(_)) => GitFileStatus::Added,
-        (Some(_), None) => GitFileStatus::Deleted,
-        (Some(_), Some(_)) => GitFileStatus::Modified,
+    let status = match (&head_side, &disk_side) {
+        (DiffSide::Absent, DiffSide::Absent) => return Err(GitFileDiffError::NotFound),
+        (DiffSide::Absent, DiffSide::Present { .. }) => GitFileStatus::Added,
+        (DiffSide::Present { .. }, DiffSide::Absent) => GitFileStatus::Deleted,
+        (DiffSide::Present { .. }, DiffSide::Present { .. }) => GitFileStatus::Modified,
     };
 
-    let original_raw = head_bytes.unwrap_or_default();
-    let modified_raw = disk_bytes.unwrap_or_default();
-    let is_too_large =
-        original_raw.len() as u64 > max_bytes || modified_raw.len() as u64 > max_bytes;
-    let original_text = String::from_utf8(original_raw);
-    let modified_text = String::from_utf8(modified_raw);
-    let is_binary = original_text.is_err() || modified_text.is_err();
+    let is_too_large = head_side.size() > max_bytes || disk_side.size() > max_bytes;
 
-    let (original, modified) = if is_binary || is_too_large {
-        (String::new(), String::new())
+    let (original, modified, is_binary) = if is_too_large {
+        (String::new(), String::new(), false)
     } else {
-        (
-            original_text.unwrap_or_default(),
-            modified_text.unwrap_or_default(),
-        )
+        let original_text = String::from_utf8(head_side.into_bytes().unwrap_or_default());
+        let modified_text = String::from_utf8(disk_side.into_bytes().unwrap_or_default());
+        let is_binary = original_text.is_err() || modified_text.is_err();
+        if is_binary {
+            (String::new(), String::new(), true)
+        } else {
+            (
+                original_text.unwrap_or_default(),
+                modified_text.unwrap_or_default(),
+                false,
+            )
+        }
     };
 
     Ok(GitFileDiff {
@@ -703,10 +720,37 @@ fn file_diff_blocking(
     })
 }
 
-fn head_blob_bytes(
+// One side of a worktree-vs-HEAD diff. Size is always known cheaply (a tree
+// entry's header, or the file's stat); `bytes` is only populated when it fits
+// `max_bytes`, so a huge tracked or untracked file never gets fully decoded
+// or read just to determine it's too large to diff.
+enum DiffSide {
+    Absent,
+    Present { size: u64, bytes: Option<Vec<u8>> },
+}
+
+impl DiffSide {
+    fn size(&self) -> u64 {
+        match self {
+            DiffSide::Absent => 0,
+            DiffSide::Present { size, .. } => *size,
+        }
+    }
+
+    fn into_bytes(self) -> Option<Vec<u8>> {
+        match self {
+            DiffSide::Absent => None,
+            DiffSide::Present { bytes, .. } => bytes,
+        }
+    }
+}
+
+fn head_diff_side(
+    repo: &gix::Repository,
     head_commit: &gix::Commit<'_>,
     repo_relative_path: &str,
-) -> Result<Option<Vec<u8>>, GitFileDiffError> {
+    max_bytes: u64,
+) -> Result<DiffSide, GitFileDiffError> {
     let tree = head_commit
         .tree()
         .map_err(|error| GitFileDiffError::Git(error.to_string()))?;
@@ -714,15 +758,27 @@ fn head_blob_bytes(
         .lookup_entry_by_path(repo_relative_path)
         .map_err(|error| GitFileDiffError::Git(error.to_string()))?
     else {
-        return Ok(None);
+        return Ok(DiffSide::Absent);
     };
-    let object = entry
-        .object()
-        .map_err(|error| GitFileDiffError::Git(error.to_string()))?;
-    let blob = object
-        .try_into_blob()
-        .map_err(|error| GitFileDiffError::Git(error.to_string()))?;
-    Ok(Some(blob.data.clone()))
+    // `find_header` reads the object's size from its (loose or packed) header
+    // without inflating the blob content, so the too-large check below never
+    // pays for decoding a blob it's about to discard.
+    let size = repo
+        .find_header(entry.object_id())
+        .map_err(|error| GitFileDiffError::Git(error.to_string()))?
+        .size();
+    let bytes = if size > max_bytes {
+        None
+    } else {
+        let object = entry
+            .object()
+            .map_err(|error| GitFileDiffError::Git(error.to_string()))?;
+        let blob = object
+            .try_into_blob()
+            .map_err(|error| GitFileDiffError::Git(error.to_string()))?;
+        Some(blob.data.clone())
+    };
+    Ok(DiffSide::Present { size, bytes })
 }
 
 #[cfg(test)]
