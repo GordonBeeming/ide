@@ -197,19 +197,26 @@ fn stage_resolved_blocking(workspace_root: &Path, path: &str) -> Result<(), GitS
     let absolute = resolve_workspace_path(workspace_root, path)?;
     // Refuse to stage a file that still carries conflict markers — otherwise
     // `git add` would mark a still-conflicted file resolved and the markers would
-    // land in the merge commit. Binary / non-UTF-8 content has no textual markers,
-    // so it stages as-is (resolving a binary conflict means picking a side). A
-    // modify/delete conflict resolved by keeping the deletion has no file left to
-    // read at all — that's not a marker check failure, it's the resolution itself,
-    // so a missing file falls through to `git add` staging the deletion.
-    match std::fs::read(&absolute) {
-        Ok(bytes) => {
+    // land in the merge commit. `symlink_metadata` (not `metadata`) so a
+    // conflicted symlink is never followed: the content git stages for a
+    // symlink is its target path string, not the target's file content, and
+    // reading through it could touch something entirely outside the workspace.
+    // Binary / non-UTF-8 content has no textual markers, so it stages as-is
+    // (resolving a binary conflict means picking a side). A modify/delete
+    // conflict resolved by keeping the deletion has no file left to read at
+    // all — that's not a marker check failure, it's the resolution itself, so
+    // a missing file falls through to `git add` staging the deletion.
+    match std::fs::symlink_metadata(&absolute) {
+        Ok(metadata) if !metadata.file_type().is_symlink() => {
+            let bytes = std::fs::read(&absolute)
+                .map_err(|error| GitSyncError::Workspace(WorkspaceError::Io(error)))?;
             if let Ok(text) = std::str::from_utf8(&bytes) {
                 if has_conflict_markers(text) {
                     return Err(GitSyncError::ConflictMarkers(path.to_string()));
                 }
             }
         }
+        Ok(_) => {}
         Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
             return Err(GitSyncError::Workspace(WorkspaceError::Io(error)));
         }
@@ -979,6 +986,28 @@ mod tests {
             "gone.txt should not exist in the merge commit's tree"
         );
         drop(remote);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn stage_resolved_does_not_follow_a_symlink_to_check_for_markers() {
+        // A symlink's git content is its target path string, not the target
+        // file's content, so scanning through it for conflict markers is both
+        // wrong (it inspects content git never stages) and unsafe (the target
+        // can point outside the workspace entirely). Resolve the conflict by
+        // replacing the file with a symlink pointing at a file elsewhere on
+        // disk whose content happens to contain literal marker text — following
+        // it would wrongly refuse to stage this resolution.
+        let (_remote, work, _other) = conflicted_workspace();
+        sync_workspace(work.path()).await.unwrap();
+
+        let outside = tempdir().unwrap();
+        let target = outside.path().join("elsewhere.txt");
+        fs::write(&target, "<<<<<<< HEAD\nunrelated\n").unwrap();
+        fs::remove_file(work.path().join("conflict.txt")).unwrap();
+        std::os::unix::fs::symlink(&target, work.path().join("conflict.txt")).unwrap();
+
+        stage_resolved(work.path(), "conflict.txt").await.unwrap();
     }
 
     #[tokio::test]

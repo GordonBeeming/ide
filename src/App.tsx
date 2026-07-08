@@ -4574,7 +4574,7 @@ export default function App() {
                   {hasUpstream ? (
                     aheadCount === 0 && behindCount === 0 ? (
                       <span
-                        className="commit-panel__sync-tracking commit-panel__sync-tracking--current"
+                        className="commit-panel__sync-tracking"
                         title="Up to date with upstream"
                       >
                         <Check size={12} />
