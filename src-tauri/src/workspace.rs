@@ -942,8 +942,9 @@ fn nearest_existing_ancestor(path: &Path) -> Result<PathBuf, WorkspaceError> {
         // caller's canonicalize() to follow (and fail closed on) the same entry.
         //
         // Only NotFound means "keep walking up" — any other error (e.g.
-        // PermissionDenied) means the entry exists but couldn't be inspected, so it
-        // must be returned rather than silently skipped past.
+        // PermissionDenied) means the entry exists but couldn't be inspected, so
+        // that error must be surfaced to the caller rather than silently skipping
+        // past the entry to validate a higher, unrelated ancestor.
         match current.symlink_metadata() {
             Ok(_) => return Ok(current.to_path_buf()),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
@@ -1154,7 +1155,16 @@ mod tests {
         // Restore permissions so the tempdir can be cleaned up.
         fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).unwrap();
 
-        assert!(matches!(result, Err(WorkspaceError::Io(_))));
+        // A privileged euid (e.g. root in a container) ignores permission bits
+        // entirely, so lstat succeeds and there's nothing to assert here — the
+        // scenario this test targets only exists when permissions are enforced.
+        match result {
+            Err(WorkspaceError::Io(error)) => {
+                assert_eq!(error.kind(), std::io::ErrorKind::PermissionDenied);
+            }
+            Ok(_) => {}
+            Err(other) => panic!("unexpected error: {other:?}"),
+        }
     }
 
     #[cfg(unix)]
