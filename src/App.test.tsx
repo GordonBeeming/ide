@@ -88,6 +88,7 @@ const tauriMocks = vi.hoisted(() => ({
   getGitAttribution: vi.fn(),
   getGitStatus: vi.fn(),
   commitGitChanges: vi.fn(),
+  fetchGit: vi.fn(),
   loadGitFileDiff: vi.fn(),
 }));
 
@@ -156,6 +157,7 @@ vi.mock("./tauri", async () => {
     getGitAttribution: tauriMocks.getGitAttribution,
     getGitStatus: tauriMocks.getGitStatus,
     commitGitChanges: tauriMocks.commitGitChanges,
+    fetchGit: tauriMocks.fetchGit,
     loadGitFileDiff: tauriMocks.loadGitFileDiff,
   };
 });
@@ -374,6 +376,7 @@ describe("App shell interactions", () => {
       pendingFolders: 0,
     });
     tauriMocks.updateUiState.mockResolvedValue(undefined);
+    tauriMocks.fetchGit.mockResolvedValue(undefined);
     tauriMocks.updateAgentContext.mockResolvedValue(undefined);
     tauriMocks.getLspServers.mockResolvedValue([]);
     tauriMocks.getHttpEndpoint.mockResolvedValue("http://127.0.0.1:1420");
@@ -999,6 +1002,92 @@ describe("App shell interactions", () => {
         expect.anything(),
       ),
     );
+  });
+
+  it("persists the auto-fetch cadence and clamps 0 to disabled", async () => {
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    render(<App />);
+
+    expect(await treeButton("README.md")).toBeInTheDocument();
+    await openSettingsDialog();
+    selectSettingsTab("Performance");
+
+    fireEvent.change(
+      screen.getByLabelText("Auto-fetch from remote (seconds, 0 to turn off)"),
+      { target: { value: "0" } },
+    );
+
+    await waitFor(() =>
+      expect(tauriMocks.updateUiState).toHaveBeenLastCalledWith(
+        expect.objectContaining({ autoFetchSeconds: 0 }),
+        expect.anything(),
+      ),
+    );
+  });
+
+  it("auto-fetches on the configured interval and not when disabled", async () => {
+    vi.useFakeTimers();
+    try {
+      tauriMocks.getUiState.mockResolvedValue({
+        view: { showDotfiles: false, showGeneratedInternal: false, autoFetchSeconds: 15 },
+        workspace: { expandedFolders: [], openFiles: [] },
+      });
+      // An upstream must exist (ahead/behind defined) or auto-fetch correctly
+      // skips as "no upstream".
+      tauriMocks.getGitStatus.mockResolvedValue({
+        status: "available",
+        branch: "main",
+        headDetached: false,
+        headUnborn: false,
+        files: [],
+        mergeInProgress: false,
+        conflictedFiles: [],
+        ahead: 0,
+        behind: 0,
+      });
+
+      render(<App />);
+      // Let the async mount (workspace root, files, ui-state) settle so the
+      // auto-fetch effect installs its interval, before the interval could fire.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1000);
+      });
+      expect(tauriMocks.fetchGit).not.toHaveBeenCalled();
+
+      // A full cadence later, it fires exactly once.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(15000);
+      });
+      expect(tauriMocks.fetchGit).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not auto-fetch when the cadence is disabled", async () => {
+    vi.useFakeTimers();
+    try {
+      tauriMocks.getUiState.mockResolvedValue({
+        view: { showDotfiles: false, showGeneratedInternal: false, autoFetchSeconds: 0 },
+        workspace: { expandedFolders: [], openFiles: [] },
+      });
+
+      render(<App />);
+      // Settle the mount (workspace open) so the guard, not a missing mount, is
+      // what keeps the timer from installing.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1000);
+      });
+      // Well past any plausible interval — a disabled cadence installs no timer.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(120000);
+      });
+      expect(tauriMocks.fetchGit).not.toHaveBeenCalled();
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
   });
 
   it("shows preview feature flags and persists a toggle", async () => {

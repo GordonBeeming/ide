@@ -270,6 +270,10 @@ pub async fn start_http_server(config: HttpServerConfig) -> Result<HttpServerInf
         )
         .route("/api/git-sync", post(post_git_sync).options(cors_preflight))
         .route(
+            "/api/git-fetch",
+            post(post_git_fetch).options(cors_preflight),
+        )
+        .route(
             "/api/git-stage-resolved",
             post(post_git_stage_resolved).options(cors_preflight),
         )
@@ -812,6 +816,17 @@ async fn post_git_sync(
     let workspace_root = resolved.workspace_root.read().await.clone();
     let result = git_sync::sync_workspace(&workspace_root).await?;
     Ok(Json(result))
+}
+
+async fn post_git_fetch(
+    State(state): State<HttpServerState>,
+    Extension(resolved): Extension<ResolvedWorkspace>,
+    headers: HeaderMap,
+) -> Result<StatusCode, ApiError> {
+    require_bearer_auth(&headers, &state.mcp_token)?;
+    let workspace_root = resolved.workspace_root.read().await.clone();
+    git_sync::fetch_upstream(&workspace_root).await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 async fn post_git_stage_resolved(

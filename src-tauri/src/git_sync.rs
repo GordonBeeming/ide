@@ -291,6 +291,49 @@ fn complete_merge_blocking(workspace_root: &Path) -> Result<GitMergeCommit, GitS
     })
 }
 
+/// Fetch-only refresh of the current branch's upstream remote-tracking refs — no
+/// pull, push, or merge. This is what a background auto-fetch runs so the polled
+/// status can re-derive ahead/behind. A repo with no upstream is a no-op (Ok);
+/// genuine failures (offline, git missing) return an error the caller is expected
+/// to swallow, since auto-fetch must stay silent.
+pub(crate) async fn fetch_upstream(workspace_root: &Path) -> Result<(), GitSyncError> {
+    let workspace_root = workspace_root.to_path_buf();
+    match tokio::task::spawn_blocking(move || fetch_upstream_blocking(&workspace_root)).await {
+        Ok(result) => result,
+        Err(_) => Err(GitSyncError::Failed(
+            "fetch task failed to complete".to_string(),
+        )),
+    }
+}
+
+fn fetch_upstream_blocking(workspace_root: &Path) -> Result<(), GitSyncError> {
+    let program = resolve_git_program().ok_or(GitSyncError::GitUnavailable)?;
+    let git = GitCli {
+        program,
+        workdir: workspace_root.to_path_buf(),
+    };
+    ensure_repo(&git)?;
+
+    let branch = git
+        .run(&["rev-parse", "--abbrev-ref", "HEAD"])?
+        .stdout
+        .trim()
+        .to_string();
+    // No configured remote (fresh branch, detached HEAD) means nothing to fetch.
+    let Some(remote) = git.branch_remote(&branch)? else {
+        return Ok(());
+    };
+
+    let fetch = git.run(&["fetch", &remote])?;
+    if !fetch.success {
+        return Err(GitSyncError::Failed(git_message(
+            &fetch,
+            "git fetch failed",
+        )));
+    }
+    Ok(())
+}
+
 fn ensure_repo(git: &GitCli) -> Result<(), GitSyncError> {
     // git itself decides whether this directory is inside a work tree, so a
     // workspace opened on a repo subdirectory still resolves correctly.
@@ -611,6 +654,54 @@ mod tests {
             }
             other => panic!("expected MergeConflict, got {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn fetch_upstream_updates_tracking_ref_so_status_sees_behind() {
+        let remote = tempdir().unwrap();
+        init_bare_remote(remote.path());
+        let work = tempdir().unwrap();
+        clone_with_commit(remote.path(), work.path());
+
+        // Advance the remote from a second clone; `work` doesn't know yet.
+        let other = tempdir().unwrap();
+        clone_existing(remote.path(), other.path());
+        fs::write(other.path().join("remote.txt"), "y\n").unwrap();
+        run_git(other.path(), ["add", "."]);
+        run_git(other.path(), ["commit", "-m", "Remote commit"]);
+        run_git(other.path(), ["push"]);
+
+        // Before the fetch, the tracking ref is stale, so status shows level.
+        let before = crate::git_commit::status_for_workspace(work.path()).await;
+        assert_eq!(before.behind, Some(0));
+
+        fetch_upstream(work.path()).await.unwrap();
+
+        // Fetch-only: HEAD didn't move (no merge), but the tracking ref did.
+        let after = crate::git_commit::status_for_workspace(work.path()).await;
+        assert_eq!(after.behind, Some(1));
+        assert_eq!(after.ahead, Some(0));
+    }
+
+    #[tokio::test]
+    async fn fetch_upstream_is_a_noop_without_an_upstream() {
+        let dir = tempdir().unwrap();
+        init_repo(dir.path());
+        fs::write(dir.path().join("file.txt"), "one\n").unwrap();
+        run_git(dir.path(), ["add", "."]);
+        run_git(dir.path(), ["commit", "-m", "Initial commit"]);
+
+        // No remote configured — quietly does nothing rather than erroring.
+        fetch_upstream(dir.path()).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn fetch_upstream_reports_not_a_repo() {
+        let dir = tempdir().unwrap();
+
+        let result = fetch_upstream(dir.path()).await;
+
+        assert!(matches!(result, Err(GitSyncError::NotARepo)));
     }
 
     // The ahead/behind counts live on GitStatus (the gix path), but they're the

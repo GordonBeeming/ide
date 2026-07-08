@@ -200,6 +200,11 @@ struct PersistedViewSettings {
     recent_relative_threshold: String,
     #[serde(default = "default_diff_view_mode")]
     diff_view_mode: String,
+    // How often the app auto-fetches the current branch's upstream, in seconds.
+    // 0 disables it; any other value is clamped to a sane range so it can't hammer
+    // a remote. Consumed by the frontend timer only.
+    #[serde(default = "default_auto_fetch_seconds")]
+    auto_fetch_seconds: usize,
     // Persisted feature-flag overrides only. Defaults and metadata live in the
     // frontend registry (src/featureFlags.ts); unknown/retired ids are pruned by
     // sanitize_view_settings so the settings file stays tidy as flags retire.
@@ -230,6 +235,7 @@ impl Default for PersistedViewSettings {
             date_time_format: default_date_time_format(),
             recent_relative_threshold: default_recent_relative_threshold(),
             diff_view_mode: default_diff_view_mode(),
+            auto_fetch_seconds: default_auto_fetch_seconds(),
             feature_flags: BTreeMap::new(),
         }
     }
@@ -278,6 +284,11 @@ const MIN_EDITOR_FONT_SIZE: usize = 1;
 const DEFAULT_EDITOR_FONT_SIZE: usize = 13;
 const MIN_APP_ZOOM_PERCENT: usize = 10;
 const DEFAULT_APP_ZOOM_PERCENT: usize = 100;
+// Auto-fetch cadence bounds. 0 means disabled; otherwise the interval is clamped
+// to [15s, 24h] so it stays light on the remote and can't be set to hammer it.
+const MIN_AUTO_FETCH_SECONDS: usize = 15;
+const DEFAULT_AUTO_FETCH_SECONDS: usize = 60;
+const MAX_AUTO_FETCH_SECONDS: usize = 86_400;
 const MIN_SIDEBAR_WIDTH: usize = 180;
 const MAX_SIDEBAR_WIDTH: usize = 1040;
 const MIN_COMMIT_MESSAGE_HEIGHT: usize = 56;
@@ -350,6 +361,10 @@ fn default_app_zoom_percent() -> usize {
     DEFAULT_APP_ZOOM_PERCENT
 }
 
+fn default_auto_fetch_seconds() -> usize {
+    DEFAULT_AUTO_FETCH_SECONDS
+}
+
 fn default_track_active_file() -> bool {
     true
 }
@@ -405,6 +420,12 @@ fn sanitize_view_settings(mut settings: PersistedViewSettings) -> PersistedViewS
     );
     settings.editor_font_size = settings.editor_font_size.max(MIN_EDITOR_FONT_SIZE);
     settings.app_zoom_percent = settings.app_zoom_percent.max(MIN_APP_ZOOM_PERCENT);
+    // 0 stays 0 (disabled); any real cadence is clamped into the safe band.
+    if settings.auto_fetch_seconds != 0 {
+        settings.auto_fetch_seconds = settings
+            .auto_fetch_seconds
+            .clamp(MIN_AUTO_FETCH_SECONDS, MAX_AUTO_FETCH_SECONDS);
+    }
     if !KNOWN_DATE_TIME_FORMATS.contains(&settings.date_time_format.as_str()) {
         settings.date_time_format = default_date_time_format();
     }
@@ -929,6 +950,14 @@ async fn git_sync(
 ) -> Result<git_sync::GitSyncResult, CommandError> {
     let workspace_root = workspace_root_for_window(&state, &window).await;
     git_sync::sync_workspace(&workspace_root)
+        .await
+        .map_err(CommandError::from)
+}
+
+#[tauri::command]
+async fn git_fetch(window: tauri::Window, state: State<'_, AppState>) -> Result<(), CommandError> {
+    let workspace_root = workspace_root_for_window(&state, &window).await;
+    git_sync::fetch_upstream(&workspace_root)
         .await
         .map_err(CommandError::from)
 }
@@ -1965,6 +1994,7 @@ pub fn run() {
             get_git_status,
             git_commit,
             git_sync,
+            git_fetch,
             git_stage_resolved,
             git_complete_merge,
             git_file_diff,
@@ -3483,6 +3513,7 @@ mod tests {
                 date_time_format: "yyyyMmDdHhMm".to_string(),
                 recent_relative_threshold: "twoDays".to_string(),
                 diff_view_mode: "sideBySide".to_string(),
+                auto_fetch_seconds: 120,
                 feature_flags: BTreeMap::new(),
             },
             workspaces: vec![PersistedWorkspaceUiState {
@@ -3517,6 +3548,7 @@ mod tests {
         assert_eq!(loaded.view.date_time_format, "yyyyMmDdHhMm");
         assert_eq!(loaded.view.recent_relative_threshold, "twoDays");
         assert_eq!(loaded.view.diff_view_mode, "sideBySide");
+        assert_eq!(loaded.view.auto_fetch_seconds, 120);
         assert_eq!(loaded.workspaces.len(), 1);
         assert_eq!(
             loaded.workspaces[0].commit_message_height,
@@ -3585,6 +3617,28 @@ mod tests {
         let loaded = load_ui_state(&ui_state_path).unwrap();
         assert_eq!(loaded.view.feature_flags.get("gitAttribution"), Some(&true));
         assert!(!loaded.view.feature_flags.contains_key("retiredFlag"));
+    }
+
+    #[test]
+    fn auto_fetch_seconds_defaults_and_clamps() {
+        assert_eq!(
+            PersistedViewSettings::default().auto_fetch_seconds,
+            DEFAULT_AUTO_FETCH_SECONDS
+        );
+
+        let clamp = |value: usize| {
+            sanitize_view_settings(PersistedViewSettings {
+                auto_fetch_seconds: value,
+                ..PersistedViewSettings::default()
+            })
+            .auto_fetch_seconds
+        };
+
+        // 0 stays disabled; a real cadence is pulled into [15, 86400].
+        assert_eq!(clamp(0), 0);
+        assert_eq!(clamp(5), MIN_AUTO_FETCH_SECONDS);
+        assert_eq!(clamp(60), 60);
+        assert_eq!(clamp(9_999_999), MAX_AUTO_FETCH_SECONDS);
     }
 
     #[test]

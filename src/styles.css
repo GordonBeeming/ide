@@ -657,6 +657,29 @@ button {
   color: var(--text);
 }
 
+/* Transient success toasts (sync result, completed merge) hold, then ease out
+   over the last stretch of their ~5s life so removal doesn't just blink away.
+   The JS timeout clears the element at 5s; this only animates the opacity. */
+.commit-panel__notice--fade {
+  animation: commit-panel-notice-fade 5s ease forwards;
+}
+
+@keyframes commit-panel-notice-fade {
+  0%,
+  88% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .commit-panel__notice--fade {
+    animation: none;
+  }
+}
+
 /* Scrollable content (state message, changes tree, commit box) lives in the
    body; the sync footer below it is a non-scrolling row, so Sync stays visible
    in every panel state — including the empty "No changes" one. */

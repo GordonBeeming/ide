@@ -138,6 +138,7 @@ import {
   statFile,
   stageResolvedFile,
   syncGit,
+  fetchGit,
   completeMerge,
   takeOpenedLaunchTargets,
   updateAgentContext,
@@ -333,6 +334,10 @@ const editorFontSizeStep = 1;
 const minAppZoomPercent = 10;
 const defaultAppZoomPercent = 100;
 const appZoomStepPercent = 10;
+// Auto-fetch cadence bounds mirror the backend clamp (0 disables; else 15s..24h).
+const minAutoFetchSeconds = 15;
+const maxAutoFetchSeconds = 86400;
+const defaultAutoFetchSeconds = 60;
 const minSidebarWidth = 180;
 const maxSidebarWidth = 1040;
 const defaultSidebarWidth = 288;
@@ -357,6 +362,15 @@ function sanitizeNumberMinimum(value: number | undefined, min: number, fallback:
   if (!Number.isFinite(value)) return fallback;
   const finiteValue = value as number;
   return Math.max(min, Math.trunc(finiteValue));
+}
+
+// 0 stays disabled; any other cadence is clamped into the safe band, matching the
+// backend's sanitize_view_settings so the UI and persisted value never disagree.
+function sanitizeAutoFetchSeconds(value: number | undefined) {
+  if (!Number.isFinite(value)) return defaultAutoFetchSeconds;
+  const seconds = Math.trunc(value as number);
+  if (seconds <= 0) return 0;
+  return Math.min(maxAutoFetchSeconds, Math.max(minAutoFetchSeconds, seconds));
 }
 
 function sanitizeTreeScanLimit(value: number | undefined) {
@@ -574,6 +588,7 @@ export default function App() {
   const [recentRelativeThreshold, setRecentRelativeThreshold] =
     useState<RecentRelativeThresholdId>(defaultRecentRelativeThreshold);
   const [diffViewMode, setDiffViewMode] = useState<DiffViewMode>(defaultDiffViewMode);
+  const [autoFetchSeconds, setAutoFetchSeconds] = useState(defaultAutoFetchSeconds);
   const [featureFlags, setFeatureFlags] = useState<FeatureFlagOverrides>({});
   const [prefersDark, setPrefersDark] = useState(systemPrefersDark);
   const [uiStateLoaded, setUiStateLoaded] = useState(false);
@@ -1086,6 +1101,7 @@ export default function App() {
       sanitizeRecentRelativeThreshold(snapshot.view.recentRelativeThreshold),
     );
     setDiffViewMode(sanitizeDiffViewMode(snapshot.view.diffViewMode));
+    setAutoFetchSeconds(sanitizeAutoFetchSeconds(snapshot.view.autoFetchSeconds));
     setFeatureFlags(sanitizeFeatureFlagOverrides(snapshot.view.featureFlags));
     setExpandedFolders(new Set(snapshot.workspace.expandedFolders));
     setTrustExternalWorkspace(Boolean(snapshot.workspace.trustExternalSymlinks));
@@ -1470,6 +1486,16 @@ export default function App() {
     return () => window.clearTimeout(timeoutId);
   }, [gitMergeSuccess]);
 
+  // The sync-result toast ("Synced main (pushed 1)", "Already up to date", …) is a
+  // transient confirmation too, so it fades and clears after a few seconds. The
+  // branch-line ahead/behind indicator is separate state and stays put. A merge
+  // conflict is not a toast — it drives the live panel — so it's left alone here.
+  useEffect(() => {
+    if (!gitSyncResult || gitSyncResult.outcome === "mergeConflict") return;
+    const timeoutId = window.setTimeout(() => setGitSyncResult(undefined), 5000);
+    return () => window.clearTimeout(timeoutId);
+  }, [gitSyncResult]);
+
   // Diff tabs are inspection surfaces scoped to commit mode — leaving it drops
   // every unpinned one so they don't accumulate; a double-clicked (pinned) tab
   // was a deliberate keep and survives.
@@ -1613,6 +1639,50 @@ export default function App() {
     }, 2000);
     return () => window.clearInterval(intervalId);
   }, [commitModeActive, mergeInProgress, refreshGitStatus]);
+
+  // Guards for the background auto-fetch below, read through a ref so the interval
+  // sees current values without being torn down and rebuilt on every state change.
+  const autoFetchInFlightRef = useRef(false);
+  const autoFetchGuardRef = useRef({ busy: false, noUpstream: false });
+  useEffect(() => {
+    autoFetchGuardRef.current = {
+      // A sync/merge already touches the remote or index — don't fetch over it.
+      busy: gitSyncInFlight || gitMergeInFlight || mergeInProgress,
+      // Only skip once a loaded status confirms there's no upstream; while status
+      // is unknown, let the fetch run (the backend no-ops if there's truly none).
+      noUpstream: gitStatus?.status === "available" && gitStatus.ahead === undefined,
+    };
+  }, [gitSyncInFlight, gitMergeInFlight, mergeInProgress, gitStatus]);
+
+  // Background auto-fetch: while a repo workspace is open, refresh the upstream
+  // tracking refs on the configured cadence so the ahead/behind counts stay current
+  // even before the commit panel is opened. Fetch-only (no pull/push), silent on
+  // failure, and never overlapping — a disabled cadence (0) turns it off entirely.
+  useEffect(() => {
+    if (!gitCommitEnabled || !workspaceRoot || singleFileMode) return;
+    if (autoFetchSeconds <= 0) return;
+    const intervalId = window.setInterval(() => {
+      if (autoFetchInFlightRef.current) return;
+      const { busy, noUpstream } = autoFetchGuardRef.current;
+      if (busy || noUpstream) return;
+      autoFetchInFlightRef.current = true;
+      void fetchGit()
+        .then(() => refreshGitStatus())
+        .catch(() => {
+          // Best-effort: offline / auth / no-upstream must not spam the user.
+        })
+        .finally(() => {
+          autoFetchInFlightRef.current = false;
+        });
+    }, autoFetchSeconds * 1000);
+    return () => window.clearInterval(intervalId);
+  }, [
+    gitCommitEnabled,
+    workspaceRoot,
+    singleFileMode,
+    autoFetchSeconds,
+    refreshGitStatus,
+  ]);
 
   const readOpenFileFromDisk = useCallback(async (path: string) => {
     const entry = await statFile(path);
@@ -2208,6 +2278,7 @@ export default function App() {
           dateTimeFormat,
           recentRelativeThreshold,
           diffViewMode,
+          autoFetchSeconds,
           featureFlags,
         },
         {
@@ -2255,6 +2326,7 @@ export default function App() {
     dateTimeFormat,
     recentRelativeThreshold,
     diffViewMode,
+    autoFetchSeconds,
     featureFlags,
     uiStateLoaded,
     workspaceUiRestored,
@@ -4583,14 +4655,14 @@ export default function App() {
                 </div>
               ) : gitMergeSuccess ? (
                 <div
-                  className="commit-panel__notice commit-panel__notice--success"
+                  className="commit-panel__notice commit-panel__notice--success commit-panel__notice--fade"
                   role="status"
                 >
                   {gitMergeSuccess}
                 </div>
               ) : gitSyncResult ? (
                 <div
-                  className="commit-panel__notice commit-panel__notice--success"
+                  className="commit-panel__notice commit-panel__notice--success commit-panel__notice--fade"
                   role="status"
                 >
                   {formatGitSyncResult(gitSyncResult)}
@@ -5674,6 +5746,26 @@ export default function App() {
                             );
                             setCommandPaletteResultLimit(next);
                             setStatus(`Command palette result limit set to ${next}`);
+                          }}
+                        />
+                      </label>
+                      <label className="dialog-field">
+                        <span>Auto-fetch from remote (seconds, 0 to turn off)</span>
+                        <input
+                          inputMode="numeric"
+                          min={0}
+                          max={maxAutoFetchSeconds}
+                          step={15}
+                          type="number"
+                          value={autoFetchSeconds}
+                          onChange={(event) => {
+                            const next = sanitizeAutoFetchSeconds(Number(event.target.value));
+                            setAutoFetchSeconds(next);
+                            setStatus(
+                              next === 0
+                                ? "Auto-fetch turned off"
+                                : `Auto-fetch every ${next}s`,
+                            );
                           }}
                         />
                       </label>

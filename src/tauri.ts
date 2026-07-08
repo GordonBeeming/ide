@@ -236,6 +236,8 @@ export interface PersistedViewSettings {
   dateTimeFormat?: DateTimeFormatId;
   recentRelativeThreshold?: RecentRelativeThresholdId;
   diffViewMode?: DiffViewMode;
+  // Seconds between background auto-fetches; 0 disables it. Clamped on the backend.
+  autoFetchSeconds?: number;
   // Persisted feature-flag overrides only; defaults live in src/featureFlags.ts.
   featureFlags?: Record<string, boolean>;
 }
@@ -306,6 +308,7 @@ const defaultUiSnapshot: PersistedUiSnapshot = {
     dateTimeFormat: defaultDateTimeFormat,
     recentRelativeThreshold: defaultRecentRelativeThreshold,
     diffViewMode: defaultDiffViewMode,
+    autoFetchSeconds: 60,
     featureFlags: {},
   },
   workspace: {
@@ -649,6 +652,14 @@ export function syncGit() {
       throw new Error("Git sync response had an unexpected shape");
     }
     return normalized;
+  });
+}
+
+export function fetchGit() {
+  return callApi<void>("git_fetch", "/api/git-fetch", {
+    method: "POST",
+    body: {},
+    invokeArgs: {},
   });
 }
 
