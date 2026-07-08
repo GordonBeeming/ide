@@ -10,6 +10,8 @@ use std::process::{Command as StdCommand, Stdio};
 
 use serde::Serialize;
 
+use crate::workspace::{resolve_workspace_path, WorkspaceError};
+
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 // Internally tagged so the frontend reads one `outcome` discriminant instead of
 // serde's default externally-tagged wrapper object. Matches the camelCase shape
@@ -40,8 +42,25 @@ pub(crate) enum GitSyncError {
     NotARepo,
     #[error("git executable not found on PATH")]
     GitUnavailable,
+    #[error("no merge is in progress")]
+    NoMergeInProgress,
+    #[error("{0} still contains conflict markers")]
+    ConflictMarkers(String),
+    #[error("resolve all conflicts before completing the merge")]
+    UnresolvedConflicts,
+    #[error("{0}")]
+    Workspace(#[from] WorkspaceError),
     #[error("{0}")]
     Failed(String),
+}
+
+/// The commit that finished a merge, mirroring `GitCommitResult`'s shape.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct GitMergeCommit {
+    pub sha: String,
+    pub short_sha: String,
+    pub branch: Option<String>,
 }
 
 pub(crate) async fn sync_workspace(workspace_root: &Path) -> Result<GitSyncResult, GitSyncError> {
@@ -61,12 +80,7 @@ fn sync_workspace_blocking(workspace_root: &Path) -> Result<GitSyncResult, GitSy
         workdir: workspace_root.to_path_buf(),
     };
 
-    // `git` itself decides whether this directory is inside a work tree, so a
-    // workspace opened on a subdirectory of the repo still resolves correctly.
-    let inside = git.run(&["rev-parse", "--is-inside-work-tree"])?;
-    if !inside.success || inside.stdout.trim() != "true" {
-        return Err(GitSyncError::NotARepo);
-    }
+    ensure_repo(&git)?;
 
     // `--abbrev-ref HEAD` is "HEAD" on a detached checkout; that flows through to
     // a NoUpstream result below (a detached HEAD has no tracking branch).
@@ -160,6 +174,129 @@ fn sync_workspace_blocking(workspace_root: &Path) -> Result<GitSyncResult, GitSy
             pushed,
         })
     }
+}
+
+pub(crate) async fn stage_resolved(workspace_root: &Path, path: &str) -> Result<(), GitSyncError> {
+    let workspace_root = workspace_root.to_path_buf();
+    let path = path.to_string();
+    match tokio::task::spawn_blocking(move || stage_resolved_blocking(&workspace_root, &path)).await
+    {
+        Ok(result) => result,
+        Err(_) => Err(GitSyncError::Failed(
+            "stage task failed to complete".to_string(),
+        )),
+    }
+}
+
+fn stage_resolved_blocking(workspace_root: &Path, path: &str) -> Result<(), GitSyncError> {
+    let program = resolve_git_program().ok_or(GitSyncError::GitUnavailable)?;
+    let git = GitCli {
+        program,
+        workdir: workspace_root.to_path_buf(),
+    };
+    ensure_repo(&git)?;
+
+    let absolute = resolve_workspace_path(workspace_root, path)?;
+    // Refuse to stage a file that still carries conflict markers — otherwise
+    // `git add` would mark a still-conflicted file resolved and the markers would
+    // land in the merge commit. Binary / non-UTF-8 content has no textual markers,
+    // so it stages as-is (resolving a binary conflict means picking a side).
+    match std::fs::read(&absolute) {
+        Ok(bytes) => {
+            if let Ok(text) = std::str::from_utf8(&bytes) {
+                if has_conflict_markers(text) {
+                    return Err(GitSyncError::ConflictMarkers(path.to_string()));
+                }
+            }
+        }
+        Err(error) => return Err(GitSyncError::Workspace(WorkspaceError::Io(error))),
+    }
+
+    let add = git.run(&["add", "--", path])?;
+    if !add.success {
+        return Err(GitSyncError::Failed(git_message(&add, "git add failed")));
+    }
+    Ok(())
+}
+
+pub(crate) async fn complete_merge(workspace_root: &Path) -> Result<GitMergeCommit, GitSyncError> {
+    let workspace_root = workspace_root.to_path_buf();
+    match tokio::task::spawn_blocking(move || complete_merge_blocking(&workspace_root)).await {
+        Ok(result) => result,
+        Err(_) => Err(GitSyncError::Failed(
+            "merge task failed to complete".to_string(),
+        )),
+    }
+}
+
+fn complete_merge_blocking(workspace_root: &Path) -> Result<GitMergeCommit, GitSyncError> {
+    let program = resolve_git_program().ok_or(GitSyncError::GitUnavailable)?;
+    let git = GitCli {
+        program,
+        workdir: workspace_root.to_path_buf(),
+    };
+    ensure_repo(&git)?;
+
+    let mid_merge = git
+        .absolute_git_dir()?
+        .map(|dir| dir.join("MERGE_HEAD").exists())
+        .unwrap_or(false);
+    if !mid_merge {
+        return Err(GitSyncError::NoMergeInProgress);
+    }
+    if !git.conflicted_files()?.is_empty() {
+        return Err(GitSyncError::UnresolvedConflicts);
+    }
+
+    // `--no-edit` keeps git's generated merge message; git commits both parents
+    // (HEAD + MERGE_HEAD) and clears the merge state on success.
+    let commit = git.run(&["commit", "--no-edit"])?;
+    if !commit.success {
+        return Err(GitSyncError::Failed(git_message(
+            &commit,
+            "git commit failed",
+        )));
+    }
+
+    let sha = git.run(&["rev-parse", "HEAD"])?.stdout.trim().to_string();
+    let short_sha = git
+        .run(&["rev-parse", "--short", "HEAD"])?
+        .stdout
+        .trim()
+        .to_string();
+    let branch_output = git.run(&["symbolic-ref", "--quiet", "--short", "HEAD"])?;
+    let branch = if branch_output.success {
+        let name = branch_output.stdout.trim();
+        (!name.is_empty()).then(|| name.to_string())
+    } else {
+        None
+    };
+
+    Ok(GitMergeCommit {
+        sha,
+        short_sha,
+        branch,
+    })
+}
+
+fn ensure_repo(git: &GitCli) -> Result<(), GitSyncError> {
+    // git itself decides whether this directory is inside a work tree, so a
+    // workspace opened on a repo subdirectory still resolves correctly.
+    let inside = git.run(&["rev-parse", "--is-inside-work-tree"])?;
+    if !inside.success || inside.stdout.trim() != "true" {
+        return Err(GitSyncError::NotARepo);
+    }
+    Ok(())
+}
+
+// Standard git conflict markers: `<<<<<<<` (ours), `>>>>>>>` (theirs), and
+// `|||||||` (the base, in diff3 style). The `=======` separator is deliberately
+// not matched — it occurs often in ordinary text (underlines, rules) and the
+// start/end markers are enough to prove a conflict is unresolved.
+fn has_conflict_markers(contents: &str) -> bool {
+    contents.lines().any(|line| {
+        line.starts_with("<<<<<<<") || line.starts_with(">>>>>>>") || line.starts_with("|||||||")
+    })
 }
 
 struct GitCli {
@@ -415,11 +552,100 @@ mod tests {
 
     #[tokio::test]
     async fn sync_reports_merge_conflict_on_divergent_change() {
+        let (_remote, work, _other) = conflicted_workspace();
+
+        let result = sync_workspace(work.path()).await.unwrap();
+
+        match result {
+            GitSyncResult::MergeConflict { branch, files } => {
+                assert_eq!(branch, "main");
+                assert_eq!(files, vec!["conflict.txt".to_string()]);
+            }
+            other => panic!("expected MergeConflict, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn conflict_surfaces_in_git_status_merge_fields() {
+        let (_remote, work, _other) = conflicted_workspace();
+        sync_workspace(work.path()).await.unwrap();
+
+        let status = crate::git_commit::status_for_workspace(work.path()).await;
+
+        assert!(status.merge_in_progress);
+        assert_eq!(status.conflicted_files, vec!["conflict.txt".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn stage_resolved_refuses_a_file_with_conflict_markers() {
+        let (_remote, work, _other) = conflicted_workspace();
+        // The failed pull leaves conflict markers on disk; staging must refuse.
+        sync_workspace(work.path()).await.unwrap();
+
+        let error = stage_resolved(work.path(), "conflict.txt")
+            .await
+            .unwrap_err();
+
+        assert!(matches!(error, GitSyncError::ConflictMarkers(path) if path == "conflict.txt"));
+    }
+
+    #[tokio::test]
+    async fn stage_resolved_then_complete_merge_finishes_the_merge() {
+        let (remote, work, _other) = conflicted_workspace();
+        sync_workspace(work.path()).await.unwrap();
+
+        // Resolve by removing the markers, then stage and complete the merge.
+        fs::write(work.path().join("conflict.txt"), "resolved\n").unwrap();
+        stage_resolved(work.path(), "conflict.txt").await.unwrap();
+
+        let result = complete_merge(work.path()).await.unwrap();
+
+        assert_eq!(result.branch, Some("main".to_string()));
+        // The merge state is cleared and HEAD is a two-parent merge commit.
+        assert!(!work.path().join(".git/MERGE_HEAD").exists());
+        assert_eq!(
+            git_stdout(work.path(), ["rev-list", "--count", "--merges", "HEAD"])
+                .unwrap()
+                .trim(),
+            "1"
+        );
+        // The resolved content is what got committed.
+        assert_eq!(
+            git_stdout(work.path(), ["show", "HEAD:conflict.txt"]).unwrap(),
+            "resolved\n"
+        );
+        drop(remote);
+    }
+
+    #[tokio::test]
+    async fn complete_merge_errors_when_no_merge_in_progress() {
         let remote = tempdir().unwrap();
         init_bare_remote(remote.path());
         let work = tempdir().unwrap();
         clone_with_commit(remote.path(), work.path());
-        // Seed a shared file both sides will edit differently.
+
+        let error = complete_merge(work.path()).await.unwrap_err();
+
+        assert!(matches!(error, GitSyncError::NoMergeInProgress));
+    }
+
+    #[tokio::test]
+    async fn complete_merge_errors_while_conflicts_remain_unresolved() {
+        let (_remote, work, _other) = conflicted_workspace();
+        sync_workspace(work.path()).await.unwrap();
+
+        let error = complete_merge(work.path()).await.unwrap_err();
+
+        assert!(matches!(error, GitSyncError::UnresolvedConflicts));
+    }
+
+    // Leaves `work` one local commit and one remote commit apart on `conflict.txt`,
+    // so a pull produces an unresolved merge conflict on that file.
+    fn conflicted_workspace() -> (tempfile::TempDir, tempfile::TempDir, tempfile::TempDir) {
+        let remote = tempdir().unwrap();
+        init_bare_remote(remote.path());
+        let work = tempdir().unwrap();
+        clone_with_commit(remote.path(), work.path());
         fs::write(work.path().join("conflict.txt"), "base\n").unwrap();
         run_git(work.path(), ["add", "."]);
         run_git(work.path(), ["commit", "-m", "Add shared file"]);
@@ -432,20 +658,11 @@ mod tests {
         run_git(other.path(), ["commit", "-m", "Remote edit"]);
         run_git(other.path(), ["push"]);
 
-        // `work` edits the same line, so the pull cannot fast-forward or auto-merge.
         fs::write(work.path().join("conflict.txt"), "local change\n").unwrap();
         run_git(work.path(), ["add", "."]);
         run_git(work.path(), ["commit", "-m", "Local edit"]);
 
-        let result = sync_workspace(work.path()).await.unwrap();
-
-        match result {
-            GitSyncResult::MergeConflict { branch, files } => {
-                assert_eq!(branch, "main");
-                assert_eq!(files, vec!["conflict.txt".to_string()]);
-            }
-            other => panic!("expected MergeConflict, got {other:?}"),
-        }
+        (remote, work, other)
     }
 
     fn init_repo(cwd: &Path) {

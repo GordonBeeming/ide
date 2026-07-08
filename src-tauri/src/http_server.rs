@@ -155,6 +155,12 @@ struct GitCommitRequest {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct GitStageResolvedRequest {
+    path: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct DeleteFileRequest {
     path: String,
 }
@@ -263,6 +269,14 @@ pub async fn start_http_server(config: HttpServerConfig) -> Result<HttpServerInf
             post(post_git_commit).options(cors_preflight),
         )
         .route("/api/git-sync", post(post_git_sync).options(cors_preflight))
+        .route(
+            "/api/git-stage-resolved",
+            post(post_git_stage_resolved).options(cors_preflight),
+        )
+        .route(
+            "/api/git-complete-merge",
+            post(post_git_complete_merge).options(cors_preflight),
+        )
         .route("/api/folder", post(create_folder).options(cors_preflight))
         .route(
             "/api/open-path",
@@ -797,6 +811,29 @@ async fn post_git_sync(
     require_bearer_auth(&headers, &state.mcp_token)?;
     let workspace_root = resolved.workspace_root.read().await.clone();
     let result = git_sync::sync_workspace(&workspace_root).await?;
+    Ok(Json(result))
+}
+
+async fn post_git_stage_resolved(
+    State(state): State<HttpServerState>,
+    Extension(resolved): Extension<ResolvedWorkspace>,
+    headers: HeaderMap,
+    Json(request): Json<GitStageResolvedRequest>,
+) -> Result<StatusCode, ApiError> {
+    require_bearer_auth(&headers, &state.mcp_token)?;
+    let workspace_root = resolved.workspace_root.read().await.clone();
+    git_sync::stage_resolved(&workspace_root, &request.path).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn post_git_complete_merge(
+    State(state): State<HttpServerState>,
+    Extension(resolved): Extension<ResolvedWorkspace>,
+    headers: HeaderMap,
+) -> Result<Json<git_sync::GitMergeCommit>, ApiError> {
+    require_bearer_auth(&headers, &state.mcp_token)?;
+    let workspace_root = resolved.workspace_root.read().await.clone();
+    let result = git_sync::complete_merge(&workspace_root).await?;
     Ok(Json(result))
 }
 
@@ -1616,7 +1653,11 @@ impl From<git_commit::GitFileDiffError> for ApiError {
 impl From<git_sync::GitSyncError> for ApiError {
     fn from(value: git_sync::GitSyncError) -> Self {
         let status = match &value {
-            git_sync::GitSyncError::NotARepo => StatusCode::BAD_REQUEST,
+            git_sync::GitSyncError::NotARepo
+            | git_sync::GitSyncError::NoMergeInProgress
+            | git_sync::GitSyncError::ConflictMarkers(_)
+            | git_sync::GitSyncError::UnresolvedConflicts
+            | git_sync::GitSyncError::Workspace(_) => StatusCode::BAD_REQUEST,
             git_sync::GitSyncError::GitUnavailable => StatusCode::INTERNAL_SERVER_ERROR,
             git_sync::GitSyncError::Failed(_) => StatusCode::INTERNAL_SERVER_ERROR,
         };

@@ -934,6 +934,29 @@ async fn git_sync(
 }
 
 #[tauri::command]
+async fn git_stage_resolved(
+    window: tauri::Window,
+    state: State<'_, AppState>,
+    path: String,
+) -> Result<(), CommandError> {
+    let workspace_root = workspace_root_for_window(&state, &window).await;
+    git_sync::stage_resolved(&workspace_root, &path)
+        .await
+        .map_err(CommandError::from)
+}
+
+#[tauri::command]
+async fn git_complete_merge(
+    window: tauri::Window,
+    state: State<'_, AppState>,
+) -> Result<git_sync::GitMergeCommit, CommandError> {
+    let workspace_root = workspace_root_for_window(&state, &window).await;
+    git_sync::complete_merge(&workspace_root)
+        .await
+        .map_err(CommandError::from)
+}
+
+#[tauri::command]
 async fn git_file_diff(
     window: tauri::Window,
     state: State<'_, AppState>,
@@ -1942,6 +1965,8 @@ pub fn run() {
             get_git_status,
             git_commit,
             git_sync,
+            git_stage_resolved,
+            git_complete_merge,
             git_file_diff,
             write_file,
             create_file,

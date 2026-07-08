@@ -24,6 +24,14 @@ pub(crate) struct GitStatus {
     pub head_detached: bool,
     pub head_unborn: bool,
     pub files: Vec<GitStatusEntry>,
+    // True while a merge is unfinished (MERGE_HEAD present). Polling this lets the
+    // UI drive the conflict-resolution flow live instead of stranding the user in
+    // a one-shot result.
+    pub merge_in_progress: bool,
+    // Workspace-relative paths with unmerged index entries (conflict stages).
+    // Empties as the user stages resolutions, which is what re-enables completing
+    // the merge.
+    pub conflicted_files: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -171,6 +179,9 @@ fn status_for_workspace_blocking(workspace_root: &Path) -> GitStatus {
     let mut files: Vec<GitStatusEntry> = entries.into_values().collect();
     files.sort_by(|a, b| a.path.cmp(&b.path));
 
+    let merge_in_progress = repo.git_dir().join("MERGE_HEAD").exists();
+    let conflicted_files = collect_conflicted_files(&repo, prefix.as_deref());
+
     GitStatus {
         status: GitStatusAvailability::Available,
         unsupported_reason: None,
@@ -178,7 +189,27 @@ fn status_for_workspace_blocking(workspace_root: &Path) -> GitStatus {
         head_detached,
         head_unborn,
         files,
+        merge_in_progress,
+        conflicted_files,
     }
+}
+
+// Unmerged index entries carry a non-zero conflict stage (base/ours/theirs). A
+// path can appear at several stages, so a BTreeSet both dedups and sorts it.
+fn collect_conflicted_files(repo: &gix::Repository, prefix: Option<&str>) -> Vec<String> {
+    let Ok(index) = repo.open_index() else {
+        return Vec::new();
+    };
+    let mut seen = std::collections::BTreeSet::new();
+    for entry in index.entries() {
+        if entry.stage() == gix::index::entry::Stage::Unconflicted {
+            continue;
+        }
+        if let Some(path) = workspace_relative_path(prefix, entry.path(&index)) {
+            seen.insert(path);
+        }
+    }
+    seen.into_iter().collect()
 }
 
 fn workspace_prefix(repo_workdir: &Path, workspace_root: &Path) -> Option<String> {
@@ -325,6 +356,8 @@ fn unsupported_status(reason: impl Into<String>) -> GitStatus {
         head_detached: false,
         head_unborn: false,
         files: Vec::new(),
+        merge_in_progress: false,
+        conflicted_files: Vec::new(),
     }
 }
 
