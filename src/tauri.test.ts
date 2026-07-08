@@ -1132,6 +1132,12 @@ describe("Git status response normalization", () => {
     const unborn = normalizeGitStatus({ ...base, headUnborn: true, ahead: null, behind: null });
     expect(unborn?.noUpstream).toBe(false);
 
+    // The backend only ever sets ahead/behind together, but noUpstream
+    // doesn't just trust that — a malformed payload with one null and the
+    // other not must not read as a confirmed no-upstream branch.
+    const partiallyNull = normalizeGitStatus({ ...base, ahead: null, behind: 3 });
+    expect(partiallyNull?.noUpstream).toBe(false);
+
     // Negative / non-integer values are treated as absent, same as null, but
     // `noUpstream` only fires on an explicit null, not a merely-invalid value.
     const bad = normalizeGitStatus({ ...base, ahead: -1, behind: 1.5 });
@@ -1315,6 +1321,12 @@ describe("Git sync response normalization", () => {
     expect(normalizeGitSyncResult({ outcome: "bogus", branch: "main" })).toBeUndefined();
     expect(
       normalizeGitSyncResult({ outcome: "mergeConflict", branch: "main", files: [1] }),
+    ).toBeUndefined();
+    // The backend's tagged enum always includes `files` for mergeConflict
+    // (even as []) — a missing key is a malformed payload, not "no
+    // conflicts", and must not silently normalize to an empty list.
+    expect(
+      normalizeGitSyncResult({ outcome: "mergeConflict", branch: "main" }),
     ).toBeUndefined();
   });
 });

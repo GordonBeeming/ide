@@ -259,7 +259,12 @@ fn complete_merge_blocking(workspace_root: &Path) -> Result<GitMergeCommit, GitS
     if !mid_merge {
         return Err(GitSyncError::NoMergeInProgress);
     }
-    if !git.conflicted_files()?.is_empty() {
+    // Deliberately repo-wide, not `conflicted_files()` (workspace-scoped —
+    // see #50): a conflict outside this workspace's subdirectory must still
+    // block completion, or "Complete merge" could succeed while the repo
+    // still has an unresolved conflict elsewhere, surfacing a confusing
+    // `git commit` failure instead of the intended `UnresolvedConflicts`.
+    if git.has_unmerged_entries()? {
         return Err(GitSyncError::UnresolvedConflicts);
     }
 
@@ -516,6 +521,26 @@ impl GitCli {
             }
         }
         Ok(files)
+    }
+
+    // Whether any unmerged (conflicted) index entry exists anywhere in the
+    // repo — deliberately not scoped to this workspace's subdirectory, unlike
+    // `conflicted_files()`. `complete_merge_blocking` needs this: a conflict
+    // outside the workspace still blocks completing the merge, even though
+    // `conflicted_files()` can't list it (see #50).
+    fn has_unmerged_entries(&self) -> Result<bool, GitSyncError> {
+        let output = self.run(&["status", "--porcelain=v1", "-z"])?;
+        if !output.success {
+            return Err(GitSyncError::Failed(git_message(
+                &output,
+                "git status failed",
+            )));
+        }
+        Ok(output
+            .stdout
+            .split('\0')
+            .filter(|entry| !entry.is_empty())
+            .any(|entry| entry.len() >= 4 && is_unmerged_code(&entry[..2])))
     }
 
     // Returns the first staged file (if any) whose content still contains conflict
@@ -950,6 +975,53 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn git_status_reports_no_ahead_behind_when_history_is_corrupt() {
+        // A per-commit walk error (a missing/corrupt object partway through
+        // the ahead-side history) must report "unknown" rather than silently
+        // undercounting — filtering the error out would return a
+        // plausible-looking but wrong divergence instead.
+        let remote = tempdir().unwrap();
+        init_bare_remote(remote.path());
+        let work = tempdir().unwrap();
+        clone_with_commit(remote.path(), work.path());
+
+        fs::write(work.path().join("first-ahead.txt"), "a\n").unwrap();
+        run_git(work.path(), ["add", "."]);
+        run_git(work.path(), ["commit", "-m", "First ahead commit"]);
+        let corrupt_sha = git_stdout(work.path(), ["rev-parse", "HEAD"])
+            .unwrap()
+            .trim()
+            .to_string();
+
+        fs::write(work.path().join("second-ahead.txt"), "b\n").unwrap();
+        run_git(work.path(), ["add", "."]);
+        run_git(work.path(), ["commit", "-m", "Second ahead commit"]);
+
+        // Truncate the older ahead commit's loose object so the walk from
+        // HEAD hits it and fails to parse, rather than deleting it outright
+        // (which some git plumbing treats differently than a present-but-
+        // unreadable object).
+        let object_path = work
+            .path()
+            .join(".git/objects")
+            .join(&corrupt_sha[..2])
+            .join(&corrupt_sha[2..]);
+        assert!(object_path.exists(), "expected a loose object on disk");
+        // Git writes loose objects read-only; regain write access before
+        // overwriting the content.
+        let mut permissions = fs::metadata(&object_path).unwrap().permissions();
+        #[allow(clippy::permissions_set_readonly_false)]
+        permissions.set_readonly(false);
+        fs::set_permissions(&object_path, permissions).unwrap();
+        fs::write(&object_path, b"not a valid git object").unwrap();
+
+        let status = crate::git_commit::status_for_workspace(work.path()).await;
+
+        assert_eq!(status.ahead, None);
+        assert_eq!(status.behind, None);
+    }
+
+    #[tokio::test]
     async fn conflict_surfaces_in_git_status_merge_fields() {
         let (_remote, work, _other) = conflicted_workspace();
         sync_workspace(work.path()).await.unwrap();
@@ -1068,6 +1140,21 @@ mod tests {
         let error = complete_merge(work.path()).await.unwrap_err();
 
         assert!(matches!(error, GitSyncError::UnresolvedConflicts));
+    }
+
+    #[tokio::test]
+    async fn complete_merge_refuses_when_the_only_conflict_is_outside_the_workspace() {
+        // `conflicted_files()` (workspace-scoped) can't see a conflict outside
+        // the opened subdirectory, so complete_merge_blocking must not rely on
+        // it here — otherwise "Complete merge" would succeed while the repo
+        // still has a real unresolved conflict elsewhere. See #50.
+        let (_remote, repo, workspace_root, _other) = conflicted_workspace_outside_subdirectory();
+        sync_workspace(&workspace_root).await.unwrap();
+
+        let error = complete_merge(&workspace_root).await.unwrap_err();
+
+        assert!(matches!(error, GitSyncError::UnresolvedConflicts));
+        drop(repo);
     }
 
     #[tokio::test]

@@ -228,21 +228,25 @@ fn ahead_behind(repo: &gix::Repository, head: &gix::Head<'_>) -> Option<(usize, 
         .detach();
 
     // Each walk paints the hidden tip's ancestry as unwanted, so the count is
-    // exactly the commits on one side of the merge base.
+    // exactly the commits on one side of the merge base. A per-commit walk
+    // error (a missing or corrupt object partway through the history) must
+    // fail the whole count rather than being silently dropped — filtering
+    // those out would undercount and report a plausible-looking but wrong
+    // divergence instead of admitting the count is unknown.
     let ahead = repo
         .rev_walk([head_id])
         .with_hidden([upstream_id])
         .all()
         .ok()?
-        .filter(|info| info.is_ok())
-        .count();
+        .try_fold(0usize, |count, info| info.map(|_| count + 1))
+        .ok()?;
     let behind = repo
         .rev_walk([upstream_id])
         .with_hidden([head_id])
         .all()
         .ok()?
-        .filter(|info| info.is_ok())
-        .count();
+        .try_fold(0usize, |count, info| info.map(|_| count + 1))
+        .ok()?;
 
     Some((ahead, behind))
 }

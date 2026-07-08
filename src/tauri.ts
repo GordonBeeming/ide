@@ -748,14 +748,19 @@ export function normalizeGitStatus(value: unknown): GitStatus | undefined {
   // once it knows about tracking counts at all — only a backend that predates
   // this field omits the key entirely. So "key present but null" means a
   // confirmed no-upstream state, while "key absent" means this backend hasn't
-  // told us either way. But that same null also covers a detached/unborn
-  // HEAD (no branch to compare against) — exclude both so `noUpstream` keeps
-  // its documented meaning ("a checked-out branch, confirmed to have no
+  // told us either way. The backend only ever sets `ahead` and `behind`
+  // together (both a number or both null), but `behind` is checked too
+  // rather than trusting that invariant — a malformed or partial payload
+  // with `ahead: null` and a stray `behind` shouldn't read as confirmed
+  // no-upstream. That same null also covers a detached/unborn HEAD (no
+  // branch to compare against) — exclude both so `noUpstream` keeps its
+  // documented meaning ("a checked-out branch, confirmed to have no
   // upstream") wherever it's read, rather than requiring every caller to
   // separately re-check headDetached/headUnborn.
   const noUpstream =
     "ahead" in candidate &&
     candidate.ahead === null &&
+    candidate.behind === null &&
     candidate.headDetached === false &&
     candidate.headUnborn === false;
 
@@ -861,10 +866,14 @@ export function normalizeGitSyncResult(value: unknown): GitSyncResult | undefine
   if (!isGitSyncOutcome(candidate.outcome) || typeof candidate.branch !== "string") {
     return undefined;
   }
-  // Only the mergeConflict outcome carries `files`; reject a malformed list
-  // rather than silently dropping conflicted paths the UI needs to show.
+  // Only the mergeConflict outcome carries `files`, but the backend's tagged
+  // enum always includes the key for that variant (even as an empty array) —
+  // a missing key there means a malformed payload, not "no conflicts", so
+  // it's required rather than silently defaulting to []. Other outcomes
+  // don't carry files at all; tolerate a well-formed list if present anyway,
+  // but don't require one.
   let files: string[] = [];
-  if (candidate.files !== undefined) {
+  if (candidate.outcome === "mergeConflict" || candidate.files !== undefined) {
     if (
       !Array.isArray(candidate.files) ||
       !candidate.files.every((file): file is string => typeof file === "string")
