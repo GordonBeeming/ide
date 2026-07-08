@@ -1353,7 +1353,10 @@ export default function App() {
   }, [refreshFiles]);
 
   useEffect(() => {
-    if (!commitModeActive) return;
+    if (!commitModeActive) {
+      gitStatusInitializedRef.current = false;
+      return;
+    }
     void refreshGitStatus();
   }, [commitModeActive, refreshGitStatus]);
 

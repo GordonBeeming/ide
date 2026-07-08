@@ -653,11 +653,17 @@ fn file_diff_blocking(
         Err(_) => None,
     };
 
-    // `fs::metadata` follows symlinks so a symlinked file diffs its target's
-    // content, matching how the rest of this module treats readable content.
-    let disk_bytes = match fs::metadata(&absolute) {
+    // `fs::symlink_metadata` does not follow symlinks, so a symlink's own
+    // target (read via `symlink_target_bytes`, matching Git's blob storage
+    // for links) is compared against HEAD rather than the target file's
+    // content — otherwise an unchanged symlink diffs as modified, and a
+    // broken symlink's `NotFound` is misread as a deletion.
+    let disk_bytes = match fs::symlink_metadata(&absolute) {
         Ok(metadata) if metadata.is_dir() => {
             return Err(GitFileDiffError::PathIsDirectory(relative.to_string()));
+        }
+        Ok(metadata) if metadata.file_type().is_symlink() => {
+            Some(symlink_target_bytes(&absolute).map_err(WorkspaceError::Io)?)
         }
         Ok(_) => Some(fs::read(&absolute).map_err(WorkspaceError::Io)?),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
