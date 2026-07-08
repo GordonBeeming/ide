@@ -258,17 +258,14 @@ fn collect_conflicted_files(repo: &gix::Repository, prefix: Option<&str>) -> Vec
         if entry.stage() == gix::index::entry::Stage::Unconflicted {
             continue;
         }
-        let path = entry.path(&index);
-        // Unlike ordinary changed-file entries, a conflict isn't scoped to this
-        // workspace: `sync_workspace`/`complete_merge` operate on the whole
-        // repo, so a merge can leave a conflict outside this subdirectory that
-        // still blocks "Complete merge". Dropping it here (the way the ordinary
-        // file list intentionally does) would leave the UI showing zero
-        // conflicts while the backend keeps refusing as unresolved. Fall back
-        // to the repo-relative path — there's no workspace-relative one — so it
-        // still surfaces.
-        let repo_relative = path.to_str_lossy().into_owned();
-        seen.insert(workspace_relative_path(prefix, path).unwrap_or(repo_relative));
+        // A conflict outside this workspace's subdirectory has no
+        // workspace-relative path, so it's dropped here rather than exposed as
+        // a repo-relative one `stage_resolved` (workspace-scoped, rejects
+        // `..`) couldn't actually act on. Tracked in #50 to surface that state
+        // honestly (e.g. a count) instead of silently.
+        if let Some(path) = workspace_relative_path(prefix, entry.path(&index)) {
+            seen.insert(path);
+        }
     }
     seen.into_iter().collect()
 }
@@ -968,14 +965,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn conflicted_files_surface_even_outside_the_workspace_subdirectory() {
+    async fn conflicted_files_are_scoped_to_the_workspace_subdirectory() {
         // `sync_workspace`/`complete_merge` (git_sync.rs) operate on the whole
         // repo, not just this workspace's subdirectory, so a conflict can land
-        // on a file outside `sub/`. Dropping it here — the way the ordinary
-        // (non-conflict) file list intentionally scopes to the workspace, per
-        // `status_scopes_to_workspace_subdirectory` above — would leave the UI
-        // showing zero conflicts while `complete_merge` keeps refusing as
-        // unresolved.
+        // on a file outside `sub/`. `conflicted_files` still scopes to the
+        // workspace here, the same as the ordinary (non-conflict) file list —
+        // `stage_resolved` resolves paths relative to `workspace_root` and
+        // rejects `..`, so a repo-relative path for `outside.txt` would be
+        // unusable, not just imprecise. `merge_in_progress` still flips true,
+        // so the merge state itself isn't hidden — only the specific file.
+        // Surfacing this conflict honestly (e.g. a count of conflicts outside
+        // the workspace) is tracked in #50.
         let dir = tempdir().unwrap();
         init_repo(dir.path());
         // `git merge` checks committer identity up front even for a merge that
@@ -1000,7 +1000,7 @@ mod tests {
         let status = status_for_workspace(&dir.path().join("sub")).await;
 
         assert!(status.merge_in_progress);
-        assert_eq!(status.conflicted_files, vec!["outside.txt".to_string()]);
+        assert_eq!(status.conflicted_files, Vec::<String>::new());
     }
 
     #[tokio::test]
