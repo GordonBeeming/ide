@@ -1272,8 +1272,12 @@ button {
      positioning context of its own. */
   position: absolute;
   white-space: nowrap;
-  margin-left: 16px;
-  padding: 0;
+  /* The 16px gap lives in padding, not margin: CodeMirror measures the caret
+     at line-end from this element's box edge, and an absolute element's
+     static position includes its margin — a margin gap drags the caret 16px
+     away from the text, a padding gap keeps the box flush with it. */
+  margin: 0;
+  padding: 0 0 0 16px;
   border: 0;
   background: transparent;
   color: var(--muted);
