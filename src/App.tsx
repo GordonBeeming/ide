@@ -4705,9 +4705,18 @@ export default function App() {
                   {gitMergeSuccess}
                 </div>
               ) : gitSyncResult ? (
+                // mergeConflict is never auto-cleared (see the effect above) and
+                // isn't a success — the fade-out class would still visually fade
+                // it to invisible via CSS after 5s even though the JS state (and
+                // the merge UI it hands off to) stays live, so it gets the same
+                // persistent error treatment as gitSyncError instead.
                 <div
-                  className="commit-panel__notice commit-panel__notice--success commit-panel__notice--fade"
-                  role="status"
+                  className={
+                    gitSyncResult.outcome === "mergeConflict"
+                      ? "commit-panel__notice commit-panel__notice--error"
+                      : "commit-panel__notice commit-panel__notice--success commit-panel__notice--fade"
+                  }
+                  role={gitSyncResult.outcome === "mergeConflict" ? "alert" : "status"}
                 >
                   {formatGitSyncResult(gitSyncResult)}
                 </div>
@@ -5803,7 +5812,12 @@ export default function App() {
                           type="number"
                           value={autoFetchSeconds}
                           onChange={(event) => {
-                            const next = sanitizeAutoFetchSeconds(Number(event.target.value));
+                            // `valueAsNumber` (not `Number(event.target.value)`) is
+                            // NaN for a cleared field, which sanitizeAutoFetchSeconds
+                            // treats as "unset" and falls back to the default. 0 is
+                            // a real, distinct value here (turns auto-fetch off), so
+                            // Number("") === 0 would wrongly disable it while typing.
+                            const next = sanitizeAutoFetchSeconds(event.target.valueAsNumber);
                             setAutoFetchSeconds(next);
                             setStatus(
                               next === 0
