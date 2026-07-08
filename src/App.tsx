@@ -4460,16 +4460,7 @@ export default function App() {
             </div>
             {gitSyncEnabled ? (
               <div className="commit-panel__sync">
-                <div className="commit-panel__sync-row">
-                  <span
-                    className="commit-panel__sync-branch"
-                    title={gitStatus?.branch ?? gitSyncResult?.branch}
-                  >
-                    <GitBranch size={14} />
-                    <span className="commit-panel__sync-branch-name">
-                      {gitStatus?.branch ?? gitSyncResult?.branch ?? "No branch"}
-                    </span>
-                  </span>
+                <div className="commit-panel__sync-action">
                   <button
                     className="command-button commit-panel__sync-button"
                     disabled={
@@ -4483,6 +4474,15 @@ export default function App() {
                     />
                     {gitSyncInFlight ? "Syncing…" : "Sync"}
                   </button>
+                  <span
+                    className="commit-panel__sync-branch"
+                    title={gitStatus?.branch ?? gitSyncResult?.branch}
+                  >
+                    <GitBranch size={12} />
+                    <span className="commit-panel__sync-branch-name">
+                      {gitStatus?.branch ?? gitSyncResult?.branch ?? "No branch"}
+                    </span>
+                  </span>
                 </div>
                 {mergeInProgress ? (
                   <div className="commit-panel__merge" role="group" aria-label="Resolve merge">
