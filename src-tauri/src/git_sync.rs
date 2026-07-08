@@ -248,6 +248,14 @@ fn complete_merge_blocking(workspace_root: &Path) -> Result<GitMergeCommit, GitS
         return Err(GitSyncError::UnresolvedConflicts);
     }
 
+    // Belt-and-braces: a file staged outside the app (a terminal `git add` that
+    // bypassed the marker check in stage_resolved) clears the unmerged-entry check
+    // above yet can still carry markers. `git commit` would happily commit them, so
+    // scan every staged file's content and refuse if any conflict marker remains.
+    if let Some(path) = git.staged_file_with_conflict_markers()? {
+        return Err(GitSyncError::ConflictMarkers(path));
+    }
+
     // `--no-edit` keeps git's generated merge message; git commits both parents
     // (HEAD + MERGE_HEAD) and clears the merge state on success.
     let commit = git.run(&["commit", "--no-edit"])?;
@@ -393,6 +401,42 @@ impl GitCli {
             }
         }
         Ok(files)
+    }
+
+    // Returns the first staged file (if any) whose content still contains conflict
+    // markers. Paths come back relative to the repo root, so they're joined onto
+    // `--show-toplevel` to read regardless of which subdirectory is the workspace.
+    fn staged_file_with_conflict_markers(&self) -> Result<Option<String>, GitSyncError> {
+        let toplevel = self.run(&["rev-parse", "--show-toplevel"])?;
+        if !toplevel.success {
+            return Err(GitSyncError::Failed(git_message(
+                &toplevel,
+                "git rev-parse failed",
+            )));
+        }
+        let repo_root = PathBuf::from(toplevel.stdout.trim());
+
+        // `-z` gives NUL-separated, unquoted paths so names with spaces or unusual
+        // characters are read back exactly.
+        let staged = self.run(&["diff", "--cached", "--name-only", "-z"])?;
+        if !staged.success {
+            return Err(GitSyncError::Failed(git_message(
+                &staged,
+                "git diff failed",
+            )));
+        }
+        for rela in staged.stdout.split('\0').filter(|entry| !entry.is_empty()) {
+            // A staged deletion has no file to read; skip anything unreadable or
+            // non-UTF-8 (binary), which cannot carry textual markers anyway.
+            if let Ok(bytes) = std::fs::read(repo_root.join(rela)) {
+                if let Ok(text) = std::str::from_utf8(&bytes) {
+                    if has_conflict_markers(text) {
+                        return Ok(Some(rela.to_string()));
+                    }
+                }
+            }
+        }
+        Ok(None)
     }
 }
 
@@ -637,6 +681,19 @@ mod tests {
         let error = complete_merge(work.path()).await.unwrap_err();
 
         assert!(matches!(error, GitSyncError::UnresolvedConflicts));
+    }
+
+    #[tokio::test]
+    async fn complete_merge_refuses_a_terminal_staged_file_with_markers() {
+        let (_remote, work, _other) = conflicted_workspace();
+        sync_workspace(work.path()).await.unwrap();
+        // A terminal `git add` marks the conflict resolved without removing the
+        // markers, clearing the unmerged-entry gate but not the marker scan.
+        run_git(work.path(), ["add", "conflict.txt"]);
+
+        let error = complete_merge(work.path()).await.unwrap_err();
+
+        assert!(matches!(error, GitSyncError::ConflictMarkers(path) if path == "conflict.txt"));
     }
 
     // Leaves `work` one local commit and one remote commit apart on `conflict.txt`,
