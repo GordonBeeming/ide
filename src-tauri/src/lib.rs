@@ -279,6 +279,8 @@ const MIN_APP_ZOOM_PERCENT: usize = 10;
 const DEFAULT_APP_ZOOM_PERCENT: usize = 100;
 const MIN_SIDEBAR_WIDTH: usize = 180;
 const MAX_SIDEBAR_WIDTH: usize = 1040;
+const MIN_COMMIT_MESSAGE_HEIGHT: usize = 56;
+const MAX_COMMIT_MESSAGE_HEIGHT: usize = 600;
 const CODEX_MCP_TOKEN_FILE: &str = "codex-mcp-token";
 const DEFAULT_DATE_TIME_FORMAT: &str = "localMedium";
 const DEFAULT_RECENT_RELATIVE_THRESHOLD: &str = "oneWeek";
@@ -431,6 +433,8 @@ struct PersistedWorkspaceUiState {
     selected_path: Option<String>,
     #[serde(default)]
     sidebar_width: Option<usize>,
+    #[serde(default)]
+    commit_message_height: Option<usize>,
     // "Trust for workspace" decision for following symlinks whose target escapes
     // the workspace root; persisted so it survives restart.
     #[serde(default)]
@@ -446,6 +450,8 @@ struct WorkspaceUiStatePayload {
     active_file: Option<String>,
     selected_path: Option<String>,
     sidebar_width: Option<usize>,
+    #[serde(default)]
+    commit_message_height: Option<usize>,
     #[serde(default)]
     trust_external_symlinks: bool,
 }
@@ -1272,6 +1278,7 @@ async fn update_ui_state(
         active_file: workspace.active_file.take(),
         selected_path: workspace.selected_path.take(),
         sidebar_width: workspace.sidebar_width,
+        commit_message_height: workspace.commit_message_height,
         trust_external_symlinks: workspace.trust_external_symlinks,
         updated_at: now_ms(),
     };
@@ -2411,6 +2418,7 @@ fn workspace_ui_snapshot_for_root(
             active_file: workspace.active_file.clone(),
             selected_path: workspace.selected_path.clone(),
             sidebar_width: workspace.sidebar_width,
+            commit_message_height: workspace.commit_message_height,
             trust_external_symlinks: workspace.trust_external_symlinks,
         })
         .unwrap_or_default();
@@ -2443,6 +2451,9 @@ fn sanitize_workspace_ui_state(state: WorkspaceUiStatePayload) -> WorkspaceUiSta
     let sidebar_width = state
         .sidebar_width
         .map(|width| width.clamp(MIN_SIDEBAR_WIDTH, MAX_SIDEBAR_WIDTH));
+    let commit_message_height = state
+        .commit_message_height
+        .map(|height| height.clamp(MIN_COMMIT_MESSAGE_HEIGHT, MAX_COMMIT_MESSAGE_HEIGHT));
 
     WorkspaceUiStatePayload {
         expanded_folders,
@@ -2450,6 +2461,7 @@ fn sanitize_workspace_ui_state(state: WorkspaceUiStatePayload) -> WorkspaceUiSta
         active_file,
         selected_path,
         sidebar_width,
+        commit_message_height,
         trust_external_symlinks: state.trust_external_symlinks,
     }
 }
@@ -3291,6 +3303,7 @@ mod tests {
                     active_file: None,
                     selected_path: None,
                     sidebar_width: None,
+                    commit_message_height: None,
                     trust_external_symlinks: false,
                     updated_at: 1,
                 },
@@ -3301,6 +3314,7 @@ mod tests {
                     active_file: None,
                     selected_path: None,
                     sidebar_width: None,
+                    commit_message_height: None,
                     trust_external_symlinks: false,
                     updated_at: 2,
                 },
@@ -3390,6 +3404,7 @@ mod tests {
             active_file: Some("src/App.tsx".to_string()),
             selected_path: Some("/tmp".to_string()),
             sidebar_width: Some(9_999),
+            commit_message_height: Some(9_999),
             trust_external_symlinks: false,
         });
 
@@ -3401,6 +3416,10 @@ mod tests {
         assert_eq!(workspace.active_file, Some("src/App.tsx".to_string()));
         assert_eq!(workspace.selected_path, None);
         assert_eq!(workspace.sidebar_width, Some(MAX_SIDEBAR_WIDTH));
+        assert_eq!(
+            workspace.commit_message_height,
+            Some(MAX_COMMIT_MESSAGE_HEIGHT)
+        );
 
         *state.ui_state.write().unwrap() = AppUiState {
             view: PersistedViewSettings {
@@ -3433,6 +3452,7 @@ mod tests {
                 active_file: workspace.active_file,
                 selected_path: workspace.selected_path,
                 sidebar_width: workspace.sidebar_width,
+                commit_message_height: workspace.commit_message_height,
                 trust_external_symlinks: workspace.trust_external_symlinks,
                 updated_at: 123,
             }],
@@ -3458,6 +3478,10 @@ mod tests {
         assert_eq!(loaded.view.recent_relative_threshold, "twoDays");
         assert_eq!(loaded.view.diff_view_mode, "sideBySide");
         assert_eq!(loaded.workspaces.len(), 1);
+        assert_eq!(
+            loaded.workspaces[0].commit_message_height,
+            Some(MAX_COMMIT_MESSAGE_HEIGHT)
+        );
 
         *state.ui_state.write().unwrap() = loaded;
         let snapshot = workspace_ui_snapshot_for_root(&state, "/workspace").unwrap();
@@ -3469,6 +3493,27 @@ mod tests {
         assert_eq!(
             snapshot.workspace.active_file,
             Some("src/App.tsx".to_string())
+        );
+    }
+
+    #[test]
+    fn commit_message_height_clamps_in_both_directions() {
+        let too_tall = sanitize_workspace_ui_state(WorkspaceUiStatePayload {
+            commit_message_height: Some(9_999),
+            ..WorkspaceUiStatePayload::default()
+        });
+        assert_eq!(
+            too_tall.commit_message_height,
+            Some(MAX_COMMIT_MESSAGE_HEIGHT)
+        );
+
+        let too_short = sanitize_workspace_ui_state(WorkspaceUiStatePayload {
+            commit_message_height: Some(1),
+            ..WorkspaceUiStatePayload::default()
+        });
+        assert_eq!(
+            too_short.commit_message_height,
+            Some(MIN_COMMIT_MESSAGE_HEIGHT)
         );
     }
 

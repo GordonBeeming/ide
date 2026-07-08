@@ -4340,6 +4340,76 @@ describe("Git commit sidebar", () => {
     const appDiff = await screen.findByLabelText("Diff src/App.tsx");
     expect(within(appDiff).getByText("view mode: sideBySide")).toBeInTheDocument();
   });
+
+  it("defaults the commit message box to 112px when nothing is persisted", async () => {
+    render(<App />);
+
+    expect(await treeButton("README.md")).toBeInTheDocument();
+    fireEvent.click(screen.getByTitle("Commit changes"));
+
+    const panel = await screen.findByLabelText("Git commit panel");
+    const message = within(panel).getByPlaceholderText("Commit message");
+    expect(message).toHaveStyle({ height: "112px" });
+
+    const resizer = screen.getByRole("separator", { name: "Resize commit message" });
+    expect(resizer).toHaveAttribute("aria-valuenow", "112");
+    expect(resizer).toHaveAttribute("aria-valuemin", "56");
+    expect(resizer).toHaveAttribute("aria-valuemax", "600");
+  });
+
+  it("applies a persisted commit message height on load", async () => {
+    tauriMocks.getUiState.mockResolvedValueOnce({
+      view: {
+        showDotfiles: false,
+        showGeneratedInternal: false,
+        showDiagnosticsPanel: false,
+      },
+      workspace: {
+        expandedFolders: [],
+        openFiles: [],
+        commitMessageHeight: 220,
+      },
+    });
+    render(<App />);
+
+    expect(await treeButton("README.md")).toBeInTheDocument();
+    fireEvent.click(screen.getByTitle("Commit changes"));
+
+    const panel = await screen.findByLabelText("Git commit panel");
+    const message = within(panel).getByPlaceholderText("Commit message");
+    expect(message).toHaveStyle({ height: "220px" });
+    expect(screen.getByRole("separator", { name: "Resize commit message" })).toHaveAttribute(
+      "aria-valuenow",
+      "220",
+    );
+  });
+
+  it("resizes the commit message box with the keyboard and persists it", async () => {
+    render(<App />);
+
+    expect(await treeButton("README.md")).toBeInTheDocument();
+    fireEvent.click(screen.getByTitle("Commit changes"));
+
+    const panel = await screen.findByLabelText("Git commit panel");
+    const message = within(panel).getByPlaceholderText("Commit message");
+    const resizer = screen.getByRole("separator", { name: "Resize commit message" });
+
+    // Dragging the handle up (or pressing ArrowUp) grows the box.
+    fireEvent.keyDown(resizer, { key: "ArrowUp" });
+    expect(message).toHaveStyle({ height: "128px" });
+    expect(resizer).toHaveAttribute("aria-valuenow", "128");
+
+    fireEvent.keyDown(resizer, { key: "ArrowDown" });
+    fireEvent.keyDown(resizer, { key: "ArrowDown" });
+    expect(message).toHaveStyle({ height: "96px" });
+
+    await waitFor(() =>
+      expect(tauriMocks.updateUiState).toHaveBeenCalledWith(
+        expect.any(Object),
+        expect.objectContaining({ commitMessageHeight: 96 }),
+      ),
+    );
+  });
 });
 
 async function treeButton(name: string) {

@@ -220,6 +220,7 @@ export interface WorkspaceUiState {
   activeFile?: string;
   selectedPath?: string;
   sidebarWidth?: number;
+  commitMessageHeight?: number;
   trustExternalSymlinks?: boolean;
 }
 

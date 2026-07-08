@@ -333,6 +333,10 @@ const minSidebarWidth = 180;
 const maxSidebarWidth = 1040;
 const defaultSidebarWidth = 288;
 const sidebarWidthStep = 16;
+const minCommitMessageHeight = 56;
+const maxCommitMessageHeight = 600;
+const defaultCommitMessageHeight = 112;
+const commitMessageHeightStep = 16;
 
 function sanitizeNumberLimit(
   value: number | undefined,
@@ -484,6 +488,7 @@ export default function App() {
     useState<PendingReloadRequest>();
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [sidebarWidth, setSidebarWidth] = useState(defaultSidebarWidth);
+  const [commitMessageHeight, setCommitMessageHeight] = useState(defaultCommitMessageHeight);
   const [pendingClosePath, setPendingClosePath] = useState<string>();
   const [pendingCloseAll, setPendingCloseAll] = useState(false);
   const [pendingAppClose, setPendingAppClose] = useState(false);
@@ -600,6 +605,9 @@ export default function App() {
   const sidebarResizeRef = useRef<{ startX: number; startWidth: number } | undefined>(
     undefined,
   );
+  const commitMessageResizeRef = useRef<
+    { startY: number; startHeight: number } | undefined
+  >(undefined);
 
   const activeFile = openFiles.find((file) => file.path === activePath);
   const pendingCloseFile = openFiles.find((file) => file.path === pendingClosePath);
@@ -1032,6 +1040,14 @@ export default function App() {
         minSidebarWidth,
         maxSidebarWidth,
         defaultSidebarWidth,
+      ),
+    );
+    setCommitMessageHeight(
+      sanitizeNumberLimit(
+        snapshot.workspace.commitMessageHeight,
+        minCommitMessageHeight,
+        maxCommitMessageHeight,
+        defaultCommitMessageHeight,
       ),
     );
   }, []);
@@ -2060,6 +2076,7 @@ export default function App() {
           activeFile: activeFile?.diff ? undefined : activePath,
           selectedPath,
           sidebarWidth,
+          commitMessageHeight,
           trustExternalSymlinks: trustExternalWorkspace,
         },
       ).catch((reason) => {
@@ -2075,6 +2092,7 @@ export default function App() {
     openFilePathSignature,
     selectedPath,
     sidebarWidth,
+    commitMessageHeight,
     showDotfiles,
     showGeneratedInternal,
     showGitignoredFiles,
@@ -2282,6 +2300,61 @@ export default function App() {
       window.removeEventListener("pointerup", handlePointerUp);
     };
   }, [appZoomPercent, setBoundedSidebarWidth]);
+
+  const setBoundedCommitMessageHeight = useCallback((value: number) => {
+    setCommitMessageHeight(
+      sanitizeNumberLimit(
+        value,
+        minCommitMessageHeight,
+        maxCommitMessageHeight,
+        defaultCommitMessageHeight,
+      ),
+    );
+  }, []);
+
+  const beginCommitMessageResize = useCallback(
+    (event: ReactPointerEvent<HTMLElement>) => {
+      event.preventDefault();
+      commitMessageResizeRef.current = {
+        startY: event.clientY,
+        startHeight: commitMessageHeight,
+      };
+    },
+    [commitMessageHeight],
+  );
+
+  const handleCommitMessageResizeKeyDown = useCallback(
+    (event: ReactKeyboardEvent<HTMLElement>) => {
+      if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
+      event.preventDefault();
+      const direction = event.key === "ArrowUp" ? 1 : -1;
+      setBoundedCommitMessageHeight(commitMessageHeight + direction * commitMessageHeightStep);
+    },
+    [commitMessageHeight, setBoundedCommitMessageHeight],
+  );
+
+  useEffect(() => {
+    const handlePointerMove = (event: PointerEvent) => {
+      const resize = commitMessageResizeRef.current;
+      if (!resize) return;
+      const appZoom = appZoomPercent / 100;
+      // The handle sits above the textarea, so dragging it further up (a
+      // smaller clientY) should grow the box, not shrink it.
+      setBoundedCommitMessageHeight(
+        resize.startHeight + (resize.startY - event.clientY) / appZoom,
+      );
+    };
+    const handlePointerUp = () => {
+      commitMessageResizeRef.current = undefined;
+    };
+
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", handlePointerUp);
+    return () => {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", handlePointerUp);
+    };
+  }, [appZoomPercent, setBoundedCommitMessageHeight]);
 
   const openNewFileDialog = useCallback(() => {
     setError(undefined);
@@ -4203,8 +4276,21 @@ export default function App() {
                   ))}
                 </div>
                 <div className="commit-panel__footer">
+                  <div
+                    className="commit-message-resizer"
+                    role="separator"
+                    tabIndex={0}
+                    aria-label="Resize commit message"
+                    aria-orientation="horizontal"
+                    aria-valuemin={minCommitMessageHeight}
+                    aria-valuemax={maxCommitMessageHeight}
+                    aria-valuenow={commitMessageHeight}
+                    onKeyDown={handleCommitMessageResizeKeyDown}
+                    onPointerDown={beginCommitMessageResize}
+                  />
                   <textarea
                     className="commit-panel__message"
+                    style={{ height: commitMessageHeight }}
                     placeholder="Commit message"
                     value={gitCommitMessage}
                     onChange={(event) => setGitCommitMessage(event.target.value)}
