@@ -21,7 +21,7 @@ gix = { version = "=0.84.0", default-features = false, features = [
   "status",
   "tree-editor",
 ] }
-ignore = "=0.4.25"
+ignore = "=0.4.26"
 # gix-date allows newer jiff 0.2.x releases, but 0.2.25+ records optional
 # defmt/proc-macro-error2 packages in Cargo.lock and trips cargo-audit.
 jiff = "=0.2.24"
