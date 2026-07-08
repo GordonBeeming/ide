@@ -633,6 +633,7 @@ export default function App() {
   const [gitMergeError, setGitMergeError] = useState<string>();
   const [gitMergeSuccess, setGitMergeSuccess] = useState<string>();
   const gitStatusInitializedRef = useRef(false);
+  const gitStatusRefreshInFlightRef = useRef(false);
   const sidebarFilterInputRef = useRef<HTMLInputElement | null>(null);
   const sidebarContentSearchInputRef = useRef<HTMLInputElement | null>(null);
   const currentFindInputRef = useRef<HTMLInputElement | null>(null);
@@ -1288,6 +1289,14 @@ export default function App() {
   // funnels through) can trigger it too, without a temporal-dead-zone issue.
   const refreshGitStatus = useCallback(async () => {
     if (!gitCommitEnabled) return;
+    // The 2s merge-resolution poll (below) calls this on a timer regardless of
+    // whether the previous call has returned; without a guard, a slow
+    // getGitStatus() (a large repo, a loaded disk) can leave two requests in
+    // flight and let the older one's response land after the newer one's,
+    // flickering state backwards. A skipped tick is fine — the next poll (or
+    // caller) picks it up.
+    if (gitStatusRefreshInFlightRef.current) return;
+    gitStatusRefreshInFlightRef.current = true;
 
     try {
       const status = await getGitStatus();
@@ -1312,6 +1321,8 @@ export default function App() {
     } catch (reason) {
       setGitStatus(undefined);
       setGitStatusError(`Unable to load Git status: ${String(reason)}`);
+    } finally {
+      gitStatusRefreshInFlightRef.current = false;
     }
   }, [gitCommitEnabled, refreshOpenDiffTabs]);
 
@@ -1650,8 +1661,16 @@ export default function App() {
       busy: gitSyncInFlight || gitMergeInFlight || mergeInProgress,
       // Only skip once a loaded status confirms there's no upstream; while status
       // is unknown — or the backend predates this field — let the fetch run
-      // (the backend no-ops if there's truly none).
-      noUpstream: gitStatus?.status === "available" && gitStatus.noUpstream,
+      // (the backend no-ops if there's truly none). The backend also reports
+      // `ahead`/`behind` as null for a detached or unborn HEAD (neither has a
+      // branch to compare against), which `noUpstream` alone can't tell apart
+      // from a real no-upstream branch — exclude both so fetch isn't wrongly
+      // suppressed just because nothing is currently checked out to compare.
+      noUpstream:
+        gitStatus?.status === "available" &&
+        gitStatus.noUpstream &&
+        !gitStatus.headDetached &&
+        !gitStatus.headUnborn,
     };
   }, [gitSyncInFlight, gitMergeInFlight, mergeInProgress, gitStatus]);
 

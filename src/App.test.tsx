@@ -1065,6 +1065,45 @@ describe("App shell interactions", () => {
     }
   });
 
+  it("still auto-fetches on a detached HEAD, where ahead/behind are also null", async () => {
+    vi.useFakeTimers();
+    try {
+      tauriMocks.getUiState.mockResolvedValue({
+        view: { showDotfiles: false, showGeneratedInternal: false, autoFetchSeconds: 15 },
+        workspace: { expandedFolders: [], openFiles: [] },
+      });
+      // A detached HEAD has no branch to compare against, so the backend
+      // reports ahead/behind as null the same way it does for a genuine
+      // no-upstream branch — the guard must not conflate the two and
+      // wrongly suppress fetching just because nothing is checked out.
+      tauriMocks.getGitStatus.mockResolvedValue({
+        status: "available",
+        branch: undefined,
+        headDetached: true,
+        headUnborn: false,
+        files: [],
+        mergeInProgress: false,
+        conflictedFiles: [],
+        ahead: null,
+        behind: null,
+      });
+
+      render(<App />);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1000);
+      });
+      expect(tauriMocks.fetchGit).not.toHaveBeenCalled();
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(15000);
+      });
+      expect(tauriMocks.fetchGit).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
+
   it("does not auto-fetch when the cadence is disabled", async () => {
     vi.useFakeTimers();
     try {
