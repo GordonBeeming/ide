@@ -82,13 +82,7 @@ fn sync_workspace_blocking(workspace_root: &Path) -> Result<GitSyncResult, GitSy
 
     ensure_repo(&git)?;
 
-    // `--abbrev-ref HEAD` is "HEAD" on a detached checkout; that flows through to
-    // a NoUpstream result below (a detached HEAD has no tracking branch).
-    let branch = git
-        .run(&["rev-parse", "--abbrev-ref", "HEAD"])?
-        .stdout
-        .trim()
-        .to_string();
+    let branch = current_branch(&git)?;
 
     // A merge left half-finished before this sync ran (conflict markers still on
     // disk, or resolved-but-not-committed) must be reported instead of stacking
@@ -204,7 +198,10 @@ fn stage_resolved_blocking(workspace_root: &Path, path: &str) -> Result<(), GitS
     // Refuse to stage a file that still carries conflict markers — otherwise
     // `git add` would mark a still-conflicted file resolved and the markers would
     // land in the merge commit. Binary / non-UTF-8 content has no textual markers,
-    // so it stages as-is (resolving a binary conflict means picking a side).
+    // so it stages as-is (resolving a binary conflict means picking a side). A
+    // modify/delete conflict resolved by keeping the deletion has no file left to
+    // read at all — that's not a marker check failure, it's the resolution itself,
+    // so a missing file falls through to `git add` staging the deletion.
     match std::fs::read(&absolute) {
         Ok(bytes) => {
             if let Ok(text) = std::str::from_utf8(&bytes) {
@@ -213,7 +210,10 @@ fn stage_resolved_blocking(workspace_root: &Path, path: &str) -> Result<(), GitS
                 }
             }
         }
-        Err(error) => return Err(GitSyncError::Workspace(WorkspaceError::Io(error))),
+        Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
+            return Err(GitSyncError::Workspace(WorkspaceError::Io(error)));
+        }
+        Err(_) => {}
     }
 
     let add = git.run(&["add", "--", path])?;
@@ -314,11 +314,7 @@ fn fetch_upstream_blocking(workspace_root: &Path) -> Result<(), GitSyncError> {
     };
     ensure_repo(&git)?;
 
-    let branch = git
-        .run(&["rev-parse", "--abbrev-ref", "HEAD"])?
-        .stdout
-        .trim()
-        .to_string();
+    let branch = current_branch(&git)?;
     // No configured remote (fresh branch, detached HEAD) means nothing to fetch.
     let Some(remote) = git.branch_remote(&branch)? else {
         return Ok(());
@@ -332,6 +328,30 @@ fn fetch_upstream_blocking(workspace_root: &Path) -> Result<(), GitSyncError> {
         )));
     }
     Ok(())
+}
+
+// `symbolic-ref` reads `.git/HEAD` directly, so it resolves the branch name even
+// on an unborn branch (before the first commit), where `rev-parse` has no commit
+// to resolve `HEAD` against and fails outright. Detached HEAD has no symbolic
+// ref, so that case falls back to `rev-parse --abbrev-ref HEAD`, which yields the
+// literal "HEAD" there — callers treat that as having no tracking branch and
+// fall through to a NoUpstream result. A real git failure past that point (e.g.
+// a corrupt repo) is a genuine error, not something to paper over with an empty
+// or wrong branch name.
+fn current_branch(git: &GitCli) -> Result<String, GitSyncError> {
+    let symbolic = git.run(&["symbolic-ref", "--short", "-q", "HEAD"])?;
+    if symbolic.success {
+        return Ok(symbolic.stdout.trim().to_string());
+    }
+    let rev = git.run(&["rev-parse", "--abbrev-ref", "HEAD"])?;
+    if rev.success {
+        Ok(rev.stdout.trim().to_string())
+    } else {
+        Err(GitSyncError::Failed(git_message(
+            &rev,
+            "failed to get current branch",
+        )))
+    }
 }
 
 fn ensure_repo(git: &GitCli) -> Result<(), GitSyncError> {
@@ -428,6 +448,18 @@ impl GitCli {
     }
 
     fn conflicted_files(&self) -> Result<Vec<String>, GitSyncError> {
+        // `status --porcelain` paths are always repo-root-relative, even when this
+        // workdir is a subdirectory of the repo (`ensure_repo` already allows that
+        // case). `--show-prefix` gives that subdirectory, relative to the repo
+        // root, with a trailing slash (empty at the root); stripping it is what
+        // makes the returned paths line up with `resolve_workspace_path`, which
+        // expects paths relative to this workdir, not the repo root.
+        let prefix_output = self.run(&["rev-parse", "--show-prefix"])?;
+        let prefix = prefix_output
+            .success
+            .then(|| prefix_output.stdout.trim().to_string())
+            .filter(|prefix| !prefix.is_empty());
+
         let output = self.run(&["status", "--porcelain"])?;
         if !output.success {
             return Err(GitSyncError::Failed(git_message(
@@ -444,7 +476,14 @@ impl GitCli {
             }
             let code = &line[..2];
             if is_unmerged_code(code) {
-                files.push(line[3..].to_string());
+                let repo_relative = &line[3..];
+                let relative = match &prefix {
+                    Some(prefix) => repo_relative
+                        .strip_prefix(prefix.as_str())
+                        .unwrap_or(repo_relative),
+                    None => repo_relative,
+                };
+                files.push(relative.to_string());
             }
         }
         Ok(files)
@@ -507,11 +546,18 @@ fn resolve_git_program() -> Option<OsString> {
     // Prefer PATH resolution so the user's configured git (and its credential
     // helpers) win. Fall back to well-known install locations because a bundled
     // .app can launch with a minimal PATH that omits Homebrew and /usr paths.
+    #[cfg(unix)]
     let candidates = [
         OsString::from("git"),
         OsString::from("/opt/homebrew/bin/git"),
         OsString::from("/usr/bin/git"),
         OsString::from("/usr/local/bin/git"),
+    ];
+    #[cfg(not(unix))]
+    let candidates = [
+        OsString::from("git"),
+        OsString::from(r"C:\Program Files\Git\cmd\git.exe"),
+        OsString::from(r"C:\Program Files (x86)\Git\cmd\git.exe"),
     ];
     candidates
         .into_iter()
@@ -543,6 +589,24 @@ mod tests {
         let result = sync_workspace(dir.path()).await;
 
         assert!(matches!(result, Err(GitSyncError::NotARepo)));
+    }
+
+    #[tokio::test]
+    async fn sync_reports_no_upstream_with_real_branch_name_on_unborn_branch() {
+        // `rev-parse --abbrev-ref HEAD` fails outright before the first commit;
+        // `current_branch` must fall back to `symbolic-ref` so the branch name is
+        // still "main", not "HEAD" or empty.
+        let dir = tempdir().unwrap();
+        init_repo(dir.path());
+
+        let result = sync_workspace(dir.path()).await.unwrap();
+
+        assert_eq!(
+            result,
+            GitSyncResult::NoUpstream {
+                branch: "main".to_string()
+            }
+        );
     }
 
     #[tokio::test]
@@ -654,6 +718,25 @@ mod tests {
             }
             other => panic!("expected MergeConflict, got {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn conflicted_files_are_relative_to_a_subdirectory_workspace() {
+        // `ensure_repo` explicitly allows opening a workspace on a repo
+        // subdirectory; `status --porcelain` always reports repo-root-relative
+        // paths regardless of cwd, so conflicted_files() must strip the
+        // subdirectory prefix back off for that to line up with the workspace.
+        let (_remote, repo, workspace_root, _other) = conflicted_workspace_in_subdirectory();
+
+        let result = sync_workspace(&workspace_root).await.unwrap();
+
+        match result {
+            GitSyncResult::MergeConflict { files, .. } => {
+                assert_eq!(files, vec!["conflict.txt".to_string()]);
+            }
+            other => panic!("expected MergeConflict, got {other:?}"),
+        }
+        drop(repo);
     }
 
     #[tokio::test]
@@ -850,6 +933,31 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn stage_resolved_stages_a_deletion_kept_to_resolve_a_modify_delete_conflict() {
+        let (remote, work, _other) = modify_delete_conflict_workspace();
+        sync_workspace(work.path()).await.unwrap();
+
+        // Git leaves "theirs" version on disk for a modify/delete conflict; the
+        // user resolves by keeping the deletion, i.e. removing that file again.
+        // Before the fix, reading that missing file to check for conflict markers
+        // returned NotFound and stage_resolved surfaced it as a Workspace error
+        // instead of staging the resolution.
+        fs::remove_file(work.path().join("gone.txt")).unwrap();
+        stage_resolved(work.path(), "gone.txt").await.unwrap();
+
+        // The deletion matches what "ours" (HEAD) already had, so there is no
+        // staged diff against HEAD for this path — but the merge is resolvable
+        // now, and finishing it must not bring the file back.
+        let result = complete_merge(work.path()).await.unwrap();
+        assert_eq!(result.branch, Some("main".to_string()));
+        assert!(
+            git_stdout(work.path(), ["cat-file", "-e", "HEAD:gone.txt"]).is_err(),
+            "gone.txt should not exist in the merge commit's tree"
+        );
+        drop(remote);
+    }
+
+    #[tokio::test]
     async fn complete_merge_errors_when_no_merge_in_progress() {
         let remote = tempdir().unwrap();
         init_bare_remote(remote.path());
@@ -908,6 +1016,73 @@ mod tests {
         run_git(work.path(), ["commit", "-m", "Local edit"]);
 
         (remote, work, other)
+    }
+
+    // Leaves `work` having deleted `gone.txt` locally while `other` modified it
+    // remotely, so a pull produces an unresolved modify/delete conflict.
+    fn modify_delete_conflict_workspace(
+    ) -> (tempfile::TempDir, tempfile::TempDir, tempfile::TempDir) {
+        let remote = tempdir().unwrap();
+        init_bare_remote(remote.path());
+        let work = tempdir().unwrap();
+        clone_with_commit(remote.path(), work.path());
+        fs::write(work.path().join("gone.txt"), "base\n").unwrap();
+        run_git(work.path(), ["add", "."]);
+        run_git(work.path(), ["commit", "-m", "Add shared file"]);
+        run_git(work.path(), ["push"]);
+
+        let other = tempdir().unwrap();
+        clone_existing(remote.path(), other.path());
+        fs::write(other.path().join("gone.txt"), "remote change\n").unwrap();
+        run_git(other.path(), ["add", "."]);
+        run_git(other.path(), ["commit", "-m", "Remote edit"]);
+        run_git(other.path(), ["push"]);
+
+        run_git(work.path(), ["rm", "-q", "gone.txt"]);
+        run_git(work.path(), ["commit", "-m", "Delete gone.txt"]);
+
+        (remote, work, other)
+    }
+
+    // Same conflict as `conflicted_workspace`, but `conflict.txt` lives under a
+    // `sub/` directory and the returned workspace root is that subdirectory, not
+    // the repo root. Returns (remote, repo, workspace_root, other) — `repo` must
+    // stay alive for the duration of the test since `workspace_root` borrows from
+    // it.
+    fn conflicted_workspace_in_subdirectory() -> (
+        tempfile::TempDir,
+        tempfile::TempDir,
+        PathBuf,
+        tempfile::TempDir,
+    ) {
+        let remote = tempdir().unwrap();
+        init_bare_remote(remote.path());
+        let repo = tempdir().unwrap();
+        clone_with_commit(remote.path(), repo.path());
+
+        let sub = repo.path().join("sub");
+        fs::create_dir(&sub).unwrap();
+        fs::write(sub.join("conflict.txt"), "base\n").unwrap();
+        run_git(repo.path(), ["add", "."]);
+        run_git(repo.path(), ["commit", "-m", "Add shared file"]);
+        run_git(repo.path(), ["push"]);
+
+        let other = tempdir().unwrap();
+        clone_existing(remote.path(), other.path());
+        fs::write(
+            other.path().join("sub").join("conflict.txt"),
+            "remote change\n",
+        )
+        .unwrap();
+        run_git(other.path(), ["add", "."]);
+        run_git(other.path(), ["commit", "-m", "Remote edit"]);
+        run_git(other.path(), ["push"]);
+
+        fs::write(sub.join("conflict.txt"), "local change\n").unwrap();
+        run_git(repo.path(), ["add", "."]);
+        run_git(repo.path(), ["commit", "-m", "Local edit"]);
+
+        (remote, repo, sub, other)
     }
 
     fn init_repo(cwd: &Path) {
