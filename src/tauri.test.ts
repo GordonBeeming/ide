@@ -1448,6 +1448,19 @@ describe("Diff view mode sanitization", () => {
   });
 });
 
+describe("Theme preference sanitization", () => {
+  it("keeps known values and falls back to system for anything else", async () => {
+    const { sanitizeThemePreference } = await import("./tauri");
+
+    expect(sanitizeThemePreference("system")).toBe("system");
+    expect(sanitizeThemePreference("light")).toBe("light");
+    expect(sanitizeThemePreference("dark")).toBe("dark");
+    expect(sanitizeThemePreference("solarized")).toBe("system");
+    expect(sanitizeThemePreference(undefined)).toBe("system");
+    expect(sanitizeThemePreference(null)).toBe("system");
+  });
+});
+
 describe("Code font sanitization", () => {
   it("keeps known values and falls back to IBM Plex Mono for anything else", async () => {
     const { sanitizeCodeFont } = await import("./tauri");

@@ -1005,9 +1005,12 @@ export default function App() {
 
   // Mirror the explicit choice to localStorage so the index.html pre-paint
   // bootstrap honors it on the next launch; "system" clears the key so the
-  // bootstrap falls back to the OS preference. Guarded — localStorage can throw
-  // in a locked-down webview.
+  // bootstrap falls back to the OS preference. Waits for the persisted snapshot
+  // — before it loads, state holds the "system" default and mirroring that
+  // would wipe a stored light/dark key the user actually chose. Guarded —
+  // localStorage can throw in a locked-down webview.
   useEffect(() => {
+    if (!uiStateLoaded) return;
     try {
       if (themePreference === "system") {
         window.localStorage?.removeItem(themePreferenceStorageKey);
@@ -1018,7 +1021,7 @@ export default function App() {
       // A theme preference that fails to persist only costs a one-frame flash on
       // the next launch; it must never break the running app.
     }
-  }, [themePreference]);
+  }, [themePreference, uiStateLoaded]);
 
   useEffect(() => {
     if (activeSidebarSearch === "filter") {

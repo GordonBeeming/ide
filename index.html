@@ -19,8 +19,8 @@
         } catch {
           stored = null;
         }
-        const prefersDark = window.matchMedia?.("(prefers-color-scheme: dark)")
-          .matches;
+        const prefersDark =
+          window.matchMedia?.("(prefers-color-scheme: dark)")?.matches ?? false;
         const theme =
           stored === "light" || stored === "dark"
             ? stored

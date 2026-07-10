@@ -6,5 +6,5 @@ export const darkSchemeQuery = "(prefers-color-scheme: dark)";
 export const themePreferenceStorageKey = "ide-theme-preference";
 
 export function systemPrefersDark(): boolean {
-  return Boolean(window.matchMedia?.(darkSchemeQuery).matches);
+  return window.matchMedia?.(darkSchemeQuery)?.matches ?? false;
 }
