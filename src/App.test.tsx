@@ -4211,7 +4211,18 @@ describe("App shell interactions", () => {
     fireEvent.contextMenu(tree);
     fireEvent.click(await screen.findByRole("menuitem", { name: "Reveal in Finder" }));
 
-    await waitFor(() => expect(tauriMocks.revealInFileManager).toHaveBeenCalledWith("/workspace"));
+    // Reveal takes workspace-relative paths; "" is the backend's spelling of
+    // the workspace root itself (an absolute path would be rejected).
+    await waitFor(() => expect(tauriMocks.revealInFileManager).toHaveBeenCalledWith(""));
+  });
+
+  it("reveals a file from the tree context menu using its relative path", async () => {
+    render(<App />);
+
+    fireEvent.contextMenu(await treeButton("README.md"));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Reveal in Finder" }));
+
+    await waitFor(() => expect(tauriMocks.revealInFileManager).toHaveBeenCalledWith("README.md"));
   });
 
   it("closes other tabs from a tab's own context menu", async () => {

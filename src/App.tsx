@@ -1503,12 +1503,14 @@ export default function App() {
     }
   }, []);
 
+  // Takes a workspace-relative path — the backend resolves it against the
+  // workspace root (and rejects absolute paths), with "" meaning the root.
   const revealPath = useCallback(async (path: string) => {
     setError(undefined);
     try {
       await revealInFileManager(path);
     } catch (reason) {
-      setError(`Unable to reveal ${path}: ${String(reason)}`);
+      setError(`Unable to reveal ${path || "workspace root"}: ${String(reason)}`);
       setStatus("Reveal failed");
     }
   }, []);
@@ -4213,7 +4215,7 @@ export default function App() {
         id: "reveal",
         label: "Reveal in Finder",
         icon: FolderOpen,
-        onSelect: () => void revealPath(absoluteWorkspacePath(workspaceRoot, node.path)),
+        onSelect: () => void revealPath(node.path),
       },
       menuSeparator,
       {
@@ -4263,7 +4265,7 @@ export default function App() {
         id: "reveal",
         label: "Reveal in Finder",
         icon: FolderOpen,
-        onSelect: () => void revealPath(absoluteWorkspacePath(workspaceRoot, node.path)),
+        onSelect: () => void revealPath(node.path),
       },
       menuSeparator,
       {
@@ -4335,12 +4337,13 @@ export default function App() {
           id: "reveal_root",
           label: "Reveal in Finder",
           icon: FolderOpen,
-          onSelect: () => void revealPath(workspaceRoot),
+          // Empty string is the backend's spelling of "the workspace root itself".
+          onSelect: () => void revealPath(""),
         },
         { id: "refresh", label: "Refresh", icon: RefreshCw, onSelect: () => void refreshWorkspace() },
       ]);
     },
-    [openMenu, openNewFileDialogForFolder, openNewFolderDialogForFolder, refreshWorkspace, revealPath, workspaceRoot],
+    [openMenu, openNewFileDialogForFolder, openNewFolderDialogForFolder, refreshWorkspace, revealPath],
   );
 
   const buildCommitTreeFileMenuEntries = useCallback(
@@ -4445,7 +4448,7 @@ export default function App() {
           id: "reveal",
           label: "Reveal in Finder",
           icon: FolderOpen,
-          onSelect: () => void revealPath(absoluteWorkspacePath(workspaceRoot, result.path)),
+          onSelect: () => void revealPath(result.path),
         },
         menuSeparator,
         {
@@ -4518,7 +4521,7 @@ export default function App() {
           id: "reveal",
           label: "Reveal in Finder",
           icon: FolderOpen,
-          onSelect: () => void revealPath(absoluteWorkspacePath(workspaceRoot, realPath)),
+          onSelect: () => void revealPath(realPath),
         },
       ];
     },
