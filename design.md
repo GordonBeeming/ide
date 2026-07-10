@@ -25,8 +25,10 @@ dock icons instead of competing with them.
 The tile is a plain SVG rounded rect, not the true Apple-superellipse curve
 the old mark used; that's simply what the locked design delivered. In the
 live design mock the caret blinks (opacity keyframes, disabled under
-`prefers-reduced-motion`). Every static asset in this repo — favicon, app
-icons, About dialog — uses the caret at full opacity with no animation.
+`prefers-reduced-motion`). The About dialog renders the mark as inline SVG and
+keeps that blink (with the same reduced-motion guard); every static asset in
+this repo — favicon, app icons — uses the caret at full opacity with no
+animation.
 
 ### Two background forms
 | File                        | Background                                                     |

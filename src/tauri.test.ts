@@ -353,6 +353,7 @@ describe("hosted Tauri API transport", () => {
         dateTimeFormat: "localMedium",
         recentRelativeThreshold: "oneWeek",
         diffViewMode: "inline",
+        themePreference: "system",
         autoFetchSeconds: 60,
         featureFlags: {},
       },

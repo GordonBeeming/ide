@@ -204,6 +204,8 @@ struct PersistedViewSettings {
     recent_relative_threshold: String,
     #[serde(default = "default_diff_view_mode")]
     diff_view_mode: String,
+    #[serde(default = "default_theme_preference")]
+    theme_preference: String,
     // How often the app auto-fetches the current branch's upstream, in seconds.
     // 0 disables it; any other value is clamped to a sane range so it can't hammer
     // a remote. Consumed by the frontend timer only.
@@ -241,6 +243,7 @@ impl Default for PersistedViewSettings {
             date_time_format: default_date_time_format(),
             recent_relative_threshold: default_recent_relative_threshold(),
             diff_view_mode: default_diff_view_mode(),
+            theme_preference: default_theme_preference(),
             auto_fetch_seconds: default_auto_fetch_seconds(),
             feature_flags: BTreeMap::new(),
         }
@@ -318,6 +321,8 @@ const KNOWN_RECENT_RELATIVE_THRESHOLDS: &[&str] = &[
 ];
 const DEFAULT_DIFF_VIEW_MODE: &str = "inline";
 const KNOWN_DIFF_VIEW_MODES: &[&str] = &["inline", "sideBySide"];
+const DEFAULT_THEME_PREFERENCE: &str = "system";
+const KNOWN_THEME_PREFERENCES: &[&str] = &["system", "light", "dark"];
 
 fn default_tree_scan_limit() -> usize {
     DEFAULT_TREE_SCAN_LIMIT
@@ -395,6 +400,10 @@ fn default_diff_view_mode() -> String {
     DEFAULT_DIFF_VIEW_MODE.to_string()
 }
 
+fn default_theme_preference() -> String {
+    DEFAULT_THEME_PREFERENCE.to_string()
+}
+
 fn sanitize_view_settings(mut settings: PersistedViewSettings) -> PersistedViewSettings {
     settings.tree_scan_limit = settings
         .tree_scan_limit
@@ -448,6 +457,9 @@ fn sanitize_view_settings(mut settings: PersistedViewSettings) -> PersistedViewS
     }
     if !KNOWN_DIFF_VIEW_MODES.contains(&settings.diff_view_mode.as_str()) {
         settings.diff_view_mode = default_diff_view_mode();
+    }
+    if !KNOWN_THEME_PREFERENCES.contains(&settings.theme_preference.as_str()) {
+        settings.theme_preference = default_theme_preference();
     }
     settings
         .feature_flags
@@ -3593,6 +3605,7 @@ mod tests {
                 date_time_format: "yyyyMmDdHhMm".to_string(),
                 recent_relative_threshold: "twoDays".to_string(),
                 diff_view_mode: "sideBySide".to_string(),
+                theme_preference: "dark".to_string(),
                 auto_fetch_seconds: 120,
                 feature_flags: BTreeMap::new(),
             },
@@ -3628,6 +3641,7 @@ mod tests {
         assert_eq!(loaded.view.date_time_format, "yyyyMmDdHhMm");
         assert_eq!(loaded.view.recent_relative_threshold, "twoDays");
         assert_eq!(loaded.view.diff_view_mode, "sideBySide");
+        assert_eq!(loaded.view.theme_preference, "dark");
         assert_eq!(loaded.view.auto_fetch_seconds, 120);
         assert_eq!(loaded.workspaces.len(), 1);
         assert_eq!(

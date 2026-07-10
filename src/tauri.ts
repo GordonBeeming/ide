@@ -235,6 +235,19 @@ export function sanitizeDiffViewMode(value: unknown): DiffViewMode {
   return value === "inline" || value === "sideBySide" ? value : defaultDiffViewMode;
 }
 
+// "system" defers to the OS `prefers-color-scheme`; "light"/"dark" pin the
+// theme regardless of the OS. Mirrored to localStorage (see themePreferenceStorageKey)
+// so the index.html pre-paint bootstrap can honor an explicit choice without a flash.
+export type ThemePreference = "system" | "light" | "dark";
+
+export const defaultThemePreference: ThemePreference = "system";
+
+export function sanitizeThemePreference(value: unknown): ThemePreference {
+  return value === "system" || value === "light" || value === "dark"
+    ? value
+    : defaultThemePreference;
+}
+
 export interface PersistedViewSettings {
   showDotfiles: boolean;
   showGeneratedInternal: boolean;
@@ -258,6 +271,7 @@ export interface PersistedViewSettings {
   dateTimeFormat?: DateTimeFormatId;
   recentRelativeThreshold?: RecentRelativeThresholdId;
   diffViewMode?: DiffViewMode;
+  themePreference?: ThemePreference;
   // Seconds between background auto-fetches; 0 disables it. Clamped on the backend.
   autoFetchSeconds?: number;
   // Persisted feature-flag overrides only; defaults live in src/featureFlags.ts.
@@ -332,6 +346,7 @@ const defaultUiSnapshot: PersistedUiSnapshot = {
     dateTimeFormat: defaultDateTimeFormat,
     recentRelativeThreshold: defaultRecentRelativeThreshold,
     diffViewMode: defaultDiffViewMode,
+    themePreference: defaultThemePreference,
     autoFetchSeconds: 60,
     featureFlags: {},
   },
