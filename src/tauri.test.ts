@@ -336,6 +336,8 @@ describe("hosted Tauri API transport", () => {
         showGitignoredFiles: false,
         showDiagnosticsPanel: false,
         trackActiveFile: true,
+        gitCommitEnabled: true,
+        gitAttributionEnabled: true,
         treeScanLimit: 10000,
         maxOpenFileKb: 5120,
         workspaceSearchResultLimit: 200,

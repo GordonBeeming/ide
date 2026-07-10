@@ -241,6 +241,8 @@ export interface PersistedViewSettings {
   showGitignoredFiles?: boolean;
   showDiagnosticsPanel?: boolean;
   trackActiveFile?: boolean;
+  gitCommitEnabled?: boolean;
+  gitAttributionEnabled?: boolean;
   treeScanLimit?: number;
   maxOpenFileKb?: number;
   workspaceSearchResultLimit?: number;
@@ -313,6 +315,8 @@ const defaultUiSnapshot: PersistedUiSnapshot = {
     showGitignoredFiles: false,
     showDiagnosticsPanel: false,
     trackActiveFile: true,
+    gitCommitEnabled: true,
+    gitAttributionEnabled: true,
     treeScanLimit: 10000,
     maxOpenFileKb: 5120,
     workspaceSearchResultLimit: 200,

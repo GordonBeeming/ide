@@ -236,6 +236,7 @@ type SettingsCategory =
   | "view"
   | "performance"
   | "search"
+  | "git"
   | "preview"
   | "storage";
 
@@ -247,6 +248,7 @@ const settingsCategories: Array<{
   { id: "view", title: "View", detail: "Tree visibility" },
   { id: "performance", title: "Performance", detail: "Scan, file, and palette caps" },
   { id: "search", title: "Search", detail: "Search result and file caps" },
+  { id: "git", title: "Git", detail: "Commit panel and attribution" },
   { id: "preview", title: "Preview Features", detail: "Opt into in-progress features" },
   { id: "storage", title: "Storage", detail: "Settings and index files" },
 ];
@@ -590,6 +592,8 @@ export default function App() {
   const [showGitignoredFiles, setShowGitignoredFiles] = useState(false);
   const [showDiagnosticsPanel, setShowDiagnosticsPanel] = useState(false);
   const [trackActiveFile, setTrackActiveFile] = useState(true);
+  const [gitCommitEnabled, setGitCommitEnabled] = useState(true);
+  const [gitAttributionEnabled, setGitAttributionEnabled] = useState(true);
   const [treeScanLimit, setTreeScanLimit] = useState(defaultTreeScanLimit);
   const [maxOpenFileKb, setMaxOpenFileKb] = useState(defaultMaxOpenFileKb);
   const [workspaceSearchResultLimit, setWorkspaceSearchResultLimit] = useState(
@@ -727,8 +731,6 @@ export default function App() {
   const hasDirtyFiles = dirtyFiles.length > 0;
   const activeSelection = selection?.filePath === activePath ? selection : undefined;
   const cursorPosition = cursorStatus(activePath, cursor, revealTarget);
-  const gitAttributionEnabled = isFeatureEnabled("gitAttribution", featureFlags);
-  const gitCommitEnabled = isFeatureEnabled("gitCommit", featureFlags);
   const contextMenusEnabled = isFeatureEnabled("contextMenus", featureFlags);
   // Live merge state, read straight off the polled Git status so the conflict UI
   // updates on its own as the user resolves files (rather than freezing on the
@@ -1073,6 +1075,8 @@ export default function App() {
     setShowGitignoredFiles(snapshot.view.showGitignoredFiles ?? false);
     setShowDiagnosticsPanel(Boolean(snapshot.view.showDiagnosticsPanel));
     setTrackActiveFile(snapshot.view.trackActiveFile ?? true);
+    setGitCommitEnabled(snapshot.view.gitCommitEnabled ?? true);
+    setGitAttributionEnabled(snapshot.view.gitAttributionEnabled ?? true);
     setTreeScanLimit(sanitizeTreeScanLimit(snapshot.view.treeScanLimit));
     setMaxOpenFileKb(
       sanitizeNumberLimit(
@@ -2438,6 +2442,8 @@ export default function App() {
           showGitignoredFiles,
           showDiagnosticsPanel,
           trackActiveFile,
+          gitCommitEnabled,
+          gitAttributionEnabled,
           treeScanLimit,
           maxOpenFileKb,
           workspaceSearchResultLimit,
@@ -2485,6 +2491,8 @@ export default function App() {
     showGitignoredFiles,
     showDiagnosticsPanel,
     trackActiveFile,
+    gitCommitEnabled,
+    gitAttributionEnabled,
     singleFileMode,
     treeScanLimit,
     maxOpenFileKb,
@@ -6574,6 +6582,48 @@ export default function App() {
                             setStatus(`Current-file result rows set to ${next}`);
                           }}
                         />
+                      </label>
+                    </section>
+                  ) : null}
+
+                  {settingsCategory === "git" ? (
+                    <section
+                      className="settings-section"
+                      aria-label="Git"
+                      role="tabpanel"
+                      id="settings-panel-git"
+                      aria-labelledby="settings-tab-git"
+                    >
+                      <div className="settings-section__title">Git</div>
+                      <label className="settings-row">
+                        <input
+                          type="checkbox"
+                          checked={gitCommitEnabled}
+                          onChange={(event) => {
+                            setGitCommitEnabled(event.target.checked);
+                            setStatus(
+                              event.target.checked
+                                ? "Enabled Git commit"
+                                : "Disabled Git commit",
+                            );
+                          }}
+                        />
+                        <span>Git commit</span>
+                      </label>
+                      <label className="settings-row">
+                        <input
+                          type="checkbox"
+                          checked={gitAttributionEnabled}
+                          onChange={(event) => {
+                            setGitAttributionEnabled(event.target.checked);
+                            setStatus(
+                              event.target.checked
+                                ? "Enabled Git attribution"
+                                : "Disabled Git attribution",
+                            );
+                          }}
+                        />
+                        <span>Git attribution</span>
                       </label>
                     </section>
                   ) : null}

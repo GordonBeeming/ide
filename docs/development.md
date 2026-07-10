@@ -146,7 +146,7 @@ The lifecycle runs in four steps:
 
 When promoting a flag to a real setting, migrate any saved override into the new setting before the flag id is pruned, so a user who opted in keeps their preference.
 
-`gitAttribution` is the first seeded flag, a preview flag defaulting off. It reserves the id the Git attribution feature will check; no attribution behavior ships with the flag itself.
+`contextMenus` is a live example: a preview flag defaulting on while its per-surface context menus round out. `gitCommit` and `gitAttribution` followed the same path and have since graduated into the Git settings category.
 
 ## Performance Notes
 

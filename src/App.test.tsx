@@ -1176,7 +1176,7 @@ describe("App shell interactions", () => {
     }
   });
 
-  it("shows preview feature flags and persists a toggle", async () => {
+  it("shows the remaining preview feature flag and persists a toggle", async () => {
     (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
     render(<App />);
 
@@ -1184,30 +1184,57 @@ describe("App shell interactions", () => {
     await openSettingsDialog();
     selectSettingsTab("Preview Features");
 
-    const toggle = await screen.findByLabelText("Git attribution");
-    expect(toggle).not.toBeChecked();
-    // Internal-only flags must never surface here.
+    const toggle = await screen.findByLabelText("Context menus");
+    expect(toggle).toBeChecked();
+    // Internal-only flags must never surface here, and graduated settings
+    // (Git commit/attribution) no longer live on this tab either.
     expect(screen.queryByLabelText("Show dotfiles and dot folders")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Git commit")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Git attribution")).not.toBeInTheDocument();
 
     fireEvent.click(toggle);
 
     await waitFor(() =>
       expect(tauriMocks.updateUiState).toHaveBeenLastCalledWith(
         expect.objectContaining({
-          featureFlags: expect.objectContaining({ gitAttribution: true }),
+          featureFlags: expect.objectContaining({ contextMenus: false }),
         }),
         expect.anything(),
       ),
     );
   });
 
-  it("restores a persisted preview flag override", async () => {
+  it("shows the Git category and persists a setting toggle", async () => {
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    render(<App />);
+
+    expect(await treeButton("README.md")).toBeInTheDocument();
+    await openSettingsDialog();
+    selectSettingsTab("Git");
+
+    const commitToggle = await screen.findByLabelText("Git commit");
+    const attributionToggle = await screen.findByLabelText("Git attribution");
+    expect(commitToggle).toBeChecked();
+    expect(attributionToggle).toBeChecked();
+
+    fireEvent.click(attributionToggle);
+
+    await waitFor(() =>
+      expect(tauriMocks.updateUiState).toHaveBeenLastCalledWith(
+        expect.objectContaining({ gitAttributionEnabled: false }),
+        expect.anything(),
+      ),
+    );
+  });
+
+  it("restores persisted Git settings", async () => {
     (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
     tauriMocks.getUiState.mockResolvedValueOnce({
       view: {
         showDotfiles: false,
         showGeneratedInternal: false,
-        featureFlags: { gitAttribution: true, retiredFlag: true },
+        gitCommitEnabled: false,
+        gitAttributionEnabled: false,
       },
       workspace: { expandedFolders: [], openFiles: [] },
     });
@@ -1216,13 +1243,23 @@ describe("App shell interactions", () => {
 
     expect(await treeButton("README.md")).toBeInTheDocument();
     await openSettingsDialog();
-    selectSettingsTab("Preview Features");
+    selectSettingsTab("Git");
 
-    expect(await screen.findByLabelText("Git attribution")).toBeChecked();
+    expect(await screen.findByLabelText("Git commit")).not.toBeChecked();
+    expect(await screen.findByLabelText("Git attribution")).not.toBeChecked();
   });
 
-  it("does not request Git attribution while the preview flag is disabled", async () => {
+  it("does not request Git attribution while the setting is disabled", async () => {
     (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    tauriMocks.getUiState.mockResolvedValueOnce({
+      view: {
+        showDotfiles: false,
+        showGeneratedInternal: false,
+        gitAttributionEnabled: false,
+      },
+      workspace: { expandedFolders: [], openFiles: [] },
+    });
+
     render(<App />);
 
     fireEvent.doubleClick(await treeButton("README.md"));
@@ -1231,13 +1268,31 @@ describe("App shell interactions", () => {
     expect(tauriMocks.getGitAttribution).not.toHaveBeenCalled();
   });
 
+  it("hides the commit panel while the Git commit setting is disabled", async () => {
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    tauriMocks.getUiState.mockResolvedValueOnce({
+      view: {
+        showDotfiles: false,
+        showGeneratedInternal: false,
+        gitCommitEnabled: false,
+      },
+      workspace: { expandedFolders: [], openFiles: [] },
+    });
+
+    render(<App />);
+
+    expect(await treeButton("README.md")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Git commit panel")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Commit changes" })).not.toBeInTheDocument();
+  });
+
   it("shows last commit attribution in the status bar when enabled", async () => {
     (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
     tauriMocks.getUiState.mockResolvedValueOnce({
       view: {
         showDotfiles: false,
         showGeneratedInternal: false,
-        featureFlags: { gitAttribution: true },
+        gitAttributionEnabled: true,
       },
       workspace: {
         expandedFolders: [],
@@ -1306,7 +1361,7 @@ describe("App shell interactions", () => {
       view: {
         showDotfiles: false,
         showGeneratedInternal: false,
-        featureFlags: { gitAttribution: true },
+        gitAttributionEnabled: true,
       },
       workspace: {
         expandedFolders: [],
@@ -1359,7 +1414,7 @@ describe("App shell interactions", () => {
       view: {
         showDotfiles: false,
         showGeneratedInternal: false,
-        featureFlags: { gitAttribution: true },
+        gitAttributionEnabled: true,
       },
       workspace: {
         expandedFolders: ["src"],
