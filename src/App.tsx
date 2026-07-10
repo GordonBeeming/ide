@@ -800,9 +800,13 @@ export default function App() {
     ? sidebarFiles.find((file) => file.path === renameFromPath)
     : undefined;
   const tree = useMemo(() => buildTree(sidebarFiles), [sidebarFiles]);
+  // The name filter only narrows the tree while the Search panel's names scope
+  // is active. Files mode always shows the full tree — otherwise a leftover
+  // query would keep silently filtering it with no visible input to clear.
+  const treeFilter = activeSidebarSearch === "filter" ? filter.trim().toLowerCase() : "";
   const filteredTree = useMemo(
-    () => filterTree(tree, filter.trim().toLowerCase()),
-    [filter, tree],
+    () => filterTree(tree, treeFilter),
+    [treeFilter, tree],
   );
   const changedFiles =
     gitCommitEnabled && gitStatus?.status === "available" ? gitStatus.files : [];
@@ -5137,7 +5141,13 @@ export default function App() {
               railMode === "commit" ? "activity-rail__item--active" : "",
             ].join(" ")}
             title="Source control"
-            aria-label="Source control"
+            aria-label={
+              changedFilePaths.length > 0
+                ? `Source control, ${changedFilePaths.length} pending ${
+                    changedFilePaths.length === 1 ? "change" : "changes"
+                  }`
+                : "Source control"
+            }
             aria-pressed={railMode === "commit"}
             onClick={showCommitPanel}
           >
@@ -5602,14 +5612,14 @@ export default function App() {
               </div>
             ) : filteredTree.length === 0 ? (
               <div className="tree-empty" role="status">
-                {filter.trim() ? "No matching files" : "Empty workspace"}
+                {treeFilter ? "No matching files" : "Empty workspace"}
               </div>
             ) : (
               filteredTree.map((node) => (
                 <TreeItem
                   key={node.path}
                   expandedFolders={expandedFolders}
-                  forceExpanded={Boolean(filter.trim())}
+                  forceExpanded={Boolean(treeFilter)}
                   node={node}
                   selectedPath={selectedPath}
                   onOpen={openPath}
@@ -6584,11 +6594,42 @@ export default function App() {
                       </label>
                       <div className="settings-row">
                         <span>Code font</span>
-                        <div className="settings-font-toggle" role="radiogroup" aria-label="Code font">
+                        <div
+                          className="settings-font-toggle"
+                          role="radiogroup"
+                          aria-label="Code font"
+                          // Roving tabindex: only the checked radio is tabbable;
+                          // arrow keys select (and focus) the other option, per
+                          // the WAI-ARIA radio-group pattern.
+                          onKeyDown={(event) => {
+                            if (
+                              !["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(
+                                event.key,
+                              )
+                            ) {
+                              return;
+                            }
+                            event.preventDefault();
+                            const next: CodeFont =
+                              codeFont === "ibm-plex-mono" ? "system-mono" : "ibm-plex-mono";
+                            setCodeFont(next);
+                            setStatus(
+                              next === "ibm-plex-mono"
+                                ? "Code font set to IBM Plex Mono"
+                                : "Code font set to System mono",
+                            );
+                            const radios =
+                              event.currentTarget.querySelectorAll<HTMLButtonElement>(
+                                '[role="radio"]',
+                              );
+                            radios[next === "ibm-plex-mono" ? 0 : 1]?.focus();
+                          }}
+                        >
                           <button
                             type="button"
                             role="radio"
                             aria-checked={codeFont === "ibm-plex-mono"}
+                            tabIndex={codeFont === "ibm-plex-mono" ? 0 : -1}
                             onClick={() => {
                               setCodeFont("ibm-plex-mono");
                               setStatus("Code font set to IBM Plex Mono");
@@ -6600,6 +6641,7 @@ export default function App() {
                             type="button"
                             role="radio"
                             aria-checked={codeFont === "system-mono"}
+                            tabIndex={codeFont === "system-mono" ? 0 : -1}
                             onClick={() => {
                               setCodeFont("system-mono");
                               setStatus("Code font set to System mono");
@@ -8122,9 +8164,19 @@ function fullCommitDescription(
 // so every popover reopen (and every mounted GitCommitAvatar for the same
 // author) reuses the hash instead of re-hashing and re-flashing the fallback.
 const gitCommitAvatarHashCache = new Map<string, string>();
+// Entries are ~100 bytes, but a long session across many repos shouldn't grow
+// the map forever; a coarse clear is enough since entries re-hash cheaply.
+const gitCommitAvatarHashCacheLimit = 256;
 
 async function sha256Hex(value: string): Promise<string> {
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
+  // crypto (or subtle) can be absent in non-secure contexts and bare test
+  // environments; throwing lands in the caller's catch, which shows the
+  // monogram instead.
+  const subtle = globalThis.crypto?.subtle;
+  if (!subtle) {
+    throw new Error("WebCrypto subtle is not available");
+  }
+  const digest = await subtle.digest("SHA-256", new TextEncoder().encode(value));
   return Array.from(new Uint8Array(digest))
     .map((byte) => byte.toString(16).padStart(2, "0"))
     .join("");
@@ -8136,7 +8188,9 @@ function initialsForCommitAuthor(authorName: string): string {
     .split(/\s+/)
     .filter(Boolean)
     .slice(0, 2)
-    .map((word) => word[0].toUpperCase())
+    // Spread before indexing so astral-plane characters (emoji, rare CJK)
+    // yield a whole code point instead of a lone surrogate half.
+    .map((word) => [...word][0].toUpperCase())
     .join("");
   return initials || "?";
 }
@@ -8171,6 +8225,9 @@ function GitCommitAvatar({
     let cancelled = false;
     sha256Hex(cacheKey)
       .then((hex) => {
+        if (gitCommitAvatarHashCache.size >= gitCommitAvatarHashCacheLimit) {
+          gitCommitAvatarHashCache.clear();
+        }
         gitCommitAvatarHashCache.set(cacheKey, hex);
         if (!cancelled) setHash(hex);
       })

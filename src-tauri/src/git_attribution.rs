@@ -504,8 +504,10 @@ fn first_message_line(message: &BStr) -> String {
 
 fn first_message_body(message: &BStr) -> Option<String> {
     let text = message.to_str_lossy();
-    let body = text.lines().skip(1).collect::<Vec<_>>().join("\n");
-    let trimmed = body.trim();
+    // Slice past the first line instead of collect/join — this runs per blamed
+    // commit, so avoid the intermediate Vec and String allocations.
+    let (_, rest) = text.split_once('\n')?;
+    let trimmed = rest.trim();
     if trimmed.is_empty() {
         None
     } else {
