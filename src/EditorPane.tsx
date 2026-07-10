@@ -31,7 +31,7 @@ import {
 } from "./dateTimeFormat";
 import { languageForPath } from "./language";
 import { lspExtensionsForPath } from "./lsp";
-import type { EditorSelection, GitAttribution, GitCommitInfo } from "./tauri";
+import type { CodeFont, EditorSelection, GitAttribution, GitCommitInfo } from "./tauri";
 import { clampLineNumber } from "./editorNavigation";
 import { editorThemeExtensions } from "./editorTheme";
 import {
@@ -47,6 +47,7 @@ interface EditorPaneProps {
   dateTimeFormat?: DateTimeFormatId;
   recentRelativeThreshold?: RecentRelativeThresholdId;
   prefersDark?: boolean;
+  codeFont?: CodeFont;
   isDirty?: boolean;
   revealLine?: number;
   // Column offsets (0-based, within revealLine) to select on reveal, so a find
@@ -74,6 +75,7 @@ export default function EditorPane({
   isDirty = false,
   focusOnReveal = true,
   prefersDark = false,
+  codeFont = "ibm-plex-mono",
   revealLine,
   revealMatchStart,
   revealMatchEnd,
@@ -183,7 +185,7 @@ export default function EditorPane({
                 emitCursorAndSelection(update.view, path, onCursor, onSelection);
               }
             }),
-            ...editorThemeExtensions(prefersDark),
+            ...editorThemeExtensions(prefersDark, codeFont),
           ],
         }),
       });
@@ -202,7 +204,7 @@ export default function EditorPane({
       viewRef.current?.destroy();
       viewRef.current = null;
     };
-  }, [path, prefersDark]);
+  }, [path, prefersDark, codeFont]);
 
   useEffect(() => {
     const view = viewRef.current;

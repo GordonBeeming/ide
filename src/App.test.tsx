@@ -1503,6 +1503,169 @@ describe("App shell interactions", () => {
     );
   });
 
+  it("renders the commit body for a multi-line message and omits it for a single-line one", async () => {
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    tauriMocks.getUiState.mockResolvedValueOnce({
+      view: {
+        showDotfiles: false,
+        showGeneratedInternal: false,
+        gitAttributionEnabled: true,
+      },
+      workspace: {
+        expandedFolders: [],
+        openFiles: ["README.md"],
+        activeFile: "README.md",
+      },
+    });
+    tauriMocks.getGitAttribution.mockResolvedValueOnce({
+      path: "README.md",
+      status: "available",
+      file: {
+        sha: "abc123456789",
+        shortSha: "abc12345",
+        authorName: "Gordon Beeming",
+        authoredAtSeconds: Math.floor(Date.now() / 1000) - 3600,
+        summary: "Add readme",
+        body: "Explains the project.\nSecond body line.",
+        actions: [],
+      },
+      lines: [],
+    });
+
+    render(<App />);
+
+    fireEvent.click(await screen.findByText("Last commit"));
+    await screen.findByRole("dialog", { name: "Git commit details" });
+
+    expect(document.querySelector(".git-commit-popover__body-text")?.textContent).toBe(
+      "Explains the project.\nSecond body line.",
+    );
+  });
+
+  it("renders no body node and no footer for a single-line, local-only commit", async () => {
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    tauriMocks.getUiState.mockResolvedValueOnce({
+      view: {
+        showDotfiles: false,
+        showGeneratedInternal: false,
+        gitAttributionEnabled: true,
+      },
+      workspace: {
+        expandedFolders: [],
+        openFiles: ["README.md"],
+        activeFile: "README.md",
+      },
+    });
+    tauriMocks.getGitAttribution.mockResolvedValueOnce({
+      path: "README.md",
+      status: "available",
+      file: {
+        sha: "abc123456789",
+        shortSha: "abc12345",
+        authorName: "Gordon Beeming",
+        authoredAtSeconds: Math.floor(Date.now() / 1000) - 3600,
+        summary: "Add readme",
+        actions: [],
+      },
+      lines: [],
+    });
+
+    render(<App />);
+
+    fireEvent.click(await screen.findByText("Last commit"));
+    const dialog = await screen.findByRole("dialog", { name: "Git commit details" });
+
+    expect(document.querySelector(".git-commit-popover__body-text")).not.toBeInTheDocument();
+    expect(within(dialog).queryByRole("button", { name: /Open in/ })).not.toBeInTheDocument();
+    expect(dialog.querySelector(".git-commit-popover__actions")).not.toBeInTheDocument();
+    expect(dialog).toHaveClass("git-commit-popover--no-actions");
+  });
+
+  it("falls back to a monogram avatar when the commit has no author email", async () => {
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    tauriMocks.getUiState.mockResolvedValueOnce({
+      view: {
+        showDotfiles: false,
+        showGeneratedInternal: false,
+        gitAttributionEnabled: true,
+      },
+      workspace: {
+        expandedFolders: [],
+        openFiles: ["README.md"],
+        activeFile: "README.md",
+      },
+    });
+    tauriMocks.getGitAttribution.mockResolvedValueOnce({
+      path: "README.md",
+      status: "available",
+      file: {
+        sha: "abc123456789",
+        shortSha: "abc12345",
+        authorName: "Gordon Beeming",
+        authoredAtSeconds: Math.floor(Date.now() / 1000) - 3600,
+        summary: "Add readme",
+        actions: [],
+      },
+      lines: [],
+    });
+
+    render(<App />);
+
+    fireEvent.click(await screen.findByText("Last commit"));
+    const dialog = await screen.findByRole("dialog", { name: "Git commit details" });
+
+    expect(within(dialog).getByText("GB")).toBeInTheDocument();
+    expect(dialog.querySelector(".git-commit-popover__avatar--image")).not.toBeInTheDocument();
+  });
+
+  it("loads a SHA-256 gravatar for the commit author and falls back on image error", async () => {
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    tauriMocks.getUiState.mockResolvedValueOnce({
+      view: {
+        showDotfiles: false,
+        showGeneratedInternal: false,
+        gitAttributionEnabled: true,
+      },
+      workspace: {
+        expandedFolders: [],
+        openFiles: ["README.md"],
+        activeFile: "README.md",
+      },
+    });
+    tauriMocks.getGitAttribution.mockResolvedValueOnce({
+      path: "README.md",
+      status: "available",
+      file: {
+        sha: "abc123456789",
+        shortSha: "abc12345",
+        authorName: "Gordon Beeming",
+        authorEmail: "gordon@example.com",
+        authoredAtSeconds: Math.floor(Date.now() / 1000) - 3600,
+        summary: "Add readme",
+        actions: [],
+      },
+      lines: [],
+    });
+
+    render(<App />);
+
+    fireEvent.click(await screen.findByText("Last commit"));
+    const dialog = await screen.findByRole("dialog", { name: "Git commit details" });
+
+    const avatar = await waitFor(() => {
+      const image = dialog.querySelector<HTMLImageElement>(".git-commit-popover__avatar--image");
+      expect(image).toBeInTheDocument();
+      return image as HTMLImageElement;
+    });
+    expect(avatar.src).toMatch(/^https:\/\/gravatar\.com\/avatar\/[0-9a-f]{64}\?s=48&d=404$/);
+    expect(avatar.getAttribute("referrerpolicy")).toBe("no-referrer");
+
+    fireEvent.error(avatar);
+
+    expect(await within(dialog).findByText("GB")).toBeInTheDocument();
+    expect(dialog.querySelector(".git-commit-popover__avatar--image")).not.toBeInTheDocument();
+  });
+
   it("shows OS storage paths from Settings", async () => {
     (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
     render(<App />);
@@ -3802,6 +3965,52 @@ describe("App shell interactions", () => {
       "false",
     );
     expect(within(tree).queryByRole("treeitem", { name: "App.tsx" })).not.toBeInTheDocument();
+  });
+
+  it("switches the code font setting and persists the choice", async () => {
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    render(<App />);
+
+    expect(await treeButton("README.md")).toBeInTheDocument();
+    await openSettingsDialog();
+
+    const plexButton = screen.getByRole("radio", { name: "IBM Plex Mono" });
+    const systemButton = screen.getByRole("radio", { name: "System mono" });
+    expect(plexButton).toHaveAttribute("aria-checked", "true");
+    expect(systemButton).toHaveAttribute("aria-checked", "false");
+
+    fireEvent.click(systemButton);
+
+    expect(systemButton).toHaveAttribute("aria-checked", "true");
+    expect(plexButton).toHaveAttribute("aria-checked", "false");
+    await waitFor(() =>
+      expect(tauriMocks.updateUiState).toHaveBeenLastCalledWith(
+        expect.objectContaining({ codeFont: "system-mono" }),
+        expect.anything(),
+      ),
+    );
+  });
+
+  it("restores a persisted code font setting", async () => {
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    tauriMocks.getUiState.mockResolvedValueOnce({
+      view: {
+        showDotfiles: false,
+        showGeneratedInternal: false,
+        codeFont: "system-mono",
+      },
+      workspace: { expandedFolders: [], openFiles: [] },
+    });
+
+    render(<App />);
+
+    expect(await treeButton("README.md")).toBeInTheDocument();
+    await openSettingsDialog();
+
+    expect(screen.getByRole("radio", { name: "System mono" })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
   });
 
   it("clears stale content search results while a new query is searching", async () => {

@@ -354,6 +354,7 @@ describe("hosted Tauri API transport", () => {
         recentRelativeThreshold: "oneWeek",
         diffViewMode: "inline",
         themePreference: "system",
+        codeFont: "ibm-plex-mono",
         autoFetchSeconds: 60,
         featureFlags: {},
       },
@@ -910,6 +911,7 @@ describe("Git attribution response normalization", () => {
           authorEmail: "gordon@example.com",
           authoredAtSeconds: 1700000000,
           summary: "Add readme",
+          body: "Explains the project.\nSecond body line.",
           actions: [
             {
               provider: "GitHub",
@@ -945,6 +947,7 @@ describe("Git attribution response normalization", () => {
         authorEmail: "gordon@example.com",
         authoredAtSeconds: 1700000000,
         summary: "Add readme",
+        body: "Explains the project.\nSecond body line.",
         actions: [
           {
             provider: "GitHub",
@@ -1011,6 +1014,21 @@ describe("Git attribution response normalization", () => {
         file: null,
         lines: [],
         uncommittedLines: [1, 0],
+      }),
+    ).toBeUndefined();
+    expect(
+      normalizeGitAttribution({
+        path: "README.md",
+        status: "available",
+        file: {
+          sha: "abc123456789",
+          shortSha: "abc12345",
+          authorName: "Gordon Beeming",
+          summary: "Add readme",
+          body: 42,
+          actions: [],
+        },
+        lines: [],
       }),
     ).toBeUndefined();
   });
@@ -1427,5 +1445,17 @@ describe("Diff view mode sanitization", () => {
     expect(sanitizeDiffViewMode("split")).toBe("inline");
     expect(sanitizeDiffViewMode(undefined)).toBe("inline");
     expect(sanitizeDiffViewMode(null)).toBe("inline");
+  });
+});
+
+describe("Code font sanitization", () => {
+  it("keeps known values and falls back to IBM Plex Mono for anything else", async () => {
+    const { sanitizeCodeFont } = await import("./tauri");
+
+    expect(sanitizeCodeFont("ibm-plex-mono")).toBe("ibm-plex-mono");
+    expect(sanitizeCodeFont("system-mono")).toBe("system-mono");
+    expect(sanitizeCodeFont("comic-sans-mono")).toBe("ibm-plex-mono");
+    expect(sanitizeCodeFont(undefined)).toBe("ibm-plex-mono");
+    expect(sanitizeCodeFont(null)).toBe("ibm-plex-mono");
   });
 });

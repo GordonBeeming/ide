@@ -42,6 +42,7 @@ pub(crate) struct GitCommitInfo {
     pub author_email: Option<String>,
     pub authored_at_seconds: Option<i64>,
     pub summary: String,
+    pub body: Option<String>,
     pub actions: Vec<GitCommitAction>,
 }
 
@@ -390,17 +391,20 @@ fn commit_info_from_commit(
         .unwrap_or_else(|_| sha.chars().take(8).collect());
     let author = commit.author().map_err(|_| ())?;
 
+    let message = commit.message_raw_sloppy();
     Ok(commit_info(
         sha,
         short_sha,
         lossless_string(author.name),
         normalize_email(&lossless_string(author.email)),
         Some(author.seconds()),
-        first_message_line(commit.message_raw_sloppy()),
+        first_message_line(message),
+        first_message_body(message),
         remotes,
     ))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn commit_info(
     sha: String,
     short_sha: String,
@@ -408,6 +412,7 @@ fn commit_info(
     author_email: Option<String>,
     authored_at_seconds: Option<i64>,
     summary: String,
+    body: Option<String>,
     remotes: &[RemoteTemplate],
 ) -> GitCommitInfo {
     let actions = remotes
@@ -427,6 +432,7 @@ fn commit_info(
         author_email,
         authored_at_seconds,
         summary,
+        body,
         actions,
     }
 }
@@ -494,6 +500,17 @@ fn first_message_line(message: &BStr) -> String {
         .unwrap_or_default()
         .trim()
         .to_string()
+}
+
+fn first_message_body(message: &BStr) -> Option<String> {
+    let text = message.to_str_lossy();
+    let body = text.lines().skip(1).collect::<Vec<_>>().join("\n");
+    let trimmed = body.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
 }
 
 fn normalize_email(email: &str) -> Option<String> {
@@ -591,12 +608,34 @@ mod tests {
 
         assert_eq!(attribution.status, GitAttributionStatus::Available);
         assert_eq!(attribution.file.as_ref().unwrap().summary, "Add readme");
+        assert_eq!(attribution.file.as_ref().unwrap().body, None);
         assert_eq!(attribution.lines.len(), 2);
         assert_eq!(attribution.lines[0].line_number, 1);
         assert_eq!(attribution.lines[0].commit.author_name, "Gordon Beeming");
         assert_eq!(
             attribution.file.as_ref().unwrap().actions[0].label,
             "Open in GitHub"
+        );
+    }
+
+    #[tokio::test]
+    async fn splits_multiline_commit_message_into_summary_and_body() {
+        let dir = tempdir().unwrap();
+        init_repo(dir.path());
+        fs::write(dir.path().join("README.md"), "first\n").unwrap();
+        commit_all(
+            dir.path(),
+            "Add readme\n\nExplains the project.\nSecond body line.",
+            "1700000000 +0000",
+        );
+
+        let attribution = attribution_for_file(dir.path(), "README.md").await;
+
+        let file = attribution.file.as_ref().unwrap();
+        assert_eq!(file.summary, "Add readme");
+        assert_eq!(
+            file.body.as_deref(),
+            Some("Explains the project.\nSecond body line.")
         );
     }
 

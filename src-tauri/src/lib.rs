@@ -206,6 +206,9 @@ struct PersistedViewSettings {
     diff_view_mode: String,
     #[serde(default = "default_theme_preference")]
     theme_preference: String,
+    // Font stack for the editor + diff panes only; UI chrome always uses Space Grotesk.
+    #[serde(default = "default_code_font")]
+    code_font: String,
     // How often the app auto-fetches the current branch's upstream, in seconds.
     // 0 disables it; any other value is clamped to a sane range so it can't hammer
     // a remote. Consumed by the frontend timer only.
@@ -244,6 +247,7 @@ impl Default for PersistedViewSettings {
             recent_relative_threshold: default_recent_relative_threshold(),
             diff_view_mode: default_diff_view_mode(),
             theme_preference: default_theme_preference(),
+            code_font: default_code_font(),
             auto_fetch_seconds: default_auto_fetch_seconds(),
             feature_flags: BTreeMap::new(),
         }
@@ -323,6 +327,8 @@ const DEFAULT_DIFF_VIEW_MODE: &str = "inline";
 const KNOWN_DIFF_VIEW_MODES: &[&str] = &["inline", "sideBySide"];
 const DEFAULT_THEME_PREFERENCE: &str = "system";
 const KNOWN_THEME_PREFERENCES: &[&str] = &["system", "light", "dark"];
+const DEFAULT_CODE_FONT: &str = "ibm-plex-mono";
+const KNOWN_CODE_FONTS: &[&str] = &["ibm-plex-mono", "system-mono"];
 
 fn default_tree_scan_limit() -> usize {
     DEFAULT_TREE_SCAN_LIMIT
@@ -404,6 +410,10 @@ fn default_theme_preference() -> String {
     DEFAULT_THEME_PREFERENCE.to_string()
 }
 
+fn default_code_font() -> String {
+    DEFAULT_CODE_FONT.to_string()
+}
+
 fn sanitize_view_settings(mut settings: PersistedViewSettings) -> PersistedViewSettings {
     settings.tree_scan_limit = settings
         .tree_scan_limit
@@ -460,6 +470,9 @@ fn sanitize_view_settings(mut settings: PersistedViewSettings) -> PersistedViewS
     }
     if !KNOWN_THEME_PREFERENCES.contains(&settings.theme_preference.as_str()) {
         settings.theme_preference = default_theme_preference();
+    }
+    if !KNOWN_CODE_FONTS.contains(&settings.code_font.as_str()) {
+        settings.code_font = default_code_font();
     }
     settings
         .feature_flags
@@ -3606,6 +3619,7 @@ mod tests {
                 recent_relative_threshold: "twoDays".to_string(),
                 diff_view_mode: "sideBySide".to_string(),
                 theme_preference: "dark".to_string(),
+                code_font: "system-mono".to_string(),
                 auto_fetch_seconds: 120,
                 feature_flags: BTreeMap::new(),
             },
@@ -3642,6 +3656,7 @@ mod tests {
         assert_eq!(loaded.view.recent_relative_threshold, "twoDays");
         assert_eq!(loaded.view.diff_view_mode, "sideBySide");
         assert_eq!(loaded.view.theme_preference, "dark");
+        assert_eq!(loaded.view.code_font, "system-mono");
         assert_eq!(loaded.view.auto_fetch_seconds, 120);
         assert_eq!(loaded.workspaces.len(), 1);
         assert_eq!(
@@ -3711,6 +3726,23 @@ mod tests {
         let loaded = load_ui_state(&ui_state_path).unwrap();
         assert_eq!(loaded.view.feature_flags.get("contextMenus"), Some(&true));
         assert!(!loaded.view.feature_flags.contains_key("retiredFlag"));
+    }
+
+    #[test]
+    fn code_font_defaults_and_rejects_unknown_values() {
+        assert_eq!(PersistedViewSettings::default().code_font, "ibm-plex-mono");
+
+        let sanitized = sanitize_view_settings(PersistedViewSettings {
+            code_font: "comic-sans-mono".to_string(),
+            ..PersistedViewSettings::default()
+        });
+        assert_eq!(sanitized.code_font, "ibm-plex-mono");
+
+        let sanitized = sanitize_view_settings(PersistedViewSettings {
+            code_font: "system-mono".to_string(),
+            ..PersistedViewSettings::default()
+        });
+        assert_eq!(sanitized.code_font, "system-mono");
     }
 
     #[test]

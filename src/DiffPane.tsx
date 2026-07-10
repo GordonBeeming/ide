@@ -8,7 +8,7 @@ import { Columns2, Rows3, TriangleAlert } from "lucide-react";
 import { diffTheme } from "./diffTheme";
 import { editorThemeExtensions } from "./editorTheme";
 import { languageForPath } from "./language";
-import type { DiffViewMode } from "./tauri";
+import type { CodeFont, DiffViewMode } from "./tauri";
 
 interface DiffPaneProps {
   filePath: string;
@@ -17,6 +17,7 @@ interface DiffPaneProps {
   isBinary: boolean;
   isTooLarge: boolean;
   prefersDark?: boolean;
+  codeFont?: CodeFont;
   viewMode: DiffViewMode;
   onViewModeChange: (mode: DiffViewMode) => void;
   // Drives the split-ratio reset when commit mode is left while a pinned
@@ -57,6 +58,7 @@ export default function DiffPane({
   isBinary,
   isTooLarge,
   prefersDark = false,
+  codeFont = "ibm-plex-mono",
   viewMode,
   onViewModeChange,
   commitModeActive,
@@ -109,7 +111,7 @@ export default function DiffPane({
         syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
         ...languageExtensions,
         diffTheme,
-        ...editorThemeExtensions(prefersDark),
+        ...editorThemeExtensions(prefersDark, codeFont),
       ];
 
       if (viewMode === "sideBySide") {
@@ -149,7 +151,7 @@ export default function DiffPane({
       viewRef.current?.destroy();
       viewRef.current = null;
     };
-  }, [filePath, original, modified, isBinary, isTooLarge, prefersDark, viewMode]);
+  }, [filePath, original, modified, isBinary, isTooLarge, prefersDark, codeFont, viewMode]);
 
   // Re-applies on every ratio change (drag frames, keyboard nudges) without
   // touching the CodeMirror views themselves — just the wrapper's flex.

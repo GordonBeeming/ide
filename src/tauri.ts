@@ -111,6 +111,7 @@ export interface GitCommitInfo {
   authorEmail?: string;
   authoredAtSeconds?: number;
   summary: string;
+  body?: string;
   actions: GitCommitAction[];
 }
 
@@ -248,6 +249,15 @@ export function sanitizeThemePreference(value: unknown): ThemePreference {
     : defaultThemePreference;
 }
 
+// Font stack for the editor + diff panes only; UI chrome always uses Space Grotesk.
+export type CodeFont = "ibm-plex-mono" | "system-mono";
+
+export const defaultCodeFont: CodeFont = "ibm-plex-mono";
+
+export function sanitizeCodeFont(value: unknown): CodeFont {
+  return value === "ibm-plex-mono" || value === "system-mono" ? value : defaultCodeFont;
+}
+
 export interface PersistedViewSettings {
   showDotfiles: boolean;
   showGeneratedInternal: boolean;
@@ -272,6 +282,7 @@ export interface PersistedViewSettings {
   recentRelativeThreshold?: RecentRelativeThresholdId;
   diffViewMode?: DiffViewMode;
   themePreference?: ThemePreference;
+  codeFont?: CodeFont;
   // Seconds between background auto-fetches; 0 disables it. Clamped on the backend.
   autoFetchSeconds?: number;
   // Persisted feature-flag overrides only; defaults live in src/featureFlags.ts.
@@ -347,6 +358,7 @@ const defaultUiSnapshot: PersistedUiSnapshot = {
     recentRelativeThreshold: defaultRecentRelativeThreshold,
     diffViewMode: defaultDiffViewMode,
     themePreference: defaultThemePreference,
+    codeFont: defaultCodeFont,
     autoFetchSeconds: 60,
     featureFlags: {},
   },
@@ -1049,6 +1061,14 @@ function normalizeGitCommitInfo(value: unknown): GitCommitInfo | undefined {
     return undefined;
   }
 
+  if (
+    candidate.body !== undefined &&
+    candidate.body !== null &&
+    typeof candidate.body !== "string"
+  ) {
+    return undefined;
+  }
+
   const actions = candidate.actions
     .map(normalizeGitCommitAction)
     .filter((action): action is GitCommitAction => Boolean(action));
@@ -1065,6 +1085,7 @@ function normalizeGitCommitInfo(value: unknown): GitCommitInfo | undefined {
         ? candidate.authoredAtSeconds
         : undefined,
     summary: candidate.summary,
+    body: typeof candidate.body === "string" ? candidate.body : undefined,
     actions,
   };
 }

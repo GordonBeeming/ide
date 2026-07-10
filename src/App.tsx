@@ -140,6 +140,7 @@ import {
   recordRecentFile,
   renameFile,
   revealInFileManager,
+  sanitizeCodeFont,
   sanitizeDiffViewMode,
   sanitizeThemePreference,
   searchIndexedFiles,
@@ -154,8 +155,10 @@ import {
   updateAgentContext,
   updateUiState,
   writeFile,
+  defaultCodeFont,
   defaultDiffViewMode,
   defaultThemePreference,
+  type CodeFont,
   type DiffViewMode,
   type ThemePreference,
   type OpenLaunchRequest,
@@ -649,6 +652,7 @@ export default function App() {
   const [prefersDark, setPrefersDark] = useState(systemPrefersDark);
   const [themePreference, setThemePreference] =
     useState<ThemePreference>(defaultThemePreference);
+  const [codeFont, setCodeFont] = useState<CodeFont>(defaultCodeFont);
   const [uiStateLoaded, setUiStateLoaded] = useState(false);
   const [workspaceUiRestored, setWorkspaceUiRestored] = useState(false);
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(() => new Set());
@@ -1212,6 +1216,7 @@ export default function App() {
     );
     setDiffViewMode(sanitizeDiffViewMode(snapshot.view.diffViewMode));
     setThemePreference(sanitizeThemePreference(snapshot.view.themePreference));
+    setCodeFont(sanitizeCodeFont(snapshot.view.codeFont));
     setAutoFetchSeconds(sanitizeAutoFetchSeconds(snapshot.view.autoFetchSeconds));
     setFeatureFlags(sanitizeFeatureFlagOverrides(snapshot.view.featureFlags));
     setExpandedFolders(new Set(snapshot.workspace.expandedFolders));
@@ -2510,6 +2515,7 @@ export default function App() {
           recentRelativeThreshold,
           diffViewMode,
           themePreference,
+          codeFont,
           autoFetchSeconds,
           featureFlags,
         },
@@ -2561,6 +2567,7 @@ export default function App() {
     recentRelativeThreshold,
     diffViewMode,
     themePreference,
+    codeFont,
     autoFetchSeconds,
     featureFlags,
     uiStateLoaded,
@@ -5922,6 +5929,7 @@ export default function App() {
                 isBinary={activeFile.diff.isBinary}
                 isTooLarge={activeFile.diff.isTooLarge}
                 prefersDark={effectiveDark}
+                codeFont={codeFont}
                 viewMode={diffViewMode}
                 onViewModeChange={setDiffViewMode}
                 commitModeActive={commitModeActive}
@@ -5937,6 +5945,7 @@ export default function App() {
                 isDirty={activeFile.dirty}
                 path={activeFile.path}
                 prefersDark={effectiveDark}
+                codeFont={codeFont}
                 recentRelativeThreshold={recentRelativeThreshold}
                 revealLine={
                   revealTarget?.path === activeFile.path ? revealTarget.lineNumber : undefined
@@ -6012,43 +6021,46 @@ export default function App() {
       {gitCommitPopover ? (
         <div
           aria-label="Git commit details"
-          className="git-commit-popover"
+          className={
+            gitCommitPopover.actions.length
+              ? "git-commit-popover"
+              : "git-commit-popover git-commit-popover--no-actions"
+          }
           role="dialog"
         >
           <div className="git-commit-popover__header">
-            <span>{gitCommitPopover.shortSha}</span>
+            <span className="git-commit-popover__sha">{gitCommitPopover.shortSha}</span>
+            <span className="git-commit-popover__time">
+              {commitDateLabel(gitCommitPopover, dateTimeFormat, recentRelativeThreshold)}
+            </span>
             <button
               aria-label="Close Git commit details"
-              className="icon-button"
+              className="icon-button icon-button--sidebar git-commit-popover__close"
               onClick={() => setGitCommitPopover(undefined)}
               ref={gitCommitPopoverCloseRef}
               type="button"
             >
-              <X size={14} />
+              <X size={13} />
             </button>
           </div>
-          <strong>{gitCommitPopover.summary}</strong>
-          <dl>
-            <div>
-              <dt>Author</dt>
-              <dd>{gitCommitPopover.authorName}</dd>
-            </div>
-            <div>
-              <dt>Committed</dt>
-              <dd>
-                {commitDateLabel(
-                  gitCommitPopover,
-                  dateTimeFormat,
-                  recentRelativeThreshold,
-                )}
-              </dd>
-            </div>
-          </dl>
+          <div className="git-commit-popover__content">
+            <strong className="git-commit-popover__summary">{gitCommitPopover.summary}</strong>
+            {gitCommitPopover.body ? (
+              <p className="git-commit-popover__body-text">{gitCommitPopover.body}</p>
+            ) : null}
+            <span className="git-commit-popover__author">
+              <GitCommitAvatar
+                authorEmail={gitCommitPopover.authorEmail}
+                authorName={gitCommitPopover.authorName}
+              />
+              {gitCommitPopover.authorName}
+            </span>
+          </div>
           {gitCommitPopover.actions.length ? (
             <div className="git-commit-popover__actions">
               {gitCommitPopover.actions.map((action) => (
                 <button
-                  className="command-button"
+                  className="git-commit-popover__action"
                   key={`${action.remoteName}:${action.url}`}
                   onClick={() => window.open(action.url, "_blank", "noopener,noreferrer")}
                   type="button"
@@ -6570,6 +6582,33 @@ export default function App() {
                         />
                         <span>Track active file</span>
                       </label>
+                      <div className="settings-row">
+                        <span>Code font</span>
+                        <div className="settings-font-toggle" role="radiogroup" aria-label="Code font">
+                          <button
+                            type="button"
+                            role="radio"
+                            aria-checked={codeFont === "ibm-plex-mono"}
+                            onClick={() => {
+                              setCodeFont("ibm-plex-mono");
+                              setStatus("Code font set to IBM Plex Mono");
+                            }}
+                          >
+                            IBM Plex Mono
+                          </button>
+                          <button
+                            type="button"
+                            role="radio"
+                            aria-checked={codeFont === "system-mono"}
+                            onClick={() => {
+                              setCodeFont("system-mono");
+                              setStatus("Code font set to System mono");
+                            }}
+                          >
+                            System mono
+                          </button>
+                        </div>
+                      </div>
                       <label className="settings-row settings-row--stacked">
                         <span>Date and time format</span>
                         <select
@@ -8077,6 +8116,90 @@ function fullCommitDescription(
   ]
     .filter(Boolean)
     .join(" - ");
+}
+
+// Resolved SHA-256 hex digests, keyed by lowercased/trimmed email. Module-level
+// so every popover reopen (and every mounted GitCommitAvatar for the same
+// author) reuses the hash instead of re-hashing and re-flashing the fallback.
+const gitCommitAvatarHashCache = new Map<string, string>();
+
+async function sha256Hex(value: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
+  return Array.from(new Uint8Array(digest))
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+function initialsForCommitAuthor(authorName: string): string {
+  const initials = authorName
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((word) => word[0].toUpperCase())
+    .join("");
+  return initials || "?";
+}
+
+// Gravatar accepts a SHA-256 email hash (in addition to the legacy MD5 one);
+// `d=404` makes a miss fail the <img> load instead of serving a placeholder,
+// so onError can swap in the monogram.
+function GitCommitAvatar({
+  authorEmail,
+  authorName,
+}: {
+  authorEmail?: string;
+  authorName: string;
+}) {
+  const cacheKey = authorEmail?.trim().toLowerCase();
+  const [hash, setHash] = useState<string | undefined>(
+    cacheKey ? gitCommitAvatarHashCache.get(cacheKey) : undefined,
+  );
+  const [imageFailed, setImageFailed] = useState(false);
+
+  useEffect(() => {
+    setImageFailed(false);
+    if (!cacheKey) {
+      setHash(undefined);
+      return;
+    }
+    const cached = gitCommitAvatarHashCache.get(cacheKey);
+    if (cached) {
+      setHash(cached);
+      return;
+    }
+    let cancelled = false;
+    sha256Hex(cacheKey)
+      .then((hex) => {
+        gitCommitAvatarHashCache.set(cacheKey, hex);
+        if (!cancelled) setHash(hex);
+      })
+      .catch(() => {
+        // No WebCrypto available (or the hash failed) — the monogram fallback
+        // below covers it, so there's nothing further to surface here.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [cacheKey]);
+
+  if (hash && !imageFailed) {
+    return (
+      <img
+        alt=""
+        className="git-commit-popover__avatar git-commit-popover__avatar--image"
+        referrerPolicy="no-referrer"
+        src={`https://gravatar.com/avatar/${hash}?s=48&d=404`}
+        onError={() => setImageFailed(true)}
+      />
+    );
+  }
+
+  return (
+    <span className="git-commit-popover__avatar git-commit-popover__avatar--monogram">
+      {initialsForCommitAuthor(authorName)}
+    </span>
+  );
 }
 
 function isMacPlatform() {
