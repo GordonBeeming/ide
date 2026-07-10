@@ -1,6 +1,7 @@
 # ide — app icon assets
 
-The **Stagger** mark. Charcoal `#1e1f24` + one blue `#0063B2` on a light "paper" squircle.
+The **Leaf dot + caret** mark. A lowercase "ıde" wordmark with a teal xylem-leaf
+dot and a caret bar, on a dark rounded-square tile.
 
 ---
 
@@ -29,18 +30,11 @@ generator tune each platform.
 ## 📁 What's in here
 
 ```
-app-icon/            The full app icon (squircle tile + mark)
-  icon.svg             vector master — SQUIRCLE background, macOS padding
-  icon-fullbleed.svg   vector — squircle fills the frame (favicons, web)
-  icon-square.svg      vector — SQUARE background to the edges (no rounding)
+app-icon/            The full app icon (tile + wordmark)
+  icon.svg             vector master — rounded-square background
+  icon-square.svg       vector — square background to the edges (web/marketing)
   icon-square-*.png    raster of the square version
-  icon-16…1024.png     raster ladder (squircle)
-
-mark/                The bare mark on transparency (no tile)
-  mark.svg             vector, 2-colour
-  mark-mono.svg        vector, single-colour (menu-bar / tray / stamps)
-  mark-32…1024.png     raster, transparent
-  mark-mono-512.png
+  icon-16…1024.png     raster ladder (rounded-square tile)
 
 src-tauri-icons/     ← drop straight into src-tauri/icons/
   32x32.png  128x128.png  128x128@2x.png  icon.png
@@ -48,15 +42,19 @@ src-tauri-icons/     ← drop straight into src-tauri/icons/
   Square*Logo.png  StoreLogo.png   (Windows Store / MSIX)
 ```
 
+There's no `mark/` pack (bare mark on transparency) in this drop. The
+wordmark's ink colour (`#e8eef6`) only reads correctly on the dark tile, and
+nothing in the app currently consumes a transparent or single-colour cutout
+— there's no tray/menu-bar icon. Add one if a future use case needs it.
+
 ---
 
-## 🔺 Three background forms (SVG)
+## 🔺 Two background forms (SVG)
 
-| File                       | Background                         |
-|----------------------------|------------------------------------|
-| `app-icon/icon.svg`        | Squircle tile (macOS app-icon look)|
-| `mark/mark.svg`            | Transparent — bare mark only       |
-| `app-icon/icon-square.svg` | Square gradient, runs to the edges |
+| File                        | Background                                                    |
+|------------------------------|----------------------------------------------------------------|
+| `app-icon/icon.svg`         | Rounded-square tile (macOS app-icon look)                     |
+| `app-icon/icon-square.svg`  | Same mark, square background to the edges (web/marketing use) |
 
 ---
 
@@ -64,21 +62,16 @@ src-tauri-icons/     ← drop straight into src-tauri/icons/
 
 | Role            | Value       |
 |-----------------|-------------|
-| Ink (mark)      | `#1e1f24`   |
-| Accent (blue)   | `#0063B2` (brand primary) |
-| Tile gradient   | `#ffffff` → `#eceae6` |
-| Corner shape    | Apple superellipse (squircle), n≈5 |
+| Ink (wordmark)  | `#e8eef6`   |
+| Accent (teal)   | `#22d3ee`   |
+| Tile            | `#0b1120`   |
+| Corner shape    | Rounded square, `rx=115` on a 512 canvas (~22.5%) |
 
-The tile is intentionally **light** — it stands out among the colourful icons
+The tile is intentionally **dark** — it stands out among the colourful icons
 in a dock while staying minimal. No drop-shadow is baked into the OS icons;
 macOS/Windows add their own.
 
-## 🧩 Using the bare mark
-The mark in `mark/` sits on full transparency and inverts cleanly: use the
-charcoal version on light surfaces and recolour to off-white on dark ones.
-For a macOS menu-bar (tray) **template** image, use `mark-mono.svg` — the
-system tints single-colour template icons automatically.
-
 ## ✏️ Editing
-Every PNG is regenerated from the SVGs. To tweak the mark, edit the three
-`<rect>`s in `mark.svg` (or the glyph inside `icon.svg`) and re-export.
+Every PNG is regenerated from the SVGs. To tweak the mark, edit the `<text>`
+wordmark, leaf `<path>`, or caret `<rect>` inside `icon.svg` and
+`icon-square.svg` together, then re-export.
