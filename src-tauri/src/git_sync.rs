@@ -4,13 +4,14 @@
 // rabbit hole and would ignore the auth the user has already configured. The
 // blocking process work is offloaded with `spawn_blocking`, mirroring
 // git_commit::commit_files.
+use std::collections::HashMap;
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 use std::process::{Command as StdCommand, Stdio};
 
 use serde::Serialize;
 
-use crate::workspace::{resolve_workspace_path, WorkspaceError};
+use crate::workspace::{resolve_workspace_path, trash_workspace_entry, WorkspaceError};
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 // Internally tagged so the frontend reads one `outcome` discriminant instead of
@@ -61,6 +62,22 @@ pub(crate) struct GitMergeCommit {
     pub sha: String,
     pub short_sha: String,
     pub branch: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct GitDiscardPathError {
+    pub path: String,
+    pub message: String,
+}
+
+/// Partial-success result: a batch of paths can mix restores and failures, so the
+/// whole call never fails just because one path couldn't be discarded.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct GitDiscardResult {
+    pub discarded: Vec<String>,
+    pub errors: Vec<GitDiscardPathError>,
 }
 
 pub(crate) async fn sync_workspace(workspace_root: &Path) -> Result<GitSyncResult, GitSyncError> {
@@ -307,6 +324,90 @@ fn complete_merge_blocking(workspace_root: &Path) -> Result<GitMergeCommit, GitS
     })
 }
 
+/// Discards a batch of workspace-relative paths: tracked files with worktree
+/// changes (or deletions) are restored from the index via a single batched
+/// `git checkout --`; untracked files are moved to the OS trash instead of
+/// being hard-deleted or `git clean`-ed. Each path succeeds or fails on its
+/// own — one bad path never fails the whole batch.
+pub(crate) async fn discard_paths(
+    workspace_root: &Path,
+    paths: Vec<String>,
+) -> Result<GitDiscardResult, GitSyncError> {
+    let workspace_root = workspace_root.to_path_buf();
+    match tokio::task::spawn_blocking(move || discard_paths_blocking(&workspace_root, paths)).await
+    {
+        Ok(result) => result,
+        Err(_) => Err(GitSyncError::Failed(
+            "discard task failed to complete".to_string(),
+        )),
+    }
+}
+
+fn discard_paths_blocking(
+    workspace_root: &Path,
+    paths: Vec<String>,
+) -> Result<GitDiscardResult, GitSyncError> {
+    let program = resolve_git_program().ok_or(GitSyncError::GitUnavailable)?;
+    let git = GitCli {
+        program,
+        workdir: workspace_root.to_path_buf(),
+    };
+    ensure_repo(&git)?;
+
+    let status = git.status_codes()?;
+    let mut result = GitDiscardResult::default();
+    let mut tracked_to_checkout = Vec::new();
+
+    for path in paths {
+        let absolute = match resolve_workspace_path(workspace_root, &path) {
+            Ok(absolute) => absolute,
+            Err(error) => {
+                result.errors.push(GitDiscardPathError {
+                    path,
+                    message: error.to_string(),
+                });
+                continue;
+            }
+        };
+
+        match status.get(path.as_str()).map(String::as_str) {
+            Some("??") => match trash_workspace_entry(&absolute) {
+                Ok(()) => result.discarded.push(path),
+                Err(error) => result.errors.push(GitDiscardPathError {
+                    path,
+                    message: error.to_string(),
+                }),
+            },
+            Some(_) => tracked_to_checkout.push(path),
+            None => result.errors.push(GitDiscardPathError {
+                path,
+                message: "no changes to discard".to_string(),
+            }),
+        }
+    }
+
+    if !tracked_to_checkout.is_empty() {
+        let mut args: Vec<&str> = vec!["checkout", "--"];
+        args.extend(tracked_to_checkout.iter().map(String::as_str));
+        let checkout = git.run(&args)?;
+        if checkout.success {
+            result.discarded.extend(tracked_to_checkout);
+        } else {
+            let message = git_message(&checkout, "git checkout failed");
+            result.errors.extend(
+                tracked_to_checkout
+                    .into_iter()
+                    .map(|path| GitDiscardPathError {
+                        path,
+                        message: message.clone(),
+                    }),
+            );
+        }
+    }
+
+    Ok(result)
+}
+
 /// Fetch-only refresh of the current branch's upstream remote-tracking refs — no
 /// pull, push, or merge. This is what a background auto-fetch runs so the polled
 /// status can re-derive ahead/behind. A repo with no upstream is a no-op (Ok);
@@ -521,6 +622,57 @@ impl GitCli {
             }
         }
         Ok(files)
+    }
+
+    // Maps every workspace-relative path with a status entry (tracked change or
+    // untracked) to its two-character porcelain code. `"??"` is git's own
+    // untracked marker; anything else is a tracked add/modify/delete in some
+    // combination of staged/unstaged. Same repo-root-relative-to-workspace-root
+    // prefix stripping as `conflicted_files`, for the same subdirectory-workspace
+    // reason.
+    fn status_codes(&self) -> Result<HashMap<String, String>, GitSyncError> {
+        let prefix_output = self.run(&["rev-parse", "--show-prefix"])?;
+        let prefix = prefix_output
+            .success
+            .then(|| prefix_output.stdout.trim().to_string())
+            .filter(|prefix| !prefix.is_empty());
+
+        let output = self.run(&["status", "--porcelain=v1", "--untracked-files=all", "-z"])?;
+        if !output.success {
+            return Err(GitSyncError::Failed(git_message(
+                &output,
+                "git status failed",
+            )));
+        }
+
+        let mut codes = HashMap::new();
+        let mut entries = output.stdout.split('\0').filter(|entry| !entry.is_empty());
+        while let Some(entry) = entries.next() {
+            if entry.len() < 4 {
+                continue;
+            }
+            let code = &entry[..2];
+            let repo_relative = &entry[3..];
+            // A rename/copy entry's old-path segment comes as a separate
+            // NUL-separated field; skip it so it isn't misread as its own entry.
+            // Discard has no rename semantics of its own — the new path's code
+            // is enough to route it.
+            if code.starts_with('R') || code.starts_with('C') {
+                entries.next();
+            }
+
+            let relative = match &prefix {
+                Some(prefix) => match repo_relative.strip_prefix(prefix.as_str()) {
+                    Some(relative) => relative.to_string(),
+                    // Outside this workspace's subdirectory — nothing this
+                    // workspace-scoped call can act on.
+                    None => continue,
+                },
+                None => repo_relative.to_string(),
+            };
+            codes.insert(relative, code.to_string());
+        }
+        Ok(codes)
     }
 
     // Whether any unmerged (conflicted) index entry exists anywhere in the
@@ -1169,6 +1321,79 @@ mod tests {
 
         assert!(matches!(error, GitSyncError::ConflictMarkers(path) if path == "conflict.txt"));
     }
+
+    #[tokio::test]
+    async fn discard_paths_restores_a_modified_tracked_file_from_head() {
+        let dir = tempdir().unwrap();
+        init_repo(dir.path());
+        fs::write(dir.path().join("tracked.txt"), "original\n").unwrap();
+        run_git(dir.path(), ["add", "."]);
+        run_git(dir.path(), ["commit", "-m", "Initial commit"]);
+        fs::write(dir.path().join("tracked.txt"), "changed\n").unwrap();
+
+        let result = discard_paths(dir.path(), vec!["tracked.txt".to_string()])
+            .await
+            .unwrap();
+
+        assert_eq!(result.discarded, vec!["tracked.txt".to_string()]);
+        assert!(result.errors.is_empty());
+        assert_eq!(
+            fs::read_to_string(dir.path().join("tracked.txt")).unwrap(),
+            "original\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn discard_paths_restores_a_deleted_tracked_file() {
+        let dir = tempdir().unwrap();
+        init_repo(dir.path());
+        fs::write(dir.path().join("tracked.txt"), "original\n").unwrap();
+        run_git(dir.path(), ["add", "."]);
+        run_git(dir.path(), ["commit", "-m", "Initial commit"]);
+        fs::remove_file(dir.path().join("tracked.txt")).unwrap();
+
+        let result = discard_paths(dir.path(), vec!["tracked.txt".to_string()])
+            .await
+            .unwrap();
+
+        assert_eq!(result.discarded, vec!["tracked.txt".to_string()]);
+        assert!(result.errors.is_empty());
+        assert_eq!(
+            fs::read_to_string(dir.path().join("tracked.txt")).unwrap(),
+            "original\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn discard_paths_reports_a_nonexistent_path_as_an_error_without_failing_others() {
+        let dir = tempdir().unwrap();
+        init_repo(dir.path());
+        fs::write(dir.path().join("tracked.txt"), "original\n").unwrap();
+        run_git(dir.path(), ["add", "."]);
+        run_git(dir.path(), ["commit", "-m", "Initial commit"]);
+        fs::write(dir.path().join("tracked.txt"), "changed\n").unwrap();
+
+        let result = discard_paths(
+            dir.path(),
+            vec!["tracked.txt".to_string(), "missing.txt".to_string()],
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result.discarded, vec!["tracked.txt".to_string()]);
+        assert_eq!(result.errors.len(), 1);
+        assert_eq!(result.errors[0].path, "missing.txt");
+        assert_eq!(
+            fs::read_to_string(dir.path().join("tracked.txt")).unwrap(),
+            "original\n"
+        );
+    }
+
+    // ponytail: the untracked-file branch (routes through trash_workspace_entry)
+    // isn't exercised here — it would move a real file into the host's OS Trash
+    // during a test run. `status_codes` returning "??" for an untracked path is
+    // implicitly covered by git_commit.rs's status test; add a trash-mocking seam
+    // if this branch needs direct coverage later.
 
     // Leaves `work` one local commit and one remote commit apart on `conflict.txt`,
     // so a pull produces an unresolved merge conflict on that file.

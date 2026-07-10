@@ -35,6 +35,7 @@ thiserror = "=2.0.18"
 tokio = { version = "=1.52.3", features = ["fs", "io-util", "net", "process", "sync"] }
 tokio-tungstenite = "=0.29.0"
 tower = { version = "=0.5.3", features = ["util"] }
+trash = "=5.2.6"
 uuid = { version = "=1.23.2", features = ["v4"] }
 
 [dev-dependencies]

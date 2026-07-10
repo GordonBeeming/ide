@@ -986,6 +986,18 @@ async fn git_complete_merge(
 }
 
 #[tauri::command]
+async fn git_discard_paths(
+    window: tauri::Window,
+    state: State<'_, AppState>,
+    paths: Vec<String>,
+) -> Result<git_sync::GitDiscardResult, CommandError> {
+    let workspace_root = workspace_root_for_window(&state, &window).await;
+    git_sync::discard_paths(&workspace_root, paths)
+        .await
+        .map_err(CommandError::from)
+}
+
+#[tauri::command]
 async fn git_file_diff(
     window: tauri::Window,
     state: State<'_, AppState>,
@@ -1103,11 +1115,23 @@ async fn delete_file(
     window: tauri::Window,
     state: State<'_, AppState>,
     path: String,
+    permanent: Option<bool>,
 ) -> Result<(), CommandError> {
     let workspace_root = workspace_root_for_window(&state, &window).await;
-    delete_workspace_file(&workspace_root, &path).map_err(CommandError::from)?;
+    delete_workspace_file(&workspace_root, &path, permanent.unwrap_or(false))
+        .map_err(CommandError::from)?;
     state.workspace_index.remove_path(&workspace_root, &path)?;
     Ok(())
+}
+
+#[tauri::command]
+async fn reveal_in_file_manager(
+    window: tauri::Window,
+    state: State<'_, AppState>,
+    path: String,
+) -> Result<(), CommandError> {
+    let workspace_root = workspace_root_for_window(&state, &window).await;
+    workspace::reveal_in_file_manager(&workspace_root, &path).map_err(CommandError::from)
 }
 
 #[tauri::command]
@@ -2003,6 +2027,8 @@ pub fn run() {
             create_folder,
             rename_file,
             delete_file,
+            reveal_in_file_manager,
+            git_discard_paths,
             search_files,
             pick_workspace_folder,
             pick_open_file,
