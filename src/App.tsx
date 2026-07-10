@@ -411,7 +411,14 @@ const revealMenuLabel = isMacPlatform() ? "Reveal in Finder" : "Reveal in File M
 // never ends with "/", but guard anyway since it can come from the OS.
 function absoluteWorkspacePath(workspaceRoot: string, relativePath: string) {
   if (!workspaceRoot) return relativePath;
-  return `${workspaceRoot.replace(/\/+$/, "")}/${relativePath}`;
+  // The root comes from Rust's PathBuf, so it uses backslashes on Windows —
+  // join (and trim) with the root's own separator to avoid mixed-separator
+  // paths like `C:\repo/README.md` landing in the clipboard.
+  const separator = workspaceRoot.includes("\\") ? "\\" : "/";
+  const trimmedRoot = workspaceRoot.replace(/[\\/]+$/, "");
+  const relative =
+    separator === "\\" ? relativePath.replace(/\//g, "\\") : relativePath;
+  return `${trimmedRoot}${separator}${relative}`;
 }
 
 function renamePathPrefix(path: string, fromPath: string, toPath: string) {

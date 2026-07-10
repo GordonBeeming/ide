@@ -1845,14 +1845,14 @@ button {
 }
 
 /* Right-click now opens our own menus instead of the browser's, so the chrome
-   these menus target stops behaving like selectable web-page text — dialogs
-   and menus themselves are covered separately below. Editor content and text
-   inputs are never inside these containers, so their native selection is
-   untouched. Scoped behind the flag so it's a no-op when contextMenus is off. */
+   these menus target stops behaving like selectable web-page text. Dialogs are
+   deliberately NOT in this list — their body text (paths, error messages) must
+   stay copyable. Editor content and text inputs are never inside these
+   containers, so their native selection is untouched. Scoped behind the flag
+   so it's a no-op when contextMenus is off. */
 [data-context-menus="true"] .sidebar,
 [data-context-menus="true"] .tab-strip,
-[data-context-menus="true"] .statusbar,
-[data-context-menus="true"] .dialog-backdrop {
+[data-context-menus="true"] .statusbar {
   user-select: none;
 }
 

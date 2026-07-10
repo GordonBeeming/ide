@@ -87,6 +87,13 @@ export interface ContextMenuState {
   entries: MenuEntry[];
 }
 
+// Only one menu exists at a time app-wide, so index-based DOM ids are unique.
+// Real ids (not just React keys) are required for aria-activedescendant —
+// screen readers can't follow the arrow-key "active" row without them.
+function menuItemDomId(index: number) {
+  return `context-menu-item-${index}`;
+}
+
 interface MinimalMouseEvent {
   clientX: number;
   clientY: number;
@@ -219,6 +226,7 @@ export function ContextMenu({
       ref={containerRef}
       className="context-menu"
       role="menu"
+      aria-activedescendant={activeIndex >= 0 ? menuItemDomId(activeIndex) : undefined}
       tabIndex={-1}
       style={
         position
@@ -237,6 +245,7 @@ export function ContextMenu({
         return (
           <button
             key={entry.id}
+            id={menuItemDomId(index)}
             type="button"
             role="menuitem"
             className={[
