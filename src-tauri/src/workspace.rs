@@ -748,8 +748,12 @@ fn spawn_reveal(path: &Path) -> Result<(), WorkspaceError> {
 
 #[cfg(target_os = "windows")]
 fn spawn_reveal(path: &Path) -> Result<(), WorkspaceError> {
+    // `canonicalize` on Windows yields a `\\?\`-prefixed path, which
+    // explorer.exe refuses to select — strip the prefix before handing over.
+    let path_str = path.to_string_lossy();
+    let clean_path = path_str.strip_prefix(r"\\?\").unwrap_or(&path_str);
     let mut select_arg = std::ffi::OsString::from("/select,");
-    select_arg.push(path.as_os_str());
+    select_arg.push(clean_path);
     std::process::Command::new("explorer")
         .arg(select_arg)
         .spawn()
@@ -759,9 +763,14 @@ fn spawn_reveal(path: &Path) -> Result<(), WorkspaceError> {
 
 #[cfg(all(unix, not(target_os = "macos")))]
 fn spawn_reveal(path: &Path) -> Result<(), WorkspaceError> {
-    // xdg-open has no "select in file manager" concept, so open the containing
-    // directory instead (falling back to the path itself for the workspace root).
-    let target = path.parent().unwrap_or(path);
+    // xdg-open has no "select in file manager" concept: open a directory
+    // itself, and a file's containing directory — always opening the parent
+    // would "reveal" a folder one level too high.
+    let target = if path.is_dir() {
+        path
+    } else {
+        path.parent().unwrap_or(path)
+    };
     std::process::Command::new("xdg-open")
         .arg(target)
         .spawn()

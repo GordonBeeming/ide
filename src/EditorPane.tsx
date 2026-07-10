@@ -283,6 +283,12 @@ export default function EditorPane({
         onNotice?.(`${label}: nothing selected`);
         return;
       }
+      // Undefined outside secure contexts (plain HTTP on a LAN address) —
+      // reading `.writeText` off it would throw a TypeError out of the effect.
+      if (!navigator.clipboard) {
+        onError(`${label} failed: clipboard requires a secure context`);
+        return;
+      }
       navigator.clipboard
         .writeText(text)
         .then(() => {
@@ -298,6 +304,10 @@ export default function EditorPane({
     }
 
     if (editorCommand.name === "paste") {
+      if (!navigator.clipboard) {
+        onError(`${label} failed: clipboard requires a secure context`);
+        return;
+      }
       navigator.clipboard
         .readText()
         .then((text) => {

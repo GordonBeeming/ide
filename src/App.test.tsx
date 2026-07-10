@@ -4209,7 +4209,7 @@ describe("App shell interactions", () => {
     const tree = await screen.findByLabelText("Workspace files");
 
     fireEvent.contextMenu(tree);
-    fireEvent.click(await screen.findByRole("menuitem", { name: "Reveal in Finder" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: /Reveal in (Finder|File Manager)/ }));
 
     // Reveal takes workspace-relative paths; "" is the backend's spelling of
     // the workspace root itself (an absolute path would be rejected).
@@ -4220,7 +4220,7 @@ describe("App shell interactions", () => {
     render(<App />);
 
     fireEvent.contextMenu(await treeButton("README.md"));
-    fireEvent.click(await screen.findByRole("menuitem", { name: "Reveal in Finder" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: /Reveal in (Finder|File Manager)/ }));
 
     await waitFor(() => expect(tauriMocks.revealInFileManager).toHaveBeenCalledWith("README.md"));
   });

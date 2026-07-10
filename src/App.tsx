@@ -403,6 +403,10 @@ function pathIsAtOrInside(path: string, candidateRoot: string) {
   return path === candidateRoot || path.startsWith(`${candidateRoot}/`);
 }
 
+// "Finder" only means something on macOS; every other OS gets the generic
+// label. Evaluated once — the platform can't change mid-session.
+const revealMenuLabel = isMacPlatform() ? "Reveal in Finder" : "Reveal in File Manager";
+
 // POSIX join with no double slash / trailing slash surprises — workspaceRoot
 // never ends with "/", but guard anyway since it can come from the OS.
 function absoluteWorkspacePath(workspaceRoot: string, relativePath: string) {
@@ -1495,6 +1499,12 @@ export default function App() {
   // surfaces on the status line rather than failing silently.
   const copyToClipboard = useCallback(async (label: string, text: string) => {
     try {
+      // navigator.clipboard is undefined outside secure contexts (e.g. the app
+      // served over plain HTTP on a LAN address) — throw a readable message
+      // instead of a TypeError about reading `writeText` of undefined.
+      if (!navigator.clipboard) {
+        throw new Error("Clipboard requires a secure context");
+      }
       await navigator.clipboard.writeText(text);
       setStatus(`Copied ${label}`);
     } catch (reason) {
@@ -4213,7 +4223,7 @@ export default function App() {
       menuSeparator,
       {
         id: "reveal",
-        label: "Reveal in Finder",
+        label: revealMenuLabel,
         icon: FolderOpen,
         onSelect: () => void revealPath(node.path),
       },
@@ -4263,7 +4273,7 @@ export default function App() {
       menuSeparator,
       {
         id: "reveal",
-        label: "Reveal in Finder",
+        label: revealMenuLabel,
         icon: FolderOpen,
         onSelect: () => void revealPath(node.path),
       },
@@ -4335,7 +4345,7 @@ export default function App() {
         menuSeparator,
         {
           id: "reveal_root",
-          label: "Reveal in Finder",
+          label: revealMenuLabel,
           icon: FolderOpen,
           // Empty string is the backend's spelling of "the workspace root itself".
           onSelect: () => void revealPath(""),
@@ -4446,7 +4456,7 @@ export default function App() {
         menuSeparator,
         {
           id: "reveal",
-          label: "Reveal in Finder",
+          label: revealMenuLabel,
           icon: FolderOpen,
           onSelect: () => void revealPath(result.path),
         },
@@ -4519,7 +4529,7 @@ export default function App() {
         menuSeparator,
         {
           id: "reveal",
-          label: "Reveal in Finder",
+          label: revealMenuLabel,
           icon: FolderOpen,
           onSelect: () => void revealPath(realPath),
         },
@@ -4582,7 +4592,24 @@ export default function App() {
   // handler, so it never races the row opening its own menu.
   useEffect(() => {
     if (!contextMenusEnabled) return;
-    const handler = (event: MouseEvent) => event.preventDefault();
+    const handler = (event: MouseEvent) => {
+      // Text fields keep the browser's own menu (paste, spellcheck) — no
+      // custom menu is wired for them, so suppressing there would make
+      // right-click paste impossible. The CodeMirror content area is
+      // contentEditable too but has its own menu, so it stays suppressed.
+      const target = event.target;
+      if (
+        target instanceof HTMLElement &&
+        !target.closest(".cm-editor") &&
+        (target.tagName === "INPUT" ||
+          target.tagName === "TEXTAREA" ||
+          target.tagName === "SELECT" ||
+          target.isContentEditable)
+      ) {
+        return;
+      }
+      event.preventDefault();
+    };
     document.addEventListener("contextmenu", handler, true);
     return () => document.removeEventListener("contextmenu", handler, true);
   }, [contextMenusEnabled]);
