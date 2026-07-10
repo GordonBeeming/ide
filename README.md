@@ -1,5 +1,5 @@
 <h1 align="center">
-  <img src="assets/readme-banner.png" alt="ide — a fast, lightweight, cross-platform code editor" width="800">
+  <img src="assets/app-icon/icon-animated.svg" alt="ide — a fast, lightweight, cross-platform code editor" width="160">
 </h1>
 
 A lean Tauri-based integrated development environment built for speed, local control, and agent-friendly editor context.

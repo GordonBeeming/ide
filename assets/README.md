@@ -32,6 +32,8 @@ generator tune each platform.
 ```
 app-icon/            The full app icon (tile + wordmark)
   icon.svg             vector master — rounded-square background
+  icon-animated.svg    README/web version — blinking caret, wordmark rasterised
+                       (embeds icon-512.png so no font is needed in <img> use)
   icon-square.svg       vector — square background to the edges (web/marketing)
   icon-square-*.png    raster of the square version
   icon-16…1024.png     raster ladder (rounded-square tile)
