@@ -1386,7 +1386,7 @@ function httpBase() {
 }
 
 export function apiBaseForLocation(location: Pick<Location, "port">) {
-  if (location.port === "1420") {
+  if (location.port === "14717") {
     return "http://127.0.0.1:17877";
   }
   return "";
@@ -1394,12 +1394,12 @@ export function apiBaseForLocation(location: Pick<Location, "port">) {
 
 // When the IDE is served over HTTP at `/{hash}/`, every API call has to carry that
 // same prefix so the server can route it to the right open workspace. The Vite dev
-// server (port 1420) proxies to a single shared workspace and has no hash, so it
+// server (port 14717) proxies to a single shared workspace and has no hash, so it
 // returns "". The native Tauri app never reaches this path (it uses invoke()).
 export function workspacePathPrefix(
   location: Pick<Location, "pathname" | "port">,
 ): string {
-  if (location.port === "1420") {
+  if (location.port === "14717") {
     return "";
   }
   const segment = location.pathname.split("/").find((part) => part.length > 0);

@@ -188,7 +188,7 @@ if (config.bundle?.targets !== "all") {
   errors.push('bundle.targets must stay "all" so packaging metadata is generated');
 }
 
-if (config.build?.devUrl !== "http://127.0.0.1:1420") {
+if (config.build?.devUrl !== "http://127.0.0.1:14717") {
   errors.push("build.devUrl must stay on the expected local development port");
 }
 

@@ -185,7 +185,7 @@ describe("hosted Tauri API transport", () => {
   it("uses the loopback API base for Vite dev server locations", async () => {
     const { apiBaseForLocation } = await import("./tauri");
 
-    expect(apiBaseForLocation({ port: "1420" })).toBe("http://127.0.0.1:17877");
+    expect(apiBaseForLocation({ port: "14717" })).toBe("http://127.0.0.1:17877");
     expect(apiBaseForLocation({ port: "17877" })).toBe("");
   });
 
@@ -193,7 +193,7 @@ describe("hosted Tauri API transport", () => {
     const { workspacePathPrefix } = await import("./tauri");
 
     // Dev server proxies to the single shared workspace — no prefix.
-    expect(workspacePathPrefix({ port: "1420", pathname: "/abc123/" })).toBe("");
+    expect(workspacePathPrefix({ port: "14717", pathname: "/abc123/" })).toBe("");
     // Hosted under /{hash}/ — every API call carries that segment.
     expect(workspacePathPrefix({ port: "17877", pathname: "/abc123/" })).toBe(
       "/abc123",

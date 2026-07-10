@@ -6,7 +6,9 @@ export default defineConfig({
   clearScreen: false,
   server: {
     host: "127.0.0.1",
-    port: 1420,
+    // Not Tauri's default 1420 — that collides with any other Tauri app's dev
+    // server on the same machine. 14717 is ide's own.
+    port: 14717,
     strictPort: true,
     watch: {
       ignored: ["**/src-tauri/**"],
