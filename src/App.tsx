@@ -8256,7 +8256,10 @@ function GitCommitAvatar({
   }
 
   return (
-    <span className="git-commit-popover__avatar git-commit-popover__avatar--monogram">
+    <span
+      aria-hidden="true"
+      className="git-commit-popover__avatar git-commit-popover__avatar--monogram"
+    >
       {initialsForCommitAuthor(authorName)}
     </span>
   );
