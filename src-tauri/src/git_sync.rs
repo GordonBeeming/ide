@@ -1490,6 +1490,31 @@ mod tests {
         );
     }
 
+    // Pins the porcelain -z rename field order: git prints `R  <new>\0<old>`,
+    // so the destination path — the one the UI shows and discard receives — is
+    // the mapped key. Two review bots have claimed the order is reversed; this
+    // test is the receipt that it isn't.
+    #[test]
+    fn status_codes_maps_a_rename_to_its_destination_path() {
+        let dir = tempdir().unwrap();
+        init_repo(dir.path());
+        fs::write(dir.path().join("old.txt"), "contents\n").unwrap();
+        run_git(dir.path(), ["add", "."]);
+        run_git(dir.path(), ["commit", "-m", "Initial commit"]);
+        run_git(dir.path(), ["mv", "old.txt", "new.txt"]);
+
+        let git = GitCli {
+            program: resolve_git_program().unwrap(),
+            workdir: dir.path().to_path_buf(),
+        };
+        let codes = git.status_codes().unwrap();
+
+        assert!(codes
+            .get("new.txt")
+            .is_some_and(|code| code.starts_with('R')));
+        assert!(!codes.contains_key("old.txt"));
+    }
+
     // ponytail: the trash-bound branches (untracked files, and staged-new files
     // that become untracked after the reset-to-HEAD) aren't exercised here — they
     // would move real files into the host's OS Trash during a test run.

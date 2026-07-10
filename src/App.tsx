@@ -407,8 +407,8 @@ function pathIsAtOrInside(path: string, candidateRoot: string) {
 // label. Evaluated once — the platform can't change mid-session.
 const revealMenuLabel = isMacPlatform() ? "Reveal in Finder" : "Reveal in File Manager";
 
-// POSIX join with no double slash / trailing slash surprises — workspaceRoot
-// never ends with "/", but guard anyway since it can come from the OS.
+// Separator-aware join (not POSIX-only): the root's own separator wins, with
+// no double-slash / trailing-slash surprises either way.
 function absoluteWorkspacePath(workspaceRoot: string, relativePath: string) {
   if (!workspaceRoot) return relativePath;
   // The root comes from Rust's PathBuf, so it uses backslashes on Windows —
