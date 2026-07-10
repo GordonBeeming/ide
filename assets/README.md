@@ -38,6 +38,8 @@ app-icon/            The full app icon (tile + wordmark)
   icon-square-*.png    raster of the square version
   icon-16…1024.png     raster ladder (rounded-square tile)
 
+screenshots/         README app shots (light/dark pair for the <picture> swap)
+
 src-tauri-icons/     ← drop straight into src-tauri/icons/
   32x32.png  128x128.png  128x128@2x.png  icon.png
   icon.icns  (macOS)   icon.ico  (Windows)

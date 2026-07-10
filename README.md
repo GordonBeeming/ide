@@ -4,6 +4,13 @@
 
 A lean Tauri-based integrated development environment built for speed, local control, and agent-friendly editor context.
 
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/screenshots/app-dark.png">
+    <img src="assets/screenshots/app-light.png" alt="The ide app — file tree, editor with git attribution, and commit info" width="800">
+  </picture>
+</p>
+
 The goal is not to recreate Visual Studio Code. The goal is a focused editor shell that opens fast, keeps background work explicit, and exposes useful context to tools like Claude Code and Codex.
 
 ## Current State
