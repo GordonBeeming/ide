@@ -1657,9 +1657,16 @@ export default function App() {
 
   // The commit hint answers "why did Cmd+Enter do nothing" — the moment the
   // user changes the message or the file selection, the answer is stale.
+  // Keyed on a sorted-path signature rather than the Set itself: background
+  // status polls rebuild the Set with identical contents, and clearing on
+  // reference identity would dismiss the hint without any user action.
+  const gitCommitSelectionSignature = useMemo(
+    () => [...gitCommitSelectedPaths].sort().join("\n"),
+    [gitCommitSelectedPaths],
+  );
   useEffect(() => {
     setGitCommitHint(undefined);
-  }, [gitCommitMessage, gitCommitSelectedPaths]);
+  }, [gitCommitMessage, gitCommitSelectionSignature]);
 
   // Sync notices are scoped to a commit-panel session; clear them on the way out
   // so reopening the panel doesn't show a stale "Synced"/conflict line.
@@ -1746,11 +1753,18 @@ export default function App() {
     const trimmedMessage = gitCommitMessage.trim();
     const selectedPaths = changedFilePaths.filter((path) => gitCommitSelectedPaths.has(path));
     if (gitCommitInFlight) return;
+    // A failed precondition also clears the previous attempt's outcome lines —
+    // a leftover "Committed …" or error next to the warning reads as if this
+    // attempt did something.
     if (selectedPaths.length === 0) {
+      setGitCommitError(undefined);
+      setGitCommitSuccess(undefined);
       setGitCommitHint("Select at least one file to commit.");
       return;
     }
     if (!trimmedMessage) {
+      setGitCommitError(undefined);
+      setGitCommitSuccess(undefined);
       setGitCommitHint("Enter a commit message first.");
       return;
     }
