@@ -515,6 +515,9 @@ export default function App() {
     skippedFiles?: number;
   }>({});
   const [searching, setSearching] = useState(false);
+  // Bumped by refreshFiles and by window focus/visibility so the content
+  // search effect can re-run for the same query without the user retyping it.
+  const [searchRefreshNonce, setSearchRefreshNonce] = useState(0);
   const [quickOpenVisible, setQuickOpenVisible] = useState(false);
   const [quickOpenQuery, setQuickOpenQuery] = useState("");
   const [quickOpenIndex, setQuickOpenIndex] = useState(0);
@@ -664,6 +667,9 @@ export default function App() {
   const openFilesRef = useRef<EditorTab[]>([]);
   const pendingReloadRequestRef = useRef<PendingReloadRequest | undefined>(undefined);
   const diskCheckInFlightRef = useRef<Set<string>>(new Set());
+  // Tracks the trimmed query the search effect last ran, so a nonce-only
+  // bump (query unchanged) can be told apart from an actual query change.
+  const lastSearchedQueryRef = useRef("");
   const savingPathsRef = useRef<Set<string>>(new Set());
   const sidebarResizeRef = useRef<{ startX: number; startWidth: number } | undefined>(
     undefined,
@@ -1377,6 +1383,7 @@ export default function App() {
         setWorkspaceLoadFailed(false);
         setWorkspaceUiRestored(true);
         await refreshIntegrationStatus();
+        setSearchRefreshNonce((n) => n + 1);
         return [entry];
       }
 
@@ -1405,6 +1412,9 @@ export default function App() {
       // without each caller needing its own explicit call. Fire-and-forget:
       // the scan result below shouldn't wait on an extra round trip.
       void refreshGitStatus();
+      // Bumps the search-refresh nonce so an active content search re-runs
+      // against the just-loaded file list instead of showing stale results.
+      setSearchRefreshNonce((n) => n + 1);
       return entries;
     } catch (reason) {
       setWorkspaceLoadFailed(true);
@@ -1885,9 +1895,12 @@ export default function App() {
   }, [launchTargetLoaded, refreshFiles, uiStateLoaded]);
 
   useEffect(() => {
-    const handleFocus = () => checkOpenFilesDiskState("focus");
+    const handleFocus = () => {
+      checkOpenFilesDiskState("focus");
+      setSearchRefreshNonce((n) => n + 1);
+    };
     const handleVisibilityChange = () => {
-      if (!document.hidden) checkOpenFilesDiskState("focus");
+      if (!document.hidden) handleFocus();
     };
 
     window.addEventListener("focus", handleFocus);
@@ -1911,15 +1924,35 @@ export default function App() {
   useEffect(() => {
     const query = contentQuery.trim();
     if (query.length < 2) {
-      setSearchResults([]);
-      setSearchResultsTruncated(false);
-      setSearchStats({});
-      setSearching(false);
+      lastSearchedQueryRef.current = "";
+      // No search is active — avoid clearing already-empty state on every
+      // refreshFiles/focus nonce bump, which would otherwise re-render for
+      // nothing while the user isn't searching.
+      if (searching || searchResults.length > 0 || searchResultsTruncated) {
+        setSearchResults([]);
+        setSearchResultsTruncated(false);
+        setSearchStats({});
+        setSearching(false);
+      }
       return;
     }
 
-    setSearching(true);
-    setSearchResults([]);
+    if (!contentSearchActive) {
+      // Pane is hidden — don't burn a full workspace search on every save/
+      // focus while nobody's looking at results. lastSearchedQueryRef stays
+      // put, so reopening the pane on the same query takes the silent path.
+      return;
+    }
+
+    // Same query as last run + effect re-fired only because the nonce
+    // bumped means the workspace changed underneath an active search —
+    // refresh in place rather than flashing the spinner and clearing results.
+    const isSilentRefresh = query === lastSearchedQueryRef.current;
+    lastSearchedQueryRef.current = query;
+    if (!isSilentRefresh) {
+      setSearching(true);
+      setSearchResults([]);
+    }
     setError(undefined);
     let cancelled = false;
     const timeout = window.setTimeout(() => {
@@ -1966,20 +1999,27 @@ export default function App() {
             searchedFiles: normalized.searchedFiles,
             skippedFiles: normalized.skippedFiles,
           });
-          setStatus(
-            normalized.truncated
-              ? `First ${normalized.matches.length} matches`
-              : normalized.matches.length === 1
-                ? "1 match"
-                : `${normalized.matches.length} matches`,
-          );
+          const nextStatus = normalized.truncated
+            ? `First ${normalized.matches.length} matches`
+            : normalized.matches.length === 1
+              ? "1 match"
+              : `${normalized.matches.length} matches`;
+          if (isSilentRefresh) {
+            // Don't spam the status line with the same match count on
+            // every background refresh — only surface it when it changed.
+            setStatus((current) => (current === nextStatus ? current : nextStatus));
+          } else {
+            setStatus(nextStatus);
+          }
         })
         .catch((reason) => {
           if (cancelled) return;
           setError(`Search failed: ${String(reason)}`);
-          setSearchResults([]);
-          setSearchResultsTruncated(false);
-          setSearchStats({});
+          if (!isSilentRefresh) {
+            setSearchResults([]);
+            setSearchResultsTruncated(false);
+            setSearchStats({});
+          }
         })
         .finally(() => {
           if (!cancelled) setSearching(false);
@@ -1992,6 +2032,8 @@ export default function App() {
     };
   }, [
     contentQuery,
+    contentSearchActive,
+    searchRefreshNonce,
     currentFileSearchResultLimit,
     maxOpenFileKb,
     singleFileMode,

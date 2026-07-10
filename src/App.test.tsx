@@ -3742,6 +3742,59 @@ describe("App shell interactions", () => {
     expect(await screen.findByText("README.md:1")).toBeInTheDocument();
   });
 
+  it("skips content search re-runs while the pane is hidden, then refreshes silently on reopen", async () => {
+    tauriMocks.searchFiles
+      .mockResolvedValueOnce([
+        {
+          path: "src/App.tsx",
+          lineNumber: 4,
+          lineText: "const needle = true;",
+          matchStart: 6,
+          matchEnd: 12,
+        },
+      ])
+      .mockResolvedValueOnce([
+        {
+          path: "src/App.tsx",
+          lineNumber: 4,
+          lineText: "const needle = true;",
+          matchStart: 6,
+          matchEnd: 12,
+        },
+        {
+          path: "README.md",
+          lineNumber: 2,
+          lineText: "needle in a haystack",
+          matchStart: 0,
+          matchEnd: 6,
+        },
+      ]);
+    render(<App />);
+
+    const input = await openContentSearch();
+    fireEvent.change(input, { target: { value: "needle" } });
+    expect(await screen.findByText("src/App.tsx:4")).toBeInTheDocument();
+    expect(tauriMocks.searchFiles).toHaveBeenCalledTimes(1);
+
+    // Hide the pane, then simulate a workspace change via the refresh button.
+    // refreshFiles bumps the search nonce, but nobody can see results right
+    // now, so the search must not re-run.
+    fireEvent.click(screen.getByTitle("Search contents"));
+    fireEvent.click(screen.getByTitle("Refresh files"));
+    await waitFor(() => expect(tauriMocks.listFiles).toHaveBeenCalledTimes(2));
+    expect(tauriMocks.searchFiles).toHaveBeenCalledTimes(1);
+
+    // Reopening the pane on the same query takes the silent-refresh path:
+    // the previous match stays on screen with no spinner, then the list
+    // swaps once the re-run search resolves.
+    fireEvent.click(screen.getByTitle("Search contents"));
+    expect(screen.getByText("src/App.tsx:4")).toBeInTheDocument();
+    expect(screen.queryByText("Searching")).not.toBeInTheDocument();
+
+    expect(await screen.findByText("README.md:2")).toBeInTheDocument();
+    expect(tauriMocks.searchFiles).toHaveBeenCalledTimes(2);
+  });
+
   it("surfaces content search failures", async () => {
     tauriMocks.searchFiles.mockRejectedValueOnce(new Error("index unavailable"));
     render(<App />);
