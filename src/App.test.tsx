@@ -4716,6 +4716,13 @@ describe("Git commit sidebar", () => {
     expect(
       await within(panel).findByText("Enter a commit message first."),
     ).toBeInTheDocument();
+
+    fireEvent.change(message, { target: { value: "Update readme" } });
+    await waitFor(() =>
+      expect(
+        within(panel).queryByText("Enter a commit message first."),
+      ).not.toBeInTheDocument(),
+    );
   });
 
   it("commits only the selected paths and refreshes the status afterward", async () => {

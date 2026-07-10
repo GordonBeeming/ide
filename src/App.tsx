@@ -1676,6 +1676,7 @@ export default function App() {
     setGitSyncError(undefined);
     setGitMergeError(undefined);
     setGitMergeSuccess(undefined);
+    setGitCommitHint(undefined);
   }, [commitModeActive]);
 
   // Clear the "Completed merge" line after a beat, matching the commit-success
