@@ -2076,6 +2076,10 @@ button {
   line-height: 1.5;
   color: var(--text-muted);
   white-space: pre-line;
+  /* Long bodies (co-author trailers etc.) scroll here; header, summary,
+     author, and footer stay static. */
+  max-height: 400px;
+  overflow-y: auto;
 }
 
 .git-commit-popover__author {
