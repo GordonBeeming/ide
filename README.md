@@ -2,7 +2,7 @@
   <img src="assets/app-icon/icon-animated.svg" alt="ide — a fast, lightweight, cross-platform code editor" width="160">
 </h1>
 
-A lean Tauri-based integrated development environment built for speed, local control, and agent-friendly editor context.
+A lean, fast code editor built for local control and agent-friendly context. Tauri shell, Rust backend, CodeMirror editor: it opens fast, stays light, and stays out of your way.
 
 <p align="center">
   <picture>
@@ -11,164 +11,48 @@ A lean Tauri-based integrated development environment built for speed, local con
   </picture>
 </p>
 
-The goal is not to recreate Visual Studio Code. The goal is a focused editor shell that opens fast, keeps background work explicit, and exposes useful context to tools like Claude Code and Codex.
+This isn't a VS Code rebuild. It's a focused editor shell: open a folder, read and change code, commit, and give your AI tools real editor context — without extensions, background indexing surprises, or a plugin marketplace.
 
-## Current State
+## What you get
 
-Implemented:
+**A shell that stays simple.** An activity rail switches between Files, Search, and Source control. Quick open and a command palette cover the keyboard paths, IntelliJ-style shortcuts work out of the box, and a searchable key-bindings dialog shows what's available.
 
-- Tauri 2 desktop shell with a Rust backend.
-- React frontend.
-- File tree with package-backed coloured file icons, keyboard expansion/opening, accessible selection/expanded state, and folder fallbacks.
-- Native folder picker for switching workspaces.
-- Native toolbar buttons for opening files and folders in the desktop app.
-- Native File menu with New File, New Folder, Open File, Open Folder, Recents, Save, Reload, Rename/Delete, Close Tab, and Close All.
-- Native categorized Settings dialog for view toggles, performance limits, search limits, and OS storage locations.
-- File/folder launch targets through the local runner and macOS Finder Quick Action.
-- Packaged-app file associations for common text, code, web, config, and .NET project files.
-- Runtime handling for native OS file-open events, including single-process window creation/focus for launched files and folders.
-- Explicit workspace loading, empty, and load-failure retry states.
-- Collapsible sidebar for focused editing.
-- Collapsed file-name filtering and bounded text search across the current workspace, with visible capped-result notices plus searched/skipped file counts.
-- Collapsed current-file search over loaded and unsaved editor contents, with Enter/Shift+Enter match navigation.
-- Lightweight command palette for discoverable editor and workspace commands, including native file/folder open actions in the desktop app.
-- Keyboard quick-open palette for opening editor-supported files by path, including arrow-key result selection and SQLite-backed candidates from indexed workspace metadata with bounded on-demand folder expansion.
-- Settings Storage view that shows OS app-data paths plus live workspace-index coverage counts, so scan/cache limits are visible instead of hidden.
-- IntelliJ-style keyboard file creation, tab navigation, and close commands.
-- Native View menu Key Bindings dialog with searchable supported shortcuts.
-- Native Search menu with Go to File, Go to Line, Find in File, and Find in Files actions.
-- Native Navigate menu actions for LSP-backed Go to Definition and Find References.
-- Dirty-file prompts before closing tabs or the native app window.
-- Reload active files from disk, with confirmation before discarding unsaved edits.
-- New-file creation inside the current workspace.
-- New-folder creation inside the current workspace.
-- File and folder rename inside the current workspace.
-- Confirmed file and folder deletion inside the current workspace.
-- Save active file and Save All commands.
-- Stale-save protection so externally modified files are not silently overwritten.
-- Guarded Rust-native workspace scanning, file/folder creation, rename, deletion, and file read/write commands.
-- SQLite-backed workspace metadata index stored in OS app-local data, refreshed from initial scans, lazy folder loads, bounded quick-open expansion, and editor file mutations.
-- Bounded initial tree scans surface a visible notice when the configured entry cap is reached, while folder expansion continues loading children on demand.
-- User preferences and recents are stored in OS app data with paths exposed from Settings for backup; disposable workspace indexes stay in OS app-local data so they can be rebuilt.
-- Common binary/media/font/archive files select in the tree without attempting text-editor reads.
-- CodeMirror 6 editor.
-- Syntax highlighting for common code and config files, including Rust, TypeScript, JavaScript, React/TSX/JSX, JSON, Markdown, shell scripts, HTML, CSS/SCSS/Sass, C#, C/C++, Java/Kotlin/Scala, Python, Go, Ruby, SQL, XML/YAML/TOML, Dockerfiles, PowerShell, diffs, and .NET project files.
-- Lazy editor loading and lazy language loading for better startup performance.
-- System light/dark mode via `prefers-color-scheme` with a high-contrast bias, including the editor surface.
-- Active file, open file, and selection context stored in backend state.
-- LSP process manager for Rust, TypeScript/React, and C# with status refresh after bridge events.
-- LSP-backed editor keymaps from CodeMirror for definition, references, hover, rename, formatting, and signature help when the matching language server is installed.
-- LSP diagnostics captured for read-only agent context, with an optional diagnostics panel for precise line/column navigation.
-- Local HTTP context endpoint for terminal/browser integrations.
-- Claude Code `/ide` discovery bridge with authenticated localhost WebSocket MCP and read-only editor-context tools.
-- Codex-compatible read-only MCP endpoint with a persisted app-local bearer token.
-- Bearer-token protection for mutating local HTTP browser API calls.
+**Search that's honest.** One panel, two scopes: file `names` or file `contents`. Results are bounded by limits you control in Settings, and the UI tells you when a cap truncated the results instead of pretending the list is complete.
 
-Planned:
+**Git without leaving the editor.** Tick the files you want and commit from the sidebar. Fetch, pull, and push with a Sync button that walks you through merge conflicts as you resolve them. See who last touched the current file inline, and click the status bar for the full commit card — message, author with avatar, and an Open in GitHub link when the repo has a remote. Both git features are on by default and can be switched off in Settings.
 
-- Diff review and write-capable Claude bridge tools with explicit editor UI review.
-- Deeper Codex integration through `codex app-server` research once the editor has an explicit review/approval surface for rich agent workflows.
-- PR-ready local polish and testing workflow.
+**A real editor.** CodeMirror 6 with syntax highlighting for around 25 languages, from Rust and TypeScript to SQL and Dockerfiles. Install a language server (`rust-analyzer`, `typescript-language-server`, a C# LSP) and you get go-to-definition, find references, rename, hover, and a diagnostics panel — all optional, per language.
 
-## Run Locally
+**Your look.** Light, dark, or follow-the-system themes with a one-click toggle on the rail. Pick the code font (IBM Plex Mono or your system mono). Right-click menus are tailored to each surface — tree, tabs, editor, search, commit panel.
+
+**Built for agents.** This is the differentiator: the editor exposes its context to AI coding tools running next to it.
+
+- Claude Code discovers a running ide through `/ide` — no config needed.
+- Codex (and any MCP client) can read editor context through a local, token-protected MCP endpoint. Copy the config from the app's integrations panel into `~/.codex/config.toml`:
+
+  ```toml
+  [mcp_servers.ide]
+  url = "http://127.0.0.1:17877/mcp"
+  http_headers = { Authorization = "Bearer paste-token-from-ide" }
+  ```
+
+**A native citizen.** File associations for common code and text files, a macOS Finder Quick Action (right-click → Open in ide), and one app process with per-workspace windows so the Dock stays tidy.
+
+## Get started
+
+Grab a packaged build from [Releases](https://github.com/GordonBeeming/ide/releases), or build from source with the steps in [docs/development.md](docs/development.md).
+
+Once installed, the `ide` command opens or focuses a workspace without holding your terminal:
 
 ```bash
-./run.sh
+ide .                 # open the current folder
+ide src/App.tsx       # open a file (its folder becomes the workspace)
 ```
 
-The script installs Node dependencies when needed and starts Tauri dev mode.
+On macOS you can also right-click any file or folder in Finder: Quick Actions → Open in ide.
 
-Open a specific folder or file:
+## Learn more
 
-```bash
-./run.sh /path/to/workspace
-./run.sh /path/to/workspace/src/App.tsx
-```
-
-If ide is already running, `./run.sh /path/to/file-or-folder` hands the target to the running app through the authenticated loopback API instead of starting a second dev instance.
-
-Install the lowercase shell commands:
-
-```bash
-./build.sh
-```
-
-The build script creates the packaged macOS `.app` and installs the command launchers. It intentionally skips DMG creation for local command installs. If `/Applications` is writable, it also replaces `/Applications/ide.app`; otherwise use the interactive developer installer:
-
-```bash
-./dev-install.sh
-```
-
-`dev-install.sh` runs the build, prompts for the `/Applications/ide.app` replacement when admin permission is needed, refreshes Spotlight/Launch Services metadata where possible, and reveals the installed app in Finder. macOS can still cache app icons briefly, so quit/reopen ide and give Spotlight a moment if the old icon is still visible.
-
-After installation, `ide <target>` opens or focuses a packaged app window for that target without holding the terminal. Bare `ide` focuses an existing running app or opens the last context, and `ide-dev` runs this checkout's dev runner:
-
-```bash
-ide .
-ide-dev .
-```
-
-Use `./scripts/install-cli-command.sh` only when the packaged app already exists and you just need to refresh the links.
-
-On macOS, install the Finder Quick Action for direct file/folder opening:
-
-```bash
-./scripts/install-macos-finder-quick-action.sh
-```
-
-After installation, use Finder's right-click menu: Quick Actions > Open in ide. Recent folders and files are stored in the OS app-data location and exposed through the native File menu, not as in-app sidebar content.
-
-The Finder Quick Action generator is covered by `npm run finder:check`, which installs into a temporary directory and validates the generated service, file/folder UTI coverage, and loopback handoff script without touching your real Finder services.
-
-Packaged builds also declare file associations for common editor-supported file types, so macOS and other platforms can offer ide from native `Open With` flows for those files. The packaged app uses one OS process with multiple workspace windows, so Dock and app-switcher grouping stays under one ide app icon. Folder opening is still handled through the native Open Folder menu, `./run.sh /path/to/folder`, and the macOS Finder Quick Action because OS file associations are file-oriented.
-
-## Requirements
-
-- Node.js 24 or newer
-- npm 11 or newer
-- Rust 1.95 or newer
-- macOS, Linux, or Windows with the normal Tauri platform prerequisites
-
-Known optional language-server tools:
-
-- `rust-analyzer` for Rust
-- `typescript-language-server` for TypeScript and React
-- OmniSharp or another standalone C# LSP for C#
-
-Claude Code can discover the running editor through `/ide` after the native app starts. The app writes a user-only lock file under `~/.claude/ide/` and exposes only read-only context tools in this first bridge.
-
-Codex can consume editor context through the MCP endpoint shown from the native integration menu. Copy the Codex MCP config from the integrations panel and add it to `~/.codex/config.toml`:
-
-```toml
-[mcp_servers.ide]
-url = "http://127.0.0.1:17877/mcp"
-http_headers = { Authorization = "Bearer paste-token-from-ide" }
-```
-
-The public Codex docs describe `/ide` for Codex-owned IDE surfaces and `codex app-server` for rich clients, but do not currently document a Claude-style third-party lockfile protocol. The MCP endpoint remains the supported local context bridge for this app.
-
-The loopback browser API is read-friendly for local terminal/browser views. Mutating routes, including file writes and editor-context updates, require the same persisted app-local bearer token.
-
-## Verification
-
-```bash
-./run-tests.sh
-```
-
-`npm audit --audit-level=moderate` currently reports no known npm vulnerabilities.
-
-`run-tests.sh` runs the npm audit automatically. It also validates the Finder Quick Action generator, local launch runners, native menu contract, Tauri bundle file associations, production bundle budgets for startup JavaScript, startup CSS, and the lazy editor chunk, then runs a browser smoke test against the real React/CSS app shell in light and dark mode. The smoke test uses local Chrome, Chromium, or Edge through `playwright-core`; set `IDE_SMOKE_BROWSER=/path/to/browser` if it cannot find a browser automatically.
-
-`run-tests.sh` also runs `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test`, `cargo check`, and `cargo audit --deny warnings` when `cargo-audit` is installed. Current transitive Rust advisory warnings are reviewed in `src-tauri/.cargo/audit.toml`; new advisory warnings fail the local gate until reviewed.
-
-## Design Constraints
-
-- Avoid heavy editor/runtime dependencies.
-- Keep editor and language support lazy-loaded.
-- Prefer Rust-native filesystem and process work.
-- Keep LSP optional and per-language.
-- Do not add GitHub workflows yet.
-
-More detail is in [docs/development.md](docs/development.md).
-Security guardrails are tracked in [docs/security.md](docs/security.md).
-Source-backed technology notes are in [docs/research.md](docs/research.md).
+- [Development](docs/development.md) — running from source, building, testing, architecture, and the full capability inventory.
+- [Security](docs/security.md) — the guardrails around local file access and the loopback API.
+- [Research](docs/research.md) — source-backed notes on the protocols and technology choices.
