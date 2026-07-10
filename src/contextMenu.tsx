@@ -162,7 +162,11 @@ export function ContextMenu({
     if (!menu) return;
 
     const handlePointerDown = (event: PointerEvent) => {
-      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
+      if (!containerRef.current) return;
+      // A non-Node target (possible per the DOM types) can't be inside the
+      // menu, so it closes the menu the same as any other outside press.
+      const target = event.target;
+      if (!(target instanceof Node) || !containerRef.current.contains(target)) {
         onClose();
       }
     };
