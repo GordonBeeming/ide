@@ -407,6 +407,15 @@ function pathIsAtOrInside(path: string, candidateRoot: string) {
 // label. Evaluated once — the platform can't change mid-session.
 const revealMenuLabel = isMacPlatform() ? "Reveal in Finder" : "Reveal in File Manager";
 
+// Context-menu targets are usually elements, but a Text node can come through
+// (synthetic events, odd embedders) — resolve to the nearest element so
+// `.closest()` / editability checks still work instead of silently bailing.
+function elementFromEventTarget(target: EventTarget | null): HTMLElement | null {
+  if (target instanceof HTMLElement) return target;
+  if (target instanceof Node && target.parentElement) return target.parentElement;
+  return null;
+}
+
 // Separator-aware join (not POSIX-only): the root's own separator wins, with
 // no double-slash / trailing-slash surprises either way.
 function absoluteWorkspacePath(workspaceRoot: string, relativePath: string) {
@@ -4587,7 +4596,8 @@ export default function App() {
   const handleEditorContextMenu = useCallback(
     (event: ReactMouseEvent) => {
       if (!activeFile || activeFile.diff) return;
-      if (!(event.target instanceof HTMLElement) || !event.target.closest(".cm-editor")) return;
+      const element = elementFromEventTarget(event.target);
+      if (!element?.closest(".cm-editor")) return;
       openMenu(event, buildEditorMenuEntries());
     },
     [activeFile, buildEditorMenuEntries, openMenu],
@@ -4604,9 +4614,9 @@ export default function App() {
       // custom menu is wired for them, so suppressing there would make
       // right-click paste impossible. The CodeMirror content area is
       // contentEditable too but has its own menu, so it stays suppressed.
-      const target = event.target;
+      const target = elementFromEventTarget(event.target);
       if (
-        target instanceof HTMLElement &&
+        target &&
         !target.closest(".cm-editor") &&
         (target.tagName === "INPUT" ||
           target.tagName === "TEXTAREA" ||

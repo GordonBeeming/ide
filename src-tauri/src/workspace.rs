@@ -732,22 +732,32 @@ pub fn resolve_reveal_target(root: &Path, relative: &str) -> Result<PathBuf, Wor
 
 pub fn reveal_in_file_manager(root: &Path, relative: &str) -> Result<(), WorkspaceError> {
     let target = resolve_reveal_target(root, relative)?;
-    spawn_reveal(&target)
+    let child = spawn_reveal(&target)?;
+    reap_in_background(child);
+    Ok(())
+}
+
+// The reveal helpers (`open`, `explorer`, `xdg-open`) exit almost immediately,
+// and a spawned child nobody `wait()`s on stays a zombie on Unix until this
+// process exits. Reap it off-thread so reveals never accumulate zombies.
+fn reap_in_background(mut child: std::process::Child) {
+    std::thread::spawn(move || {
+        let _ = child.wait();
+    });
 }
 
 #[cfg(target_os = "macos")]
-fn spawn_reveal(path: &Path) -> Result<(), WorkspaceError> {
+fn spawn_reveal(path: &Path) -> Result<std::process::Child, WorkspaceError> {
     // `open -R` selects the path in Finder for both files and directories.
     std::process::Command::new("open")
         .arg("-R")
         .arg(path)
         .spawn()
-        .map(|_| ())
         .map_err(WorkspaceError::from)
 }
 
 #[cfg(target_os = "windows")]
-fn spawn_reveal(path: &Path) -> Result<(), WorkspaceError> {
+fn spawn_reveal(path: &Path) -> Result<std::process::Child, WorkspaceError> {
     // `canonicalize` on Windows yields a `\\?\`-prefixed path, which
     // explorer.exe refuses to select — strip the prefix before handing over.
     let path_str = path.to_string_lossy();
@@ -757,12 +767,11 @@ fn spawn_reveal(path: &Path) -> Result<(), WorkspaceError> {
     std::process::Command::new("explorer")
         .arg(select_arg)
         .spawn()
-        .map(|_| ())
         .map_err(WorkspaceError::from)
 }
 
 #[cfg(all(unix, not(target_os = "macos")))]
-fn spawn_reveal(path: &Path) -> Result<(), WorkspaceError> {
+fn spawn_reveal(path: &Path) -> Result<std::process::Child, WorkspaceError> {
     // xdg-open has no "select in file manager" concept: open a directory
     // itself, and a file's containing directory — always opening the parent
     // would "reveal" a folder one level too high.
@@ -774,7 +783,6 @@ fn spawn_reveal(path: &Path) -> Result<(), WorkspaceError> {
     std::process::Command::new("xdg-open")
         .arg(target)
         .spawn()
-        .map(|_| ())
         .map_err(WorkspaceError::from)
 }
 
