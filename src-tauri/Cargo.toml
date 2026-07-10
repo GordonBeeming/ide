@@ -36,7 +36,7 @@ tokio = { version = "=1.52.3", features = ["fs", "io-util", "net", "process", "s
 tokio-tungstenite = "=0.29.0"
 tower = { version = "=0.5.3", features = ["util"] }
 trash = "=5.2.6"
-uuid = { version = "=1.23.2", features = ["v4"] }
+uuid = { version = "=1.23.4", features = ["v4"] }
 
 [dev-dependencies]
 tempfile = "=3.27.0"
