@@ -163,6 +163,19 @@ struct GitStageResolvedRequest {
 #[serde(rename_all = "camelCase")]
 struct DeleteFileRequest {
     path: String,
+    permanent: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RevealRequest {
+    path: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GitDiscardRequest {
+    paths: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -281,6 +294,11 @@ pub async fn start_http_server(config: HttpServerConfig) -> Result<HttpServerInf
             "/api/git-complete-merge",
             post(post_git_complete_merge).options(cors_preflight),
         )
+        .route(
+            "/api/git-discard",
+            post(post_git_discard).options(cors_preflight),
+        )
+        .route("/api/reveal", post(post_reveal).options(cors_preflight))
         .route("/api/folder", post(create_folder).options(cors_preflight))
         .route(
             "/api/open-path",
@@ -977,11 +995,39 @@ async fn delete_file(
 ) -> Result<StatusCode, ApiError> {
     require_bearer_auth(&headers, &state.mcp_token)?;
     let workspace_root = resolved.workspace_root.read().await.clone();
-    delete_workspace_file(&workspace_root, &request.path)?;
+    delete_workspace_file(
+        &workspace_root,
+        &request.path,
+        request.permanent.unwrap_or(false),
+    )?;
     state
         .workspace_index
         .remove_path(&workspace_root, &request.path)?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+async fn post_reveal(
+    State(state): State<HttpServerState>,
+    Extension(resolved): Extension<ResolvedWorkspace>,
+    headers: HeaderMap,
+    Json(request): Json<RevealRequest>,
+) -> Result<StatusCode, ApiError> {
+    require_bearer_auth(&headers, &state.mcp_token)?;
+    let workspace_root = resolved.workspace_root.read().await.clone();
+    crate::workspace::reveal_in_file_manager(&workspace_root, &request.path)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn post_git_discard(
+    State(state): State<HttpServerState>,
+    Extension(resolved): Extension<ResolvedWorkspace>,
+    headers: HeaderMap,
+    Json(request): Json<GitDiscardRequest>,
+) -> Result<Json<git_sync::GitDiscardResult>, ApiError> {
+    require_bearer_auth(&headers, &state.mcp_token)?;
+    let workspace_root = resolved.workspace_root.read().await.clone();
+    let result = git_sync::discard_paths(&workspace_root, request.paths).await?;
+    Ok(Json(result))
 }
 
 #[derive(Debug, Deserialize)]
@@ -2338,6 +2384,7 @@ mod tests {
             HeaderMap::new(),
             Json(DeleteFileRequest {
                 path: "note.txt".to_string(),
+                permanent: Some(true),
             }),
         )
         .await;
@@ -2377,8 +2424,12 @@ mod tests {
             State(state.clone()),
             default_resolved(&state),
             headers,
+            // permanent: true — a real delete_file call defaults to trashing, but
+            // this test asserts the file is gone, which would otherwise litter the
+            // host's real OS Trash on every test run.
             Json(DeleteFileRequest {
                 path: "note.txt".to_string(),
+                permanent: Some(true),
             }),
         )
         .await;

@@ -197,6 +197,18 @@ export interface GitMergeCommit {
   branch?: string;
 }
 
+export interface GitDiscardPathError {
+  path: string;
+  message: string;
+}
+
+// Partial-success shape: a batch of paths can mix restores and failures, so
+// one bad path never fails the whole call.
+export interface GitDiscardResult {
+  discarded: string[];
+  errors: GitDiscardPathError[];
+}
+
 export interface OpenFileRequest {
   workspaceRoot: string;
   path: string;
@@ -912,6 +924,29 @@ export function normalizeGitMergeCommit(value: unknown): GitMergeCommit | undefi
   };
 }
 
+function isGitDiscardPathError(value: unknown): value is GitDiscardPathError {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as Record<string, unknown>;
+  return typeof candidate.path === "string" && typeof candidate.message === "string";
+}
+
+export function normalizeGitDiscardResult(value: unknown): GitDiscardResult | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const candidate = value as Record<string, unknown>;
+  if (
+    !Array.isArray(candidate.discarded) ||
+    !candidate.discarded.every((path): path is string => typeof path === "string") ||
+    !Array.isArray(candidate.errors) ||
+    !candidate.errors.every(isGitDiscardPathError)
+  ) {
+    return undefined;
+  }
+  return {
+    discarded: candidate.discarded,
+    errors: candidate.errors,
+  };
+}
+
 export function normalizeGitAttribution(value: unknown): GitAttribution | undefined {
   if (!value || typeof value !== "object") return undefined;
   const candidate = value as Record<string, unknown>;
@@ -1062,11 +1097,33 @@ export function renameFile(
   });
 }
 
-export function deleteFile(path: string) {
+export function deleteFile(path: string, permanent = false) {
   return callApi<void>("delete_file", "/api/file", {
     method: "DELETE",
+    body: { path, permanent },
+    invokeArgs: { path, permanent },
+  });
+}
+
+export function revealInFileManager(path: string) {
+  return callApi<void>("reveal_in_file_manager", "/api/reveal", {
+    method: "POST",
     body: { path },
     invokeArgs: { path },
+  });
+}
+
+export function gitDiscardPaths(paths: string[]) {
+  return callApi<unknown>("git_discard_paths", "/api/git-discard", {
+    method: "POST",
+    body: { paths },
+    invokeArgs: { paths },
+  }).then((value) => {
+    const normalized = normalizeGitDiscardResult(value);
+    if (!normalized) {
+      throw new Error("Git discard response had an unexpected shape");
+    }
+    return normalized;
   });
 }
 

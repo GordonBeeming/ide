@@ -12,6 +12,7 @@ describe("feature flags", () => {
     expect(resolveFeatureFlags({})).toEqual({
       gitAttribution: false,
       gitCommit: true,
+      contextMenus: true,
     });
     expect(isFeatureEnabled("gitAttribution", {})).toBe(false);
     expect(isFeatureEnabled("gitCommit", {})).toBe(true);

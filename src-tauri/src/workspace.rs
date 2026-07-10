@@ -80,6 +80,8 @@ pub enum WorkspaceError {
     Io(#[from] std::io::Error),
     #[error("walk error: {0}")]
     Walk(#[from] ignore::Error),
+    #[error("failed to move to trash: {0}")]
+    Trash(#[from] trash::Error),
 }
 
 const MAX_SEARCH_QUERY_CHARS: usize = 128;
@@ -678,14 +680,27 @@ pub fn rename_workspace_file(
     fs::rename(from_path, to_path).map_err(WorkspaceError::from)
 }
 
-pub fn delete_workspace_file(root: &Path, relative: &str) -> Result<(), WorkspaceError> {
+pub fn delete_workspace_file(
+    root: &Path,
+    relative: &str,
+    permanent: bool,
+) -> Result<(), WorkspaceError> {
     // Deleting only ever removes a link or an in-workspace entry, so external
-    // traversal is never needed here.
+    // traversal is never needed here. Path resolution (and its traversal/symlink
+    // guards) happens before either removal mode below runs.
     let path = resolve_existing_workspace_entry_path(root, relative, false)?;
 
-    // A symlink resolves to the link itself; remove just the link so the target
-    // (a real file or directory, possibly outside the workspace) is left intact.
-    let link_metadata = fs::symlink_metadata(&path)?;
+    if permanent {
+        delete_workspace_entry_permanently(&path)
+    } else {
+        trash_workspace_entry(&path)
+    }
+}
+
+// A symlink resolves to the link itself; remove just the link so the target
+// (a real file or directory, possibly outside the workspace) is left intact.
+fn delete_workspace_entry_permanently(path: &Path) -> Result<(), WorkspaceError> {
+    let link_metadata = fs::symlink_metadata(path)?;
     if link_metadata.file_type().is_symlink() {
         return fs::remove_file(path).map_err(WorkspaceError::from);
     }
@@ -695,6 +710,80 @@ pub fn delete_workspace_file(root: &Path, relative: &str) -> Result<(), Workspac
     } else {
         fs::remove_file(path).map_err(WorkspaceError::from)
     }
+}
+
+// Shared with git discard's untracked-file path, so discarding an untracked file
+// also lands in the OS trash rather than being hard-deleted. `trash::delete`
+// operates on the given path itself (a symlink's own path is never followed to
+// its target), matching the permanent-delete branch's symlink handling above.
+pub(crate) fn trash_workspace_entry(path: &Path) -> Result<(), WorkspaceError> {
+    trash::delete(path).map_err(WorkspaceError::from)
+}
+
+// Resolves what "reveal in file manager" should point the OS at. Empty string
+// (or ".") means the workspace root itself, which resolve_existing_workspace_entry_path
+// can't express (it expects a named entry under the root).
+pub fn resolve_reveal_target(root: &Path, relative: &str) -> Result<PathBuf, WorkspaceError> {
+    if relative.is_empty() || relative == "." {
+        return root.canonicalize().map_err(WorkspaceError::from);
+    }
+    resolve_existing_workspace_entry_path(root, relative, false)
+}
+
+pub fn reveal_in_file_manager(root: &Path, relative: &str) -> Result<(), WorkspaceError> {
+    let target = resolve_reveal_target(root, relative)?;
+    let child = spawn_reveal(&target)?;
+    reap_in_background(child);
+    Ok(())
+}
+
+// The reveal helpers (`open`, `explorer`, `xdg-open`) exit almost immediately,
+// and a spawned child nobody `wait()`s on stays a zombie on Unix until this
+// process exits. Reap it off-thread so reveals never accumulate zombies.
+fn reap_in_background(mut child: std::process::Child) {
+    std::thread::spawn(move || {
+        let _ = child.wait();
+    });
+}
+
+#[cfg(target_os = "macos")]
+fn spawn_reveal(path: &Path) -> Result<std::process::Child, WorkspaceError> {
+    // `open -R` selects the path in Finder for both files and directories.
+    std::process::Command::new("open")
+        .arg("-R")
+        .arg(path)
+        .spawn()
+        .map_err(WorkspaceError::from)
+}
+
+#[cfg(target_os = "windows")]
+fn spawn_reveal(path: &Path) -> Result<std::process::Child, WorkspaceError> {
+    // `canonicalize` on Windows yields a `\\?\`-prefixed path, which
+    // explorer.exe refuses to select — strip the prefix before handing over.
+    let path_str = path.to_string_lossy();
+    let clean_path = path_str.strip_prefix(r"\\?\").unwrap_or(&path_str);
+    let mut select_arg = std::ffi::OsString::from("/select,");
+    select_arg.push(clean_path);
+    std::process::Command::new("explorer")
+        .arg(select_arg)
+        .spawn()
+        .map_err(WorkspaceError::from)
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn spawn_reveal(path: &Path) -> Result<std::process::Child, WorkspaceError> {
+    // xdg-open has no "select in file manager" concept: open a directory
+    // itself, and a file's containing directory — always opening the parent
+    // would "reveal" a folder one level too high.
+    let target = if path.is_dir() {
+        path
+    } else {
+        path.parent().unwrap_or(path)
+    };
+    std::process::Command::new("xdg-open")
+        .arg(target)
+        .spawn()
+        .map_err(WorkspaceError::from)
 }
 
 fn workspace_walker(
@@ -1487,7 +1576,7 @@ mod tests {
         let dir = tempdir().unwrap();
         fs::write(dir.path().join("note.txt"), "contents").unwrap();
 
-        delete_workspace_file(dir.path(), "note.txt").unwrap();
+        delete_workspace_file(dir.path(), "note.txt", true).unwrap();
 
         assert!(!dir.path().join("note.txt").exists());
     }
@@ -1498,7 +1587,7 @@ mod tests {
         fs::create_dir_all(dir.path().join("src/nested")).unwrap();
         fs::write(dir.path().join("src/nested/file.txt"), "contents").unwrap();
 
-        delete_workspace_file(dir.path(), "src").unwrap();
+        delete_workspace_file(dir.path(), "src", true).unwrap();
 
         assert!(!dir.path().join("src").exists());
     }
@@ -1508,7 +1597,21 @@ mod tests {
         let dir = tempdir().unwrap();
         fs::write(dir.path().join("note.txt"), "contents").unwrap();
 
-        let result = delete_workspace_file(dir.path(), "../secret.txt");
+        let result = delete_workspace_file(dir.path(), "../secret.txt", true);
+
+        assert!(matches!(result, Err(WorkspaceError::InvalidPath)));
+        assert!(dir.path().join("note.txt").exists());
+    }
+
+    // Proves the traversal guard runs before the trash-vs-permanent branch, so a
+    // rejected path never reaches `trash::delete` — which would otherwise hit the
+    // real OS Trash during a test run.
+    #[test]
+    fn delete_workspace_file_rejects_parent_traversal_before_trashing() {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join("note.txt"), "contents").unwrap();
+
+        let result = delete_workspace_file(dir.path(), "../secret.txt", false);
 
         assert!(matches!(result, Err(WorkspaceError::InvalidPath)));
         assert!(dir.path().join("note.txt").exists());
@@ -1524,7 +1627,7 @@ mod tests {
         fs::write(&secret_path, "secret").unwrap();
         symlink(&secret_path, &linked_path).unwrap();
 
-        delete_workspace_file(dir.path(), "linked.txt").unwrap();
+        delete_workspace_file(dir.path(), "linked.txt", true).unwrap();
 
         // Only the link is removed; the external target survives.
         assert!(fs::symlink_metadata(linked_path).is_err());
@@ -1539,7 +1642,7 @@ mod tests {
         fs::write(outside.path().join("keep.txt"), "keep").unwrap();
         symlink(outside.path(), dir.path().join("linked")).unwrap();
 
-        delete_workspace_file(dir.path(), "linked").unwrap();
+        delete_workspace_file(dir.path(), "linked", true).unwrap();
 
         assert!(fs::symlink_metadata(dir.path().join("linked")).is_err());
         // The real directory and its contents are left intact.
@@ -1547,6 +1650,49 @@ mod tests {
             fs::read_to_string(outside.path().join("keep.txt")).unwrap(),
             "keep"
         );
+    }
+
+    #[test]
+    fn resolve_reveal_target_resolves_the_workspace_root_for_empty_or_dot() {
+        let dir = tempdir().unwrap();
+        let canonical_root = dir.path().canonicalize().unwrap();
+
+        assert_eq!(
+            resolve_reveal_target(dir.path(), "").unwrap(),
+            canonical_root
+        );
+        assert_eq!(
+            resolve_reveal_target(dir.path(), ".").unwrap(),
+            canonical_root
+        );
+    }
+
+    #[test]
+    fn resolve_reveal_target_resolves_an_existing_file() {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join("note.txt"), "contents").unwrap();
+
+        let target = resolve_reveal_target(dir.path(), "note.txt").unwrap();
+
+        assert_eq!(target, dir.path().join("note.txt").canonicalize().unwrap());
+    }
+
+    #[test]
+    fn resolve_reveal_target_rejects_parent_traversal() {
+        let dir = tempdir().unwrap();
+
+        let result = resolve_reveal_target(dir.path(), "../secret.txt");
+
+        assert!(matches!(result, Err(WorkspaceError::InvalidPath)));
+    }
+
+    #[test]
+    fn resolve_reveal_target_rejects_a_missing_entry() {
+        let dir = tempdir().unwrap();
+
+        let result = resolve_reveal_target(dir.path(), "missing.txt");
+
+        assert!(result.is_err());
     }
 
     #[test]

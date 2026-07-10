@@ -122,6 +122,101 @@ describe("EditorPane", () => {
     expect(onError).not.toHaveBeenCalled();
   });
 
+  it("selects the whole document, then cuts it to the clipboard as a real EditorView transaction", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText, readText: vi.fn() },
+      configurable: true,
+    });
+    const onChange = vi.fn();
+    const onNotice = vi.fn();
+    const { container, rerender } = render(
+      <EditorPane contents="hello" onChange={onChange} onError={vi.fn()} onSelection={vi.fn()} path="README.md" />,
+    );
+    await waitFor(() => expect(editorText(container)).toContain("hello"));
+
+    rerender(
+      <EditorPane
+        contents="hello"
+        editorCommand={{ filePath: "README.md", name: "selectAll", nonce: 1 }}
+        onChange={onChange}
+        onError={vi.fn()}
+        onNotice={onNotice}
+        onSelection={vi.fn()}
+        path="README.md"
+      />,
+    );
+
+    rerender(
+      <EditorPane
+        contents="hello"
+        editorCommand={{ filePath: "README.md", name: "cut", nonce: 2 }}
+        onChange={onChange}
+        onError={vi.fn()}
+        onNotice={onNotice}
+        onSelection={vi.fn()}
+        path="README.md"
+      />,
+    );
+
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith("hello"));
+    await waitFor(() => expect(onChange).toHaveBeenCalledWith("README.md", ""));
+  });
+
+  it("reports nothing to copy when there is no selection", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText, readText: vi.fn() },
+      configurable: true,
+    });
+    const onNotice = vi.fn();
+    const { container, rerender } = render(
+      <EditorPane contents="hello" onChange={vi.fn()} onError={vi.fn()} onSelection={vi.fn()} path="README.md" />,
+    );
+    await waitFor(() => expect(editorText(container)).toContain("hello"));
+
+    rerender(
+      <EditorPane
+        contents="hello"
+        editorCommand={{ filePath: "README.md", name: "copy", nonce: 1 }}
+        onChange={vi.fn()}
+        onError={vi.fn()}
+        onNotice={onNotice}
+        onSelection={vi.fn()}
+        path="README.md"
+      />,
+    );
+
+    await waitFor(() => expect(onNotice).toHaveBeenCalledWith("Copy: nothing selected"));
+    expect(writeText).not.toHaveBeenCalled();
+  });
+
+  it("pastes clipboard text at the cursor as a real EditorView transaction", async () => {
+    const readText = vi.fn().mockResolvedValue("pasted");
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText: vi.fn(), readText },
+      configurable: true,
+    });
+    const onChange = vi.fn();
+    const { container, rerender } = render(
+      <EditorPane contents="hello" onChange={onChange} onError={vi.fn()} onSelection={vi.fn()} path="README.md" />,
+    );
+    await waitFor(() => expect(editorText(container)).toContain("hello"));
+
+    rerender(
+      <EditorPane
+        contents="hello"
+        editorCommand={{ filePath: "README.md", name: "paste", nonce: 1 }}
+        onChange={onChange}
+        onError={vi.fn()}
+        onSelection={vi.fn()}
+        path="README.md"
+      />,
+    );
+
+    await waitFor(() => expect(onChange).toHaveBeenCalledWith("README.md", "pastedhello"));
+  });
+
   it("renders current-line Git attribution as ghost text", async () => {
     const onGitCommitClick = vi.fn();
     const commit = {
