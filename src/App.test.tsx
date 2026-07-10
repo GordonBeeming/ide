@@ -69,6 +69,8 @@ const tauriMocks = vi.hoisted(() => ({
   createFolder: vi.fn(),
   renameFile: vi.fn(),
   deleteFile: vi.fn(),
+  revealInFileManager: vi.fn(),
+  gitDiscardPaths: vi.fn(),
   searchFiles: vi.fn(),
   searchIndexedFiles: vi.fn(),
   pickOpenFile: vi.fn(),
@@ -141,6 +143,8 @@ vi.mock("./tauri", async () => {
     createFolder: tauriMocks.createFolder,
     renameFile: tauriMocks.renameFile,
     deleteFile: tauriMocks.deleteFile,
+    revealInFileManager: tauriMocks.revealInFileManager,
+    gitDiscardPaths: tauriMocks.gitDiscardPaths,
     searchFiles: tauriMocks.searchFiles,
     searchIndexedFiles: tauriMocks.searchIndexedFiles,
     pickOpenFile: tauriMocks.pickOpenFile,
@@ -342,6 +346,8 @@ describe("App shell interactions", () => {
     tauriMocks.createFolder.mockResolvedValue(undefined);
     tauriMocks.renameFile.mockResolvedValue(undefined);
     tauriMocks.deleteFile.mockResolvedValue(undefined);
+    tauriMocks.revealInFileManager.mockResolvedValue(undefined);
+    tauriMocks.gitDiscardPaths.mockResolvedValue({ discarded: [], errors: [] });
     tauriMocks.searchFiles.mockResolvedValue([]);
     tauriMocks.searchIndexedFiles.mockResolvedValue([]);
     tauriMocks.pickOpenFile.mockResolvedValue(undefined);
@@ -2937,8 +2943,8 @@ describe("App shell interactions", () => {
     act(() => {
       eventMocks.listeners.get("menu://delete-selected")?.({ payload: undefined });
     });
-    expect(screen.getByRole("alertdialog", { name: "Delete file?" })).toHaveTextContent(
-      "README.md will be permanently removed from the workspace.",
+    expect(screen.getByRole("alertdialog", { name: "Move file to Trash?" })).toHaveTextContent(
+      "README.md will be moved to the Trash.",
     );
   });
 
@@ -4123,15 +4129,15 @@ describe("App shell interactions", () => {
     fireEvent.click(await treeButton("README.md"));
     await findTab("README.md");
     fireEvent.click(screen.getByTitle("Delete selected item"));
-    expect(screen.getByRole("alertdialog", { name: "Delete file?" })).toHaveTextContent(
-      "README.md will be permanently removed from the workspace.",
+    expect(screen.getByRole("alertdialog", { name: "Move file to Trash?" })).toHaveTextContent(
+      "README.md will be moved to the Trash.",
     );
 
-    fireEvent.click(screen.getByText("Delete"));
+    fireEvent.click(screen.getByText("Move to Trash"));
 
-    await waitFor(() => expect(tauriMocks.deleteFile).toHaveBeenCalledWith("README.md"));
+    await waitFor(() => expect(tauriMocks.deleteFile).toHaveBeenCalledWith("README.md", false));
     await waitFor(() => expect(tabButton("README.md")).toBeUndefined());
-    expect(screen.getByText("Deleted README.md")).toBeInTheDocument();
+    expect(screen.getByText("Moved to Trash: README.md")).toBeInTheDocument();
   });
 
   it("deletes a selected folder and closes open files beneath it", async () => {
@@ -4145,18 +4151,18 @@ describe("App shell interactions", () => {
     });
     fireEvent.click(await treeButton("src"));
     fireEvent.click(screen.getByTitle("Delete selected item"));
-    expect(screen.getByRole("alertdialog", { name: "Delete folder?" })).toHaveTextContent(
-      "src will be permanently removed from the workspace. Any files inside this folder will also be removed. This selection also has unsaved editor changes.",
+    expect(screen.getByRole("alertdialog", { name: "Move folder to Trash?" })).toHaveTextContent(
+      "src will be moved to the Trash. Any files inside this folder will also be removed. This selection also has unsaved editor changes.",
     );
 
     tauriMocks.listFiles.mockResolvedValueOnce(
       files.filter((file) => !file.path.startsWith("src")),
     );
-    fireEvent.click(screen.getByText("Delete"));
+    fireEvent.click(screen.getByText("Move to Trash"));
 
-    await waitFor(() => expect(tauriMocks.deleteFile).toHaveBeenCalledWith("src"));
+    await waitFor(() => expect(tauriMocks.deleteFile).toHaveBeenCalledWith("src", false));
     await waitFor(() => expect(tabButton("src/App.tsx")).toBeUndefined());
-    expect(screen.getByText("Deleted src")).toBeInTheDocument();
+    expect(screen.getByText("Moved to Trash: src")).toBeInTheDocument();
   });
 
   it("keeps the delete confirmation open when deletion fails", async () => {
@@ -4165,10 +4171,81 @@ describe("App shell interactions", () => {
 
     fireEvent.click(await treeButton("README.md"));
     fireEvent.click(screen.getByTitle("Delete selected item"));
-    fireEvent.click(screen.getByText("Delete"));
+    fireEvent.click(screen.getByText("Move to Trash"));
 
     await screen.findByText("Error: permission denied");
-    expect(screen.getByRole("alertdialog", { name: "Delete file?" })).toBeInTheDocument();
+    expect(screen.getByRole("alertdialog", { name: "Move file to Trash?" })).toBeInTheDocument();
+  });
+
+  it("opens a custom menu on right-click and deletes permanently via the danger item", async () => {
+    render(<App />);
+
+    fireEvent.contextMenu(await treeButton("README.md"));
+    expect(await screen.findByRole("menu")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("menuitem", { name: /Delete Permanently/ }));
+
+    expect(
+      await screen.findByRole("alertdialog", { name: "Delete file permanently?" }),
+    ).toHaveTextContent("This can't be undone.");
+    fireEvent.click(screen.getByText("Delete Permanently"));
+
+    await waitFor(() => expect(tauriMocks.deleteFile).toHaveBeenCalledWith("README.md", true));
+  });
+
+  it("copies the absolute path from the tree context menu", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+    render(<App />);
+
+    fireEvent.contextMenu(await treeButton("README.md"));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Copy Path" }));
+
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith("/workspace/README.md"));
+  });
+
+  it("reveals the workspace root from the tree background context menu", async () => {
+    render(<App />);
+    await treeButton("README.md");
+    const tree = await screen.findByLabelText("Workspace files");
+
+    fireEvent.contextMenu(tree);
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Reveal in Finder" }));
+
+    await waitFor(() => expect(tauriMocks.revealInFileManager).toHaveBeenCalledWith("/workspace"));
+  });
+
+  it("closes other tabs from a tab's own context menu", async () => {
+    render(<App />);
+
+    // Pin README.md (double-click) first — a single-click preview tab would
+    // just get replaced by the next preview open instead of adding a tab.
+    fireEvent.doubleClick(await treeButton("README.md"));
+    await findTab("README.md");
+    fireEvent.click(await treeButton("src"));
+    fireEvent.click(await treeButton("App.tsx"));
+    await findTab("src/App.tsx");
+
+    fireEvent.contextMenu(await findTab("README.md"));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Close Others" }));
+
+    await waitFor(() => expect(tabButton("src/App.tsx")).toBeUndefined());
+    expect(tabButton("README.md")).toBeTruthy();
+  });
+
+  it("does not open a custom menu when the contextMenus flag is off", async () => {
+    tauriMocks.getUiState.mockResolvedValueOnce({
+      view: {
+        showDotfiles: false,
+        showGeneratedInternal: false,
+        showDiagnosticsPanel: false,
+        featureFlags: { contextMenus: false },
+      },
+      workspace: { expandedFolders: [], openFiles: [] },
+    });
+    render(<App />);
+
+    fireEvent.contextMenu(await treeButton("README.md"));
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
   });
 });
 
@@ -4682,6 +4759,37 @@ describe("Git commit sidebar", () => {
         expect.objectContaining({ commitMessageHeight: 96 }),
       ),
     );
+  });
+
+  it("discards a single changed file from its context menu in the commit panel", async () => {
+    tauriMocks.getGitStatus.mockResolvedValue({
+      status: "available",
+      branch: "main",
+      headDetached: false,
+      headUnborn: false,
+      files: [{ path: "README.md", status: "modified", staged: false, unstaged: true }],
+      mergeInProgress: false,
+      conflictedFiles: [],
+      ahead: 0,
+      behind: 0,
+    });
+    tauriMocks.gitDiscardPaths.mockResolvedValue({ discarded: ["README.md"], errors: [] });
+    render(<App />);
+
+    expect(await treeButton("README.md")).toBeInTheDocument();
+    fireEvent.click(screen.getByTitle("Commit changes"));
+    const panel = await screen.findByLabelText("Git commit panel");
+    await waitFor(() => expect(within(panel).getByText("1 / 1")).toBeInTheDocument());
+
+    fireEvent.contextMenu(within(panel).getByText("README.md"));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Discard Changes…" }));
+
+    expect(await screen.findByRole("alertdialog", { name: "Discard changes?" })).toHaveTextContent(
+      "restores tracked files from HEAD and moves untracked files to the Trash",
+    );
+    fireEvent.click(screen.getByText("Discard Changes"));
+
+    await waitFor(() => expect(tauriMocks.gitDiscardPaths).toHaveBeenCalledWith(["README.md"]));
   });
 });
 

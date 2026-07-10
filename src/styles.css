@@ -1844,6 +1844,92 @@ button {
   font-size: 13px;
 }
 
+/* Right-click now opens our own menus instead of the browser's, so the chrome
+   these menus target stops behaving like selectable web-page text — dialogs
+   and menus themselves are covered separately below. Editor content and text
+   inputs are never inside these containers, so their native selection is
+   untouched. Scoped behind the flag so it's a no-op when contextMenus is off. */
+[data-context-menus="true"] .sidebar,
+[data-context-menus="true"] .tab-strip,
+[data-context-menus="true"] .statusbar,
+[data-context-menus="true"] .dialog-backdrop {
+  user-select: none;
+}
+
+.context-menu {
+  position: fixed;
+  z-index: 60;
+  display: grid;
+  gap: 1px;
+  min-width: 200px;
+  max-width: 320px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+  user-select: none;
+  outline: none;
+}
+
+.context-menu__separator {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--border);
+}
+
+.context-menu__item {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.context-menu__item:hover:not(:disabled),
+.context-menu__item--active:not(:disabled) {
+  background: var(--accent-weak);
+}
+
+.context-menu__item:disabled,
+.context-menu__item[aria-disabled="true"] {
+  color: var(--muted);
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.context-menu__item--danger {
+  color: var(--danger);
+}
+
+.context-menu__item--danger:hover:not(:disabled),
+.context-menu__item--danger.context-menu__item--active:not(:disabled) {
+  background: color-mix(in oklch, var(--danger) 16%, transparent);
+}
+
+.context-menu__item-icon-spacer {
+  width: 14px;
+}
+
+.context-menu__item-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.context-menu__item-hint {
+  color: var(--muted);
+  font-size: 11px;
+}
+
 .dialog-backdrop {
   position: fixed;
   inset: 0;

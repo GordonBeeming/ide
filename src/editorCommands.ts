@@ -2,7 +2,11 @@ export type EditorCommandName =
   | "goToDefinition"
   | "findReferences"
   | "replaceMatch"
-  | "replaceAll";
+  | "replaceAll"
+  | "cut"
+  | "copy"
+  | "paste"
+  | "selectAll";
 
 // Column offsets are 0-based within the line, matching SearchMatch (tauri.ts).
 export interface EditorReplaceTarget {
@@ -29,6 +33,10 @@ const labels: Record<EditorCommandName, string> = {
   findReferences: "Find references",
   replaceMatch: "Replace",
   replaceAll: "Replace all",
+  cut: "Cut",
+  copy: "Copy",
+  paste: "Paste",
+  selectAll: "Select all",
 };
 
 export function editorCommandLabel(command: EditorCommandName) {

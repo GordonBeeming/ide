@@ -8,7 +8,7 @@
 // and from KNOWN_FEATURE_FLAGS in src-tauri/src/lib.rs prunes any stale override
 // the next time settings load.
 
-export type FeatureFlagId = "gitAttribution" | "gitCommit";
+export type FeatureFlagId = "gitAttribution" | "gitCommit" | "contextMenus";
 
 // "preview" flags surface in Settings → Preview Features for opt-in/opt-out.
 // "internal" flags are gated in code only and never rendered as a user toggle.
@@ -53,6 +53,17 @@ export const FEATURE_FLAGS: Record<FeatureFlagId, FeatureFlagDefinition> = {
     graduationCriteria:
       "Selective commit and sync are reliable across large repos and worktree edge cases (symlinks, executable bits, unborn/detached HEAD, merge conflicts). Once stable, promote to a Git settings category or make it always-on and remove this flag.",
     promotionNote: "Promote into a future Git/source-control settings category.",
+  },
+  contextMenus: {
+    id: "contextMenus",
+    label: "Context menus",
+    description:
+      "Right-click menus tailored to each surface (file tree, tabs, editor, search, commit panel) instead of the browser's default menu.",
+    defaultEnabled: true,
+    visibility: "preview",
+    lifecycle: "preview",
+    graduationCriteria:
+      "Menus cover every surface without missing actions or keyboard-nav bugs. Once stable, remove this flag and make the behavior always-on.",
   },
 };
 

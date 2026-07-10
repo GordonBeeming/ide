@@ -264,6 +264,56 @@ export default function EditorPane({
     if (editorCommand.filePath !== path) return;
 
     const label = editorCommandLabel(editorCommand.name);
+
+    if (editorCommand.name === "selectAll") {
+      view.dispatch({ selection: { anchor: 0, head: view.state.doc.length } });
+      view.focus();
+      return;
+    }
+
+    // Cut/copy read every non-empty selection range (supports multi-cursor)
+    // rather than execCommand, so the same EditorView transaction path used
+    // everywhere else in this component also drives the clipboard menu.
+    if (editorCommand.name === "copy" || editorCommand.name === "cut") {
+      const text = view.state.selection.ranges
+        .filter((range) => !range.empty)
+        .map((range) => view.state.sliceDoc(range.from, range.to))
+        .join("\n");
+      if (!text) {
+        onNotice?.(`${label}: nothing selected`);
+        return;
+      }
+      navigator.clipboard
+        .writeText(text)
+        .then(() => {
+          if (editorCommand.name === "cut") {
+            view.dispatch(view.state.replaceSelection(""));
+          }
+          onNotice?.(label);
+        })
+        .catch((error) => {
+          onError(`${label} failed: ${String(error)}`);
+        });
+      return;
+    }
+
+    if (editorCommand.name === "paste") {
+      navigator.clipboard
+        .readText()
+        .then((text) => {
+          if (!text) {
+            onNotice?.("Paste: clipboard is empty");
+            return;
+          }
+          view.dispatch(view.state.replaceSelection(text));
+          onNotice?.(label);
+        })
+        .catch((error) => {
+          onError(`${label} failed: ${String(error)}`);
+        });
+      return;
+    }
+
     try {
       if (
         editorCommand.name === "replaceMatch" ||

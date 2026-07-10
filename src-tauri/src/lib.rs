@@ -244,7 +244,7 @@ impl Default for PersistedViewSettings {
 // Flag ids the app currently knows about. Persisted overrides for any id not in
 // this list are pruned on load, so retiring a flag is just removing it here (and
 // from the frontend registry). Keep in sync with src/featureFlags.ts.
-const KNOWN_FEATURE_FLAGS: &[&str] = &["gitAttribution", "gitCommit"];
+const KNOWN_FEATURE_FLAGS: &[&str] = &["gitAttribution", "gitCommit", "contextMenus"];
 
 fn default_show_gitignored_files() -> bool {
     false
@@ -2232,7 +2232,7 @@ fn rebuild_app_menu(app: &tauri::AppHandle, state: &AppState) -> Result<(), Comm
         .accelerator("Shift+F6")
         .build(app)
         .map_err(|error| CommandError::Recent(error.to_string()))?;
-    let delete_selected = MenuItemBuilder::with_id("delete_selected", "Delete Selected")
+    let delete_selected = MenuItemBuilder::with_id("delete_selected", "Move to Trash Selected")
         .build(app)
         .map_err(|error| CommandError::Recent(error.to_string()))?;
     let close_tab = MenuItemBuilder::with_id("close_tab", "Close Tab")

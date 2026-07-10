@@ -1,6 +1,7 @@
 import {
   type CSSProperties,
   type KeyboardEvent as ReactKeyboardEvent,
+  type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
   lazy,
   Suspense,
@@ -120,6 +121,7 @@ import {
   getWorkspaceDisplayContext,
   getWorkspaceIndexStats,
   getWorkspaceRoot,
+  gitDiscardPaths,
   isNativeTauri,
   listDirectory,
   listFiles,
@@ -131,6 +133,7 @@ import {
   readFile,
   recordRecentFile,
   renameFile,
+  revealInFileManager,
   sanitizeDiffViewMode,
   searchIndexedFiles,
   searchFiles,
@@ -185,6 +188,7 @@ import {
   type EditorReplacePayload,
 } from "./editorCommands";
 import { cursorStatus, type EditorCursor } from "./editorCursor";
+import { ContextMenu, menuSeparator, useContextMenu, type MenuEntry } from "./contextMenu";
 
 const EditorPane = lazy(() => import("./EditorPane"));
 const DiffPane = lazy(() => import("./DiffPane"));
@@ -287,6 +291,8 @@ const keyBindings: KeyBindingInfo[] = [
   { category: "Tree", command: "Toggle selected folder", shortcut: { mac: "Space", other: "Space" } },
   { category: "Tree", command: "Expand selected folder", shortcut: { mac: "ArrowRight", other: "ArrowRight" } },
   { category: "Tree", command: "Collapse selected folder", shortcut: { mac: "ArrowLeft", other: "ArrowLeft" } },
+  { category: "Tree", command: "Move to Trash", shortcut: { mac: "Cmd+Backspace", other: "Ctrl+Delete" } },
+  { category: "Tree", command: "Delete Permanently", shortcut: { mac: "Option+Cmd+Backspace", other: "Ctrl+Alt+Delete" } },
   { category: "Dialogs", command: "Close active dialog or palette", shortcut: { mac: "Escape", other: "Escape" } },
   { category: "Dialogs", command: "Move selection", shortcut: { mac: "ArrowUp / ArrowDown", other: "ArrowUp / ArrowDown" }, when: "Quick open and command palette" },
   { category: "Dialogs", command: "Run selected item", shortcut: { mac: "Enter", other: "Enter" }, when: "Quick open and command palette" },
@@ -395,6 +401,13 @@ function fileEntryForDirectOpen(path: string): FileEntry {
 
 function pathIsAtOrInside(path: string, candidateRoot: string) {
   return path === candidateRoot || path.startsWith(`${candidateRoot}/`);
+}
+
+// POSIX join with no double slash / trailing slash surprises — workspaceRoot
+// never ends with "/", but guard anyway since it can come from the OS.
+function absoluteWorkspacePath(workspaceRoot: string, relativePath: string) {
+  if (!workspaceRoot) return relativePath;
+  return `${workspaceRoot.replace(/\/+$/, "")}/${relativePath}`;
 }
 
 function renamePathPrefix(path: string, fromPath: string, toPath: string) {
@@ -535,7 +548,8 @@ export default function App() {
   const [renameToPath, setRenameToPath] = useState("");
   const [goToLineDialogOpen, setGoToLineDialogOpen] = useState(false);
   const [goToLineValue, setGoToLineValue] = useState("");
-  const [pendingDeletePath, setPendingDeletePath] = useState<string>();
+  const [pendingDelete, setPendingDelete] = useState<{ path: string; permanent: boolean }>();
+  const [pendingDiscard, setPendingDiscard] = useState<{ paths: string[]; label: string }>();
   const [pendingReloadRequest, setPendingReloadRequest] =
     useState<PendingReloadRequest>();
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -604,6 +618,7 @@ export default function App() {
   const [pendingSymlinkTrust, setPendingSymlinkTrust] =
     useState<{ entry: FileEntry; action: "open" | "expand" }>();
   const [openFailure, setOpenFailure] = useState<OpenFailure>();
+  const { menu: contextMenu, openMenu, closeMenu } = useContextMenu();
   const [error, setError] = useState<string>();
   const [status, setStatus] = useState("Ready");
   const [selection, setSelection] = useState<EditorSelection>();
@@ -680,9 +695,9 @@ export default function App() {
 
   const activeFile = openFiles.find((file) => file.path === activePath);
   const pendingCloseFile = openFiles.find((file) => file.path === pendingClosePath);
-  const pendingDeleteFile = files.find((file) => file.path === pendingDeletePath);
-  const pendingDeleteOpenFiles = pendingDeletePath
-    ? openFiles.filter((file) => pathIsAtOrInside(file.path, pendingDeletePath))
+  const pendingDeleteFile = files.find((file) => file.path === pendingDelete?.path);
+  const pendingDeleteOpenFiles = pendingDelete
+    ? openFiles.filter((file) => pathIsAtOrInside(file.path, pendingDelete.path))
     : [];
   const pendingReloadFile = openFiles.find(
     (file) => file.path === pendingReloadRequest?.path,
@@ -694,6 +709,7 @@ export default function App() {
   const cursorPosition = cursorStatus(activePath, cursor, revealTarget);
   const gitAttributionEnabled = isFeatureEnabled("gitAttribution", featureFlags);
   const gitCommitEnabled = isFeatureEnabled("gitCommit", featureFlags);
+  const contextMenusEnabled = isFeatureEnabled("contextMenus", featureFlags);
   // Live merge state, read straight off the polled Git status so the conflict UI
   // updates on its own as the user resolves files (rather than freezing on the
   // one-shot sync result). Defaults tolerate an older status shape / test mock.
@@ -873,7 +889,8 @@ export default function App() {
     newFolderDialogOpen ||
     renameDialogOpen ||
     goToLineDialogOpen ||
-    pendingDeletePath !== undefined ||
+    pendingDelete !== undefined ||
+    pendingDiscard !== undefined ||
     pendingSymlinkTrust !== undefined ||
     pendingReloadRequest !== undefined ||
     pendingCloseAll ||
@@ -1472,6 +1489,29 @@ export default function App() {
       setStatus("Workspace load failed");
     }
   }, [refreshFiles]);
+
+  // Shared by every "Copy Path" / "Copy Relative Path" menu item across
+  // surfaces — a clipboard failure (permission denied, no secure context)
+  // surfaces on the status line rather than failing silently.
+  const copyToClipboard = useCallback(async (label: string, text: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setStatus(`Copied ${label}`);
+    } catch (reason) {
+      setError(`Unable to copy ${label}: ${String(reason)}`);
+      setStatus("Copy failed");
+    }
+  }, []);
+
+  const revealPath = useCallback(async (path: string) => {
+    setError(undefined);
+    try {
+      await revealInFileManager(path);
+    } catch (reason) {
+      setError(`Unable to reveal ${path}: ${String(reason)}`);
+      setStatus("Reveal failed");
+    }
+  }, []);
 
   useEffect(() => {
     if (!commitModeActive) {
@@ -2687,6 +2727,19 @@ export default function App() {
     setNewFilePath("");
   }, []);
 
+  // Context-menu entry point: takes the target folder directly rather than
+  // reading `selectedPath` state, since the menu also just called
+  // `setSelectedPath` in the same event and that update hasn't flushed yet.
+  const openNewFileDialogForFolder = useCallback(
+    (folderPath: string | undefined) => {
+      setError(undefined);
+      setSelectedPath(folderPath);
+      setNewFilePath(suggestNewFilePath(folderPath, files));
+      setNewFileDialogOpen(true);
+    },
+    [files],
+  );
+
   const openNewFolderDialog = useCallback(() => {
     setError(undefined);
     setNewFolderPath(suggestedNewFolderPath);
@@ -2697,6 +2750,16 @@ export default function App() {
     setNewFolderDialogOpen(false);
     setNewFolderPath("");
   }, []);
+
+  const openNewFolderDialogForFolder = useCallback(
+    (folderPath: string | undefined) => {
+      setError(undefined);
+      setSelectedPath(folderPath);
+      setNewFolderPath(suggestNewFolderPath(folderPath, files));
+      setNewFolderDialogOpen(true);
+    },
+    [files],
+  );
 
   const openRenameDialog = useCallback(() => {
     if (!selectedEntry) {
@@ -2710,6 +2773,14 @@ export default function App() {
     setRenameToPath(selectedEntry.path);
     setRenameDialogOpen(true);
   }, [selectedEntry]);
+
+  const openRenameDialogForPath = useCallback((path: string) => {
+    setError(undefined);
+    setSelectedPath(path);
+    setRenameFromPath(path);
+    setRenameToPath(path);
+    setRenameDialogOpen(true);
+  }, []);
 
   const closeRenameDialog = useCallback(() => {
     setRenameDialogOpen(false);
@@ -2725,8 +2796,25 @@ export default function App() {
     }
 
     setError(undefined);
-    setPendingDeletePath(selectedEntry.path);
+    setPendingDelete({ path: selectedEntry.path, permanent: false });
   }, [selectedEntry]);
+
+  const requestDeleteSelectedFilePermanently = useCallback(() => {
+    if (!selectedEntry) {
+      setError("Select a file or folder to delete.");
+      setStatus("Delete failed");
+      return;
+    }
+
+    setError(undefined);
+    setPendingDelete({ path: selectedEntry.path, permanent: true });
+  }, [selectedEntry]);
+
+  const requestDeletePath = useCallback((path: string, permanent: boolean) => {
+    setError(undefined);
+    setSelectedPath(path);
+    setPendingDelete({ path, permanent });
+  }, []);
 
   useEffect(() => {
     setQuickOpenIndex((current) =>
@@ -3728,11 +3816,21 @@ export default function App() {
         id: "delete_selected",
         title: "Delete Selected",
         detail: selectedEntry
-          ? `Delete ${selectedEntry.path}`
-          : "Delete the selected file or folder",
-        keywords: ["remove"],
+          ? `Move ${selectedEntry.path} to Trash`
+          : "Move the selected file or folder to Trash",
+        keywords: ["remove", "trash"],
         enabled: Boolean(selectedEntry),
         run: requestDeleteSelectedFile,
+      },
+      {
+        id: "delete_selected_permanently",
+        title: "Delete Permanently",
+        detail: selectedEntry
+          ? `Permanently delete ${selectedEntry.path}`
+          : "Permanently delete the selected file or folder",
+        keywords: ["remove", "hard delete"],
+        enabled: Boolean(selectedEntry),
+        run: requestDeleteSelectedFilePermanently,
       },
       {
         id: "close_tab",
@@ -3855,6 +3953,7 @@ export default function App() {
       requestCloseActiveFile,
       requestCloseAllFiles,
       requestDeleteSelectedFile,
+      requestDeleteSelectedFilePermanently,
       requestEditorCommand,
       requestReloadActiveFile,
       saveActive,
@@ -4036,28 +4135,29 @@ export default function App() {
   }, [closeRenameDialog, refreshFiles, renameFromPath, renameToPath]);
 
   const deleteSelectedEntry = useCallback(async () => {
-    if (!pendingDeletePath) return;
+    if (!pendingDelete) return;
+    const { path: deletePath, permanent } = pendingDelete;
 
     setError(undefined);
-    setStatus(`Deleting ${pendingDeletePath}`);
+    setStatus(`${permanent ? "Deleting" : "Moving to Trash"} ${deletePath}`);
     try {
-      await deleteFile(pendingDeletePath);
-      setOpenFiles((current) => current.filter((file) => !pathIsAtOrInside(file.path, pendingDeletePath)));
+      await deleteFile(deletePath, permanent);
+      setOpenFiles((current) => current.filter((file) => !pathIsAtOrInside(file.path, deletePath)));
       setActivePath((current) => {
-        if (!current || !pathIsAtOrInside(current, pendingDeletePath)) return current;
-        return openFiles.find((file) => !pathIsAtOrInside(file.path, pendingDeletePath))?.path;
+        if (!current || !pathIsAtOrInside(current, deletePath)) return current;
+        return openFiles.find((file) => !pathIsAtOrInside(file.path, deletePath))?.path;
       });
       setSelectedPath(undefined);
       setRevealTarget((current) =>
-        current && pathIsAtOrInside(current.path, pendingDeletePath) ? undefined : current,
+        current && pathIsAtOrInside(current.path, deletePath) ? undefined : current,
       );
       setSelection((current) =>
-        current && pathIsAtOrInside(current.filePath, pendingDeletePath) ? undefined : current,
+        current && pathIsAtOrInside(current.filePath, deletePath) ? undefined : current,
       );
       setDiagnosticsByPath((current) => {
         const next: Record<string, EditorDiagnostic[]> = {};
         for (const [path, diagnostics] of Object.entries(current)) {
-          if (!pathIsAtOrInside(path, pendingDeletePath)) {
+          if (!pathIsAtOrInside(path, deletePath)) {
             next[path] = diagnostics;
           }
         }
@@ -4066,22 +4166,423 @@ export default function App() {
       setExpandedFolders((current) => {
         const next = new Set<string>();
         for (const path of current) {
-          if (!pathIsAtOrInside(path, pendingDeletePath)) next.add(path);
+          if (!pathIsAtOrInside(path, deletePath)) next.add(path);
         }
         return next;
       });
-      setPendingDeletePath(undefined);
+      setPendingDelete(undefined);
       await refreshFiles();
-      setStatus(`Deleted ${pendingDeletePath}`);
+      setStatus(`${permanent ? "Deleted" : "Moved to Trash"}: ${deletePath}`);
     } catch (reason) {
       setError(String(reason));
       setStatus("Delete failed");
     }
-  }, [openFiles, pendingDeletePath, refreshFiles]);
+  }, [openFiles, pendingDelete, refreshFiles]);
 
   const cancelDeleteSelectedFile = useCallback(() => {
-    setPendingDeletePath(undefined);
+    setPendingDelete(undefined);
   }, []);
+
+  const discardPendingChanges = useCallback(async () => {
+    if (!pendingDiscard) return;
+    const { paths } = pendingDiscard;
+
+    setError(undefined);
+    setStatus(`Discarding ${paths.length} file${paths.length === 1 ? "" : "s"}`);
+    try {
+      const result = await gitDiscardPaths(paths);
+      setPendingDiscard(undefined);
+      await refreshFiles();
+      if (result.errors.length > 0) {
+        setError(result.errors.map((entry) => `${entry.path}: ${entry.message}`).join("; "));
+        setStatus("Discard finished with errors");
+      } else {
+        setStatus(`Discarded ${result.discarded.length} file${result.discarded.length === 1 ? "" : "s"}`);
+      }
+    } catch (reason) {
+      setError(String(reason));
+      setStatus("Discard failed");
+    }
+  }, [pendingDiscard, refreshFiles]);
+
+  const buildTreeFileMenuEntries = useCallback(
+    (node: TreeNode): MenuEntry[] => [
+      { id: "open", label: "Open", onSelect: () => void openPath(node, false) },
+      menuSeparator,
+      {
+        id: "reveal",
+        label: "Reveal in Finder",
+        icon: FolderOpen,
+        onSelect: () => void revealPath(absoluteWorkspacePath(workspaceRoot, node.path)),
+      },
+      menuSeparator,
+      {
+        id: "copy_path",
+        label: "Copy Path",
+        icon: Copy,
+        onSelect: () => void copyToClipboard("path", absoluteWorkspacePath(workspaceRoot, node.path)),
+      },
+      {
+        id: "copy_relative_path",
+        label: "Copy Relative Path",
+        icon: Copy,
+        onSelect: () => void copyToClipboard("relative path", node.path),
+      },
+      menuSeparator,
+      { id: "rename", label: "Rename…", icon: Pencil, onSelect: () => openRenameDialogForPath(node.path) },
+      {
+        id: "trash",
+        label: "Move to Trash",
+        icon: Trash2,
+        shortcutHint: "⌘⌫",
+        onSelect: () => requestDeletePath(node.path, false),
+      },
+      {
+        id: "delete_permanently",
+        label: "Delete Permanently…",
+        icon: Trash2,
+        danger: true,
+        shortcutHint: "⌥⌘⌫",
+        onSelect: () => requestDeletePath(node.path, true),
+      },
+    ],
+    [copyToClipboard, openPath, openRenameDialogForPath, requestDeletePath, revealPath, workspaceRoot],
+  );
+
+  const buildTreeFolderMenuEntries = useCallback(
+    (node: TreeNode): MenuEntry[] => [
+      { id: "new_file", label: "New File…", icon: FilePlus, onSelect: () => openNewFileDialogForFolder(node.path) },
+      {
+        id: "new_folder",
+        label: "New Folder…",
+        icon: FolderPlus,
+        onSelect: () => openNewFolderDialogForFolder(node.path),
+      },
+      menuSeparator,
+      {
+        id: "reveal",
+        label: "Reveal in Finder",
+        icon: FolderOpen,
+        onSelect: () => void revealPath(absoluteWorkspacePath(workspaceRoot, node.path)),
+      },
+      menuSeparator,
+      {
+        id: "copy_path",
+        label: "Copy Path",
+        icon: Copy,
+        onSelect: () => void copyToClipboard("path", absoluteWorkspacePath(workspaceRoot, node.path)),
+      },
+      {
+        id: "copy_relative_path",
+        label: "Copy Relative Path",
+        icon: Copy,
+        onSelect: () => void copyToClipboard("relative path", node.path),
+      },
+      menuSeparator,
+      { id: "rename", label: "Rename…", icon: Pencil, onSelect: () => openRenameDialogForPath(node.path) },
+      {
+        id: "trash",
+        label: "Move to Trash",
+        icon: Trash2,
+        shortcutHint: "⌘⌫",
+        onSelect: () => requestDeletePath(node.path, false),
+      },
+      {
+        id: "delete_permanently",
+        label: "Delete Permanently…",
+        icon: Trash2,
+        danger: true,
+        shortcutHint: "⌥⌘⌫",
+        onSelect: () => requestDeletePath(node.path, true),
+      },
+    ],
+    [
+      copyToClipboard,
+      openNewFileDialogForFolder,
+      openNewFolderDialogForFolder,
+      openRenameDialogForPath,
+      requestDeletePath,
+      revealPath,
+      workspaceRoot,
+    ],
+  );
+
+  const handleWorkspaceTreeContextMenu = useCallback(
+    (node: TreeNode, event: ReactMouseEvent) => {
+      setSelectedPath(node.path);
+      openMenu(event, node.isDir ? buildTreeFolderMenuEntries(node) : buildTreeFileMenuEntries(node));
+    },
+    [buildTreeFileMenuEntries, buildTreeFolderMenuEntries, openMenu],
+  );
+
+  const handleTreeBackgroundContextMenu = useCallback(
+    (event: ReactMouseEvent) => {
+      openMenu(event, [
+        {
+          id: "new_file",
+          label: "New File…",
+          icon: FilePlus,
+          onSelect: () => openNewFileDialogForFolder(undefined),
+        },
+        {
+          id: "new_folder",
+          label: "New Folder…",
+          icon: FolderPlus,
+          onSelect: () => openNewFolderDialogForFolder(undefined),
+        },
+        menuSeparator,
+        {
+          id: "reveal_root",
+          label: "Reveal in Finder",
+          icon: FolderOpen,
+          onSelect: () => void revealPath(workspaceRoot),
+        },
+        { id: "refresh", label: "Refresh", icon: RefreshCw, onSelect: () => void refreshWorkspace() },
+      ]);
+    },
+    [openMenu, openNewFileDialogForFolder, openNewFolderDialogForFolder, refreshWorkspace, revealPath, workspaceRoot],
+  );
+
+  const buildCommitTreeFileMenuEntries = useCallback(
+    (node: TreeNode): MenuEntry[] => {
+      const included = gitCommitSelectedPaths.has(node.path);
+      return [
+        { id: "open_diff", label: "Open Diff", icon: GitCompareArrows, onSelect: () => void openDiffTab(node.path) },
+        { id: "open_file", label: "Open File", icon: FileCog, onSelect: () => void openPath(node, false) },
+        menuSeparator,
+        {
+          id: "toggle_include",
+          label: included ? "Exclude from Commit" : "Include in Commit",
+          icon: Check,
+          onSelect: () => toggleGitCommitSelection(node.path),
+        },
+        menuSeparator,
+        {
+          id: "discard",
+          label: "Discard Changes…",
+          icon: RotateCcw,
+          danger: true,
+          onSelect: () => setPendingDiscard({ paths: [node.path], label: node.path }),
+        },
+        menuSeparator,
+        {
+          id: "copy_path",
+          label: "Copy Path",
+          icon: Copy,
+          onSelect: () => void copyToClipboard("path", absoluteWorkspacePath(workspaceRoot, node.path)),
+        },
+        {
+          id: "copy_relative_path",
+          label: "Copy Relative Path",
+          icon: Copy,
+          onSelect: () => void copyToClipboard("relative path", node.path),
+        },
+      ];
+    },
+    [copyToClipboard, gitCommitSelectedPaths, openDiffTab, openPath, toggleGitCommitSelection, workspaceRoot],
+  );
+
+  const buildCommitTreeFolderMenuEntries = useCallback(
+    (node: TreeNode): MenuEntry[] => {
+      const leafPaths = collectTreeLeafPaths(node);
+      const allIncluded = leafPaths.length > 0 && leafPaths.every((path) => gitCommitSelectedPaths.has(path));
+      return [
+        {
+          id: "toggle_include",
+          label: allIncluded ? "Exclude from Commit" : "Include in Commit",
+          icon: Check,
+          onSelect: () => setGitCommitPathsSelected(leafPaths, !allIncluded),
+        },
+        menuSeparator,
+        {
+          id: "discard",
+          label: "Discard Changes in Folder…",
+          icon: RotateCcw,
+          danger: true,
+          disabled: leafPaths.length === 0,
+          onSelect: () =>
+            setPendingDiscard({
+              paths: leafPaths,
+              label: `${leafPaths.length} file${leafPaths.length === 1 ? "" : "s"} in ${node.path}`,
+            }),
+        },
+        menuSeparator,
+        {
+          id: "copy_path",
+          label: "Copy Path",
+          icon: Copy,
+          onSelect: () => void copyToClipboard("path", absoluteWorkspacePath(workspaceRoot, node.path)),
+        },
+        {
+          id: "copy_relative_path",
+          label: "Copy Relative Path",
+          icon: Copy,
+          onSelect: () => void copyToClipboard("relative path", node.path),
+        },
+      ];
+    },
+    [copyToClipboard, gitCommitSelectedPaths, setGitCommitPathsSelected, workspaceRoot],
+  );
+
+  const handleCommitTreeContextMenu = useCallback(
+    (node: TreeNode, event: ReactMouseEvent) => {
+      setSelectedPath(node.path);
+      openMenu(event, node.isDir ? buildCommitTreeFolderMenuEntries(node) : buildCommitTreeFileMenuEntries(node));
+    },
+    [buildCommitTreeFileMenuEntries, buildCommitTreeFolderMenuEntries, openMenu],
+  );
+
+  const handleSearchResultContextMenu = useCallback(
+    (result: SearchMatch, event: ReactMouseEvent) => {
+      openMenu(event, [
+        {
+          id: "open",
+          label: "Open",
+          onSelect: () => void openPathByName(result.path, false, result.lineNumber),
+        },
+        menuSeparator,
+        {
+          id: "reveal",
+          label: "Reveal in Finder",
+          icon: FolderOpen,
+          onSelect: () => void revealPath(absoluteWorkspacePath(workspaceRoot, result.path)),
+        },
+        menuSeparator,
+        {
+          id: "copy_path",
+          label: "Copy Path",
+          icon: Copy,
+          onSelect: () => void copyToClipboard("path", absoluteWorkspacePath(workspaceRoot, result.path)),
+        },
+        {
+          id: "copy_relative_path",
+          label: "Copy Relative Path",
+          icon: Copy,
+          onSelect: () => void copyToClipboard("relative path", result.path),
+        },
+      ]);
+    },
+    [copyToClipboard, openMenu, openPathByName, revealPath, workspaceRoot],
+  );
+
+  // Closes every open tab except `keepPath`. Dirty tabs among the others are
+  // simply left open rather than prompting per-file — the existing per-tab
+  // close confirm already covers the "close this one dirty tab" path.
+  // ponytail: no batch confirm dialog for closing several dirty tabs at once;
+  // add one if silently keeping them open ever surprises someone.
+  const closeOtherTabs = useCallback(
+    (keepPath: string) => {
+      const others = openFiles.filter((file) => file.path !== keepPath);
+      const dirtyOthers = others.filter((file) => file.dirty);
+      for (const file of others) {
+        if (!file.dirty) closeFile(file.path);
+      }
+      setActivePath(keepPath);
+      void checkOpenFileDiskState(keepPath, "activate");
+      setStatus(
+        dirtyOthers.length > 0
+          ? `Closed other tabs, kept ${dirtyOthers.length} with unsaved changes`
+          : "Closed other tabs",
+      );
+    },
+    [checkOpenFileDiskState, closeFile, openFiles],
+  );
+
+  const buildTabMenuEntries = useCallback(
+    (file: EditorTab): MenuEntry[] => {
+      const realPath = file.diff ? file.diff.filePath : file.path;
+      return [
+        { id: "close", label: "Close", onSelect: () => requestCloseFile(file.path) },
+        {
+          id: "close_others",
+          label: "Close Others",
+          disabled: openFiles.length <= 1,
+          onSelect: () => closeOtherTabs(file.path),
+        },
+        { id: "close_all", label: "Close All", onSelect: () => requestCloseAllFiles() },
+        menuSeparator,
+        {
+          id: "copy_path",
+          label: "Copy Path",
+          icon: Copy,
+          onSelect: () => void copyToClipboard("path", absoluteWorkspacePath(workspaceRoot, realPath)),
+        },
+        {
+          id: "copy_relative_path",
+          label: "Copy Relative Path",
+          icon: Copy,
+          onSelect: () => void copyToClipboard("relative path", realPath),
+        },
+        menuSeparator,
+        {
+          id: "reveal",
+          label: "Reveal in Finder",
+          icon: FolderOpen,
+          onSelect: () => void revealPath(absoluteWorkspacePath(workspaceRoot, realPath)),
+        },
+      ];
+    },
+    [closeOtherTabs, copyToClipboard, openFiles.length, requestCloseAllFiles, requestCloseFile, revealPath, workspaceRoot],
+  );
+
+  const handleTabContextMenu = useCallback(
+    (file: EditorTab, event: ReactMouseEvent) => {
+      openMenu(event, buildTabMenuEntries(file));
+    },
+    [buildTabMenuEntries, openMenu],
+  );
+
+  const buildEditorMenuEntries = useCallback((): MenuEntry[] => {
+    // `activeSelection` is only ever set for a non-empty selection (see
+    // emitCursorAndSelection in EditorPane), so its presence alone gates Cut/Copy.
+    const hasSelection = Boolean(activeSelection);
+    return [
+      { id: "cut", label: "Cut", disabled: !hasSelection, onSelect: () => requestEditorCommand("cut") },
+      {
+        id: "copy",
+        label: "Copy",
+        icon: Copy,
+        disabled: !hasSelection,
+        onSelect: () => requestEditorCommand("copy"),
+      },
+      { id: "paste", label: "Paste", onSelect: () => requestEditorCommand("paste") },
+      { id: "select_all", label: "Select All", onSelect: () => requestEditorCommand("selectAll") },
+      menuSeparator,
+      {
+        id: "go_to_definition",
+        label: "Go to Definition",
+        onSelect: () => requestEditorCommand("goToDefinition"),
+      },
+      {
+        id: "find_references",
+        label: "Find References",
+        onSelect: () => requestEditorCommand("findReferences"),
+      },
+    ];
+  }, [activeSelection, requestEditorCommand]);
+
+  // Scoped to `.cm-editor` rather than wrapped around EditorPane directly —
+  // EditorPane's own root owns explicit CSS grid placement (`.editor-host`
+  // is `grid-row: 2`), which an extra wrapper div would break.
+  const handleEditorContextMenu = useCallback(
+    (event: ReactMouseEvent) => {
+      if (!activeFile || activeFile.diff) return;
+      if (!(event.target instanceof HTMLElement) || !event.target.closest(".cm-editor")) return;
+      openMenu(event, buildEditorMenuEntries());
+    },
+    [activeFile, buildEditorMenuEntries, openMenu],
+  );
+
+  // Kills the browser's native context menu everywhere so every surface's own
+  // menu (wired via onContextMenu below) is the only one that ever shows.
+  // Capture phase means this always runs before a row's own bubble-phase
+  // handler, so it never races the row opening its own menu.
+  useEffect(() => {
+    if (!contextMenusEnabled) return;
+    const handler = (event: MouseEvent) => event.preventDefault();
+    document.addEventListener("contextmenu", handler, true);
+    return () => document.removeEventListener("contextmenu", handler, true);
+  }, [contextMenusEnabled]);
 
   useEffect(() => {
     const hasDirtyFiles = dirtyFiles.length > 0;
@@ -4157,9 +4658,14 @@ export default function App() {
         setGitCommitPopover(undefined);
         return;
       }
-      if (event.key === "Escape" && pendingDeletePath) {
+      if (event.key === "Escape" && pendingDelete) {
         event.preventDefault();
         cancelDeleteSelectedFile();
+        return;
+      }
+      if (event.key === "Escape" && pendingDiscard) {
+        event.preventDefault();
+        setPendingDiscard(undefined);
         return;
       }
       if (event.key === "Escape" && pendingSymlinkTrust) {
@@ -4287,6 +4793,16 @@ export default function App() {
       } else if (isIntellijShortcut(event, "findReferences")) {
         event.preventDefault();
         requestEditorCommand("findReferences");
+      } else if (isIntellijShortcut(event, "trashSelected")) {
+        if (selectedEntry && !isTypingTarget(event.target)) {
+          event.preventDefault();
+          requestDeleteSelectedFile();
+        }
+      } else if (isIntellijShortcut(event, "deleteSelectedPermanently")) {
+        if (selectedEntry && !isTypingTarget(event.target)) {
+          event.preventDefault();
+          requestDeleteSelectedFilePermanently();
+        }
       }
     };
     window.addEventListener("keydown", handler);
@@ -4327,8 +4843,12 @@ export default function App() {
     pendingAppClose,
     pendingCloseAll,
     pendingClosePath,
-    pendingDeletePath,
+    pendingDelete,
+    pendingDiscard,
     pendingReloadRequest,
+    requestDeleteSelectedFile,
+    requestDeleteSelectedFilePermanently,
+    selectedEntry,
     quickOpenVisible,
     renameDialogOpen,
     requestCloseActiveFile,
@@ -4353,6 +4873,7 @@ export default function App() {
     <main
       className={appShellClass(sidebarCollapsed)}
       data-ide-theme={prefersDark ? "dark" : "light"}
+      data-context-menus={contextMenusEnabled ? "true" : undefined}
       style={appShellStyle}
     >
       <aside className="sidebar" aria-hidden={sidebarCollapsed}>
@@ -4520,6 +5041,11 @@ export default function App() {
                     key={`${result.path}:${result.lineNumber}:${result.matchStart}`}
                     onClick={() => openPathByName(result.path, false, result.lineNumber)}
                     onDoubleClick={() => openPathByName(result.path, true, result.lineNumber)}
+                    onContextMenu={
+                      contextMenusEnabled
+                        ? (event) => handleSearchResultContextMenu(result, event)
+                        : undefined
+                    }
                   >
                     <span className="search-result__path">
                       {result.path}:{result.lineNumber}
@@ -4586,6 +5112,7 @@ export default function App() {
                       onOpen={(entry) => void openDiffTab(entry.path)}
                       onSelect={setSelectedPath}
                       onToggleFolder={toggleFolder}
+                      onContextMenu={contextMenusEnabled ? handleCommitTreeContextMenu : undefined}
                       fileStatusByPath={fileStatusByPath}
                       changedFolderPaths={changedFolderPaths}
                       selection={{
@@ -4792,7 +5319,12 @@ export default function App() {
         ) : null}
 
         {!contentSearchActive && !commitModeActive ? (
-          <nav className="file-tree" role="tree" aria-label="Workspace files">
+          <nav
+            className="file-tree"
+            role="tree"
+            aria-label="Workspace files"
+            onContextMenu={contextMenusEnabled ? handleTreeBackgroundContextMenu : undefined}
+          >
             {workspaceLoading && files.length === 0 ? (
               <div className="tree-empty" role="status">Loading workspace</div>
             ) : workspaceLoadFailed && files.length === 0 ? (
@@ -4817,6 +5349,7 @@ export default function App() {
                   onOpen={openPath}
                   onSelect={setSelectedPath}
                   onToggleFolder={toggleFolder}
+                  onContextMenu={contextMenusEnabled ? handleWorkspaceTreeContextMenu : undefined}
                   fileStatusByPath={fileStatusByPath}
                   changedFolderPaths={changedFolderPaths}
                 />
@@ -4924,6 +5457,9 @@ export default function App() {
                     setOpenFiles((current) =>
                       pinTab(current, file.path),
                     )
+                  }
+                  onContextMenu={
+                    contextMenusEnabled ? (event) => handleTabContextMenu(file, event) : undefined
                   }
                 >
                   {file.diff ? <GitCompareArrows size={15} /> : <FileCog size={15} />}
@@ -5077,7 +5613,10 @@ export default function App() {
           </div>
         </header>
 
-        <div className={editorRegionClass()}>
+        <div
+          className={editorRegionClass()}
+          onContextMenu={contextMenusEnabled ? handleEditorContextMenu : undefined}
+        >
           {activeFile && !activeFile.diff && currentFileQuery.trim() ? (
             <div className="current-find-results" aria-label="Current file search results">
               <div className="current-find-results__header">
@@ -6327,7 +6866,7 @@ export default function App() {
         </div>
       ) : null}
 
-      {pendingDeleteFile ? (
+      {pendingDeleteFile && pendingDelete ? (
         <div className="dialog-backdrop" role="presentation">
           <section
             className="confirm-dialog"
@@ -6338,16 +6877,21 @@ export default function App() {
             <div>
               <div className="eyebrow">Workspace</div>
               <h2 id="delete-file-title">
-                Delete {pendingDeleteFile.isDir ? "folder" : "file"}?
+                {pendingDelete.permanent
+                  ? `Delete ${pendingDeleteFile.isDir ? "folder" : "file"} permanently?`
+                  : `Move ${pendingDeleteFile.isDir ? "folder" : "file"} to Trash?`}
               </h2>
               <p>
-                {pendingDeleteFile.path} will be permanently removed from the workspace.
+                {pendingDelete.permanent
+                  ? `${pendingDeleteFile.path} will be permanently removed from the workspace.`
+                  : `${pendingDeleteFile.path} will be moved to the Trash.`}
                 {pendingDeleteFile.isDir
                   ? " Any files inside this folder will also be removed."
                   : ""}
                 {pendingDeleteOpenFiles.some((file) => file.dirty)
                   ? " This selection also has unsaved editor changes."
                   : ""}
+                {pendingDelete.permanent ? " This can't be undone." : ""}
               </p>
             </div>
             <div className="confirm-dialog__actions">
@@ -6362,7 +6906,42 @@ export default function App() {
                 onClick={deleteSelectedEntry}
               >
                 <Trash2 size={15} />
-                Delete
+                {pendingDelete.permanent ? "Delete Permanently" : "Move to Trash"}
+              </button>
+            </div>
+          </section>
+        </div>
+      ) : null}
+
+      {pendingDiscard ? (
+        <div className="dialog-backdrop" role="presentation">
+          <section
+            className="confirm-dialog"
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="discard-changes-title"
+          >
+            <div>
+              <div className="eyebrow">Workspace</div>
+              <h2 id="discard-changes-title">Discard changes?</h2>
+              <p>
+                Discarding {pendingDiscard.label} restores tracked files from HEAD and moves
+                untracked files to the Trash. This can't be undone.
+              </p>
+            </div>
+            <div className="confirm-dialog__actions">
+              <button
+                className="command-button command-button--quiet"
+                onClick={() => setPendingDiscard(undefined)}
+              >
+                Cancel
+              </button>
+              <button
+                className="command-button command-button--danger"
+                onClick={() => void discardPendingChanges()}
+              >
+                <Trash2 size={15} />
+                Discard Changes
               </button>
             </div>
           </section>
@@ -6585,6 +7164,8 @@ export default function App() {
           <span>{error}</span>
         </div>
       ) : null}
+
+      <ContextMenu menu={contextMenu} onClose={closeMenu} />
     </main>
   );
 }
@@ -6603,6 +7184,7 @@ function TreeItem({
   onOpen,
   onSelect,
   onToggleFolder,
+  onContextMenu,
   fileStatusByPath,
   changedFolderPaths,
   selection,
@@ -6614,6 +7196,9 @@ function TreeItem({
   onOpen: (entry: FileEntry, pinned?: boolean) => void;
   onSelect: (path: string) => void;
   onToggleFolder: (path: string) => void;
+  // Present only when the contextMenus flag is on — the row renders exactly
+  // as it does today (no listener attached at all) when it's undefined.
+  onContextMenu?: (node: TreeNode, event: ReactMouseEvent) => void;
   // Git status overlay (Part 2) — present in both normal browsing and commit
   // mode. `undefined` (not empty) when there's nothing to show, so the row
   // renders exactly as it does today with the flag off.
@@ -6725,6 +7310,7 @@ function TreeItem({
               onOpen(node, true);
             }
           }}
+          onContextMenu={onContextMenu ? (event) => onContextMenu(node, event) : undefined}
           onKeyDown={handleKeyDown}
         >
           {node.isDir ? (
@@ -6782,6 +7368,7 @@ function TreeItem({
               onOpen={onOpen}
               onSelect={onSelect}
               onToggleFolder={onToggleFolder}
+              onContextMenu={onContextMenu}
               fileStatusByPath={fileStatusByPath}
               changedFolderPaths={changedFolderPaths}
               selection={selection}
@@ -6953,7 +7540,9 @@ type ShortcutAction =
   | "zoomAppIn"
   | "zoomAppOut"
   | "nextTab"
-  | "previousTab";
+  | "previousTab"
+  | "trashSelected"
+  | "deleteSelectedPermanently";
 
 interface ShortcutPattern {
   key: string | string[];
@@ -7048,7 +7637,27 @@ const intellijShortcuts: Record<ShortcutAction, { mac: ShortcutPattern; other: S
     mac: { key: ["[", "{"], meta: true, shift: true },
     other: { key: "ArrowLeft", alt: true },
   },
+  // Finder convention: Cmd+Backspace trashes, Option+Cmd+Backspace deletes permanently.
+  trashSelected: {
+    mac: { key: "Backspace", meta: true },
+    other: { key: "Delete", ctrl: true },
+  },
+  deleteSelectedPermanently: {
+    mac: { key: "Backspace", meta: true, alt: true },
+    other: { key: "Delete", ctrl: true, alt: true },
+  },
 };
+
+// True when the event's target is somewhere text is typed or edited — a form
+// control or the CodeMirror content area — so global single-key-ish shortcuts
+// (like the trash/delete bindings) don't fire while the user is typing.
+function isTypingTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  if (target.isContentEditable) return true;
+  const tag = target.tagName;
+  if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return true;
+  return Boolean(target.closest(".cm-editor"));
+}
 
 function currentPlatformShortcut(shortcut: PlatformShortcut) {
   return isMacPlatform() ? shortcut.mac : shortcut.other;
