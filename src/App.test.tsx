@@ -4712,7 +4712,8 @@ describe("Git commit sidebar", () => {
     );
 
     fireEvent.change(message, { target: { value: "  " } });
-    fireEvent.keyDown(message, { key: "Enter", metaKey: true });
+    // Ctrl instead of Cmd here so both halves of metaKey || ctrlKey get covered.
+    fireEvent.keyDown(message, { key: "Enter", ctrlKey: true });
     expect(
       await within(panel).findByText("Enter a commit message first."),
     ).toBeInTheDocument();
