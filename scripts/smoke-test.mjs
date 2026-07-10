@@ -254,6 +254,24 @@ async function fulfillApi(route) {
     return;
   }
 
+  // gitAttribution graduated to a default-on setting, so opening any file now
+  // fetches attribution; an unhandled route here surfaces as an error toast
+  // that overlays the topbar and breaks clicks. "unsupported" is the graceful
+  // no-git answer.
+  if (url.pathname === "/api/git-attribution") {
+    const filePath = url.searchParams.get("path") ?? "";
+    await route.fulfill(
+      json({
+        path: filePath,
+        status: "unsupported",
+        unsupportedReason: "not a git repository",
+        lines: [],
+        uncommittedLines: [],
+      }),
+    );
+    return;
+  }
+
   if (url.pathname === "/api/codex-mcp") {
     await route.fulfill(
       json({
@@ -530,11 +548,11 @@ async function runScenario(browser, url, colorScheme) {
   await page.getByText("Open a file from the tree").waitFor();
   await page.getByText("No file selected").waitFor();
 
-  if ((await page.locator('input[placeholder="Filter files"]').count()) !== 0) {
-    throw new Error("file filter input should be collapsed on first render");
+  if ((await page.locator('input[placeholder="Filter by name"]').count()) !== 0) {
+    throw new Error("name filter input should be hidden on first render (Files rail mode)");
   }
-  if ((await page.locator('input[placeholder="Search contents"]').count()) !== 0) {
-    throw new Error("content search input should be collapsed on first render");
+  if ((await page.locator('input[placeholder="Search in files"]').count()) !== 0) {
+    throw new Error("search panel input should be hidden on first render (Files rail mode)");
   }
   if ((await page.locator('input[placeholder="Find in file"]').count()) !== 0) {
     throw new Error("current-file search input should be collapsed on first render");
@@ -564,7 +582,7 @@ async function runScenario(browser, url, colorScheme) {
   await page.getByRole("dialog", { name: "Command palette" }).waitFor();
   await page.locator('input[placeholder="Run command"]').fill("workspace");
   await page.keyboard.press("Enter");
-  await page.locator('input[placeholder="Search contents"]').waitFor();
+  await page.locator('input[placeholder="Search in files"]').waitFor();
 
   await page.keyboard.press(commandPaletteShortcut);
   await page.getByRole("dialog", { name: "Command palette" }).waitFor();
@@ -582,8 +600,11 @@ async function runScenario(browser, url, colorScheme) {
   await settingsDialog.getByRole("button", { name: "Close" }).click();
   await settingsDialog.waitFor({ state: "hidden" });
 
-  await page.getByLabel("Filter files").click();
-  const filterInput = page.locator('input[placeholder="Filter files"]');
+  // Names scope: rail Search opens the panel (contents scope by default), the
+  // "names" chip switches the input to the tree filter.
+  await page.getByRole("navigation", { name: "Activity" }).getByRole("button", { name: "Search" }).click();
+  await page.getByRole("button", { name: "names" }).click();
+  const filterInput = page.locator('input[placeholder="Filter by name"]');
   await filterInput.fill("README");
   await page.getByText("README.md").waitFor();
   if (await page.getByText("package.json").isVisible()) {
@@ -596,8 +617,9 @@ async function runScenario(browser, url, colorScheme) {
   await page.keyboard.press("Escape");
   await filterInput.waitFor({ state: "hidden" });
 
-  await page.getByLabel("Search contents").click();
-  const contentSearchInput = page.locator('input[placeholder="Search contents"]');
+  await page.getByRole("navigation", { name: "Activity" }).getByRole("button", { name: "Search" }).click();
+  await page.getByRole("button", { name: "contents" }).click();
+  const contentSearchInput = page.locator('input[placeholder="Search in files"]');
   await contentSearchInput.fill("smoke");
   await page.getByText("docs/README.md:3").waitFor();
   await page.keyboard.press("Escape");
@@ -606,7 +628,7 @@ async function runScenario(browser, url, colorScheme) {
   await page.keyboard.press("Escape");
   await contentSearchInput.waitFor({ state: "hidden" });
 
-  await page.getByLabel("Search contents").click();
+  await page.getByRole("navigation", { name: "Activity" }).getByRole("button", { name: "Search" }).click();
   await contentSearchInput.fill("smoke");
   await page.getByText("docs/README.md:3").waitFor();
 

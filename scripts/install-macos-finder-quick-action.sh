@@ -23,7 +23,7 @@ set -euo pipefail
 
 TARGET="\${1:-}"
 ROOT_DIR="$ROOT_DIR"
-FRONTEND_URL="http://127.0.0.1:1420"
+FRONTEND_URL="http://127.0.0.1:14717"
 API_BASE="http://127.0.0.1:17877"
 
 export PATH="\$HOME/.local/bin:\$HOME/Library/pnpm:\$HOME/.cargo/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:\${PATH:-}"
@@ -93,17 +93,17 @@ ensure_frontend_server() {
     return 0
   fi
 
-  pids="\$(lsof -tiTCP:1420 -sTCP:LISTEN 2>/dev/null || true)"
+  pids="\$(lsof -tiTCP:14717 -sTCP:LISTEN 2>/dev/null || true)"
   for pid in \$pids; do
     command="\$(ps -p "\$pid" -o command= 2>/dev/null || true)"
     cwd="\$(lsof -a -p "\$pid" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p' || true)"
     if [ "\$cwd" = "\$ROOT_DIR" ] && [[ "\$command" == *"/node_modules/.bin/vite"* ]]; then
-      echo "Reusing repo-local Vite listener on port 1420 (pid \$pid)."
+      echo "Reusing repo-local Vite listener on port 14717 (pid \$pid)."
       return 0
     fi
 
-    echo "Port 1420 is owned by another process: pid=\$pid command=\${command:-unknown}"
-    osascript -e 'display alert "ide" message "Port 1420 is already in use by another process." as critical' >/dev/null 2>&1 || true
+    echo "Port 14717 is owned by another process: pid=\$pid command=\${command:-unknown}"
+    osascript -e 'display alert "ide" message "Port 14717 is already in use by another process." as critical' >/dev/null 2>&1 || true
     exit 1
   done
 

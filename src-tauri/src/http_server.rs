@@ -50,7 +50,7 @@ pub struct HttpServerState {
 /// The workspace a request resolves to, set by `resolve_workspace_middleware` and
 /// read by every workspace-scoped handler. A `/{hash}/...` request resolves to the
 /// matching open session; everything else falls back to the shared/default root, so
-/// the no-hash API surface (dev on port 1420, `/mcp`, Codex) is unchanged.
+/// the no-hash API surface (dev on port 14717, `/mcp`, Codex) is unchanged.
 #[derive(Clone)]
 struct ResolvedWorkspace {
     workspace_root: Arc<RwLock<PathBuf>>,
@@ -2486,12 +2486,12 @@ mod tests {
     #[test]
     fn loopback_cors_allows_only_local_origins() {
         assert_eq!(
-            allowed_loopback_origin(&HeaderValue::from_static("http://127.0.0.1:1420")),
-            Some(HeaderValue::from_static("http://127.0.0.1:1420"))
+            allowed_loopback_origin(&HeaderValue::from_static("http://127.0.0.1:14717")),
+            Some(HeaderValue::from_static("http://127.0.0.1:14717"))
         );
         assert_eq!(
-            allowed_loopback_origin(&HeaderValue::from_static("http://localhost:1420")),
-            Some(HeaderValue::from_static("http://localhost:1420"))
+            allowed_loopback_origin(&HeaderValue::from_static("http://localhost:14717")),
+            Some(HeaderValue::from_static("http://localhost:14717"))
         );
         assert!(
             allowed_loopback_origin(&HeaderValue::from_static("https://example.com")).is_none()
@@ -2503,7 +2503,7 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert(
             header::ORIGIN,
-            HeaderValue::from_static("http://127.0.0.1:1420"),
+            HeaderValue::from_static("http://127.0.0.1:14717"),
         );
 
         let response = apply_loopback_cors(
@@ -2513,7 +2513,7 @@ mod tests {
 
         assert_eq!(
             response.headers().get(header::ACCESS_CONTROL_ALLOW_ORIGIN),
-            Some(&HeaderValue::from_static("http://127.0.0.1:1420"))
+            Some(&HeaderValue::from_static("http://127.0.0.1:14717"))
         );
         assert_eq!(
             response.headers().get(header::ACCESS_CONTROL_ALLOW_HEADERS),

@@ -185,7 +185,7 @@ describe("hosted Tauri API transport", () => {
   it("uses the loopback API base for Vite dev server locations", async () => {
     const { apiBaseForLocation } = await import("./tauri");
 
-    expect(apiBaseForLocation({ port: "1420" })).toBe("http://127.0.0.1:17877");
+    expect(apiBaseForLocation({ port: "14717" })).toBe("http://127.0.0.1:17877");
     expect(apiBaseForLocation({ port: "17877" })).toBe("");
   });
 
@@ -193,7 +193,7 @@ describe("hosted Tauri API transport", () => {
     const { workspacePathPrefix } = await import("./tauri");
 
     // Dev server proxies to the single shared workspace — no prefix.
-    expect(workspacePathPrefix({ port: "1420", pathname: "/abc123/" })).toBe("");
+    expect(workspacePathPrefix({ port: "14717", pathname: "/abc123/" })).toBe("");
     // Hosted under /{hash}/ — every API call carries that segment.
     expect(workspacePathPrefix({ port: "17877", pathname: "/abc123/" })).toBe(
       "/abc123",
@@ -336,6 +336,8 @@ describe("hosted Tauri API transport", () => {
         showGitignoredFiles: false,
         showDiagnosticsPanel: false,
         trackActiveFile: true,
+        gitCommitEnabled: true,
+        gitAttributionEnabled: true,
         treeScanLimit: 10000,
         maxOpenFileKb: 5120,
         workspaceSearchResultLimit: 200,
@@ -351,6 +353,8 @@ describe("hosted Tauri API transport", () => {
         dateTimeFormat: "localMedium",
         recentRelativeThreshold: "oneWeek",
         diffViewMode: "inline",
+        themePreference: "system",
+        codeFont: "ibm-plex-mono",
         autoFetchSeconds: 60,
         featureFlags: {},
       },
@@ -907,6 +911,7 @@ describe("Git attribution response normalization", () => {
           authorEmail: "gordon@example.com",
           authoredAtSeconds: 1700000000,
           summary: "Add readme",
+          body: "Explains the project.\nSecond body line.",
           actions: [
             {
               provider: "GitHub",
@@ -942,6 +947,7 @@ describe("Git attribution response normalization", () => {
         authorEmail: "gordon@example.com",
         authoredAtSeconds: 1700000000,
         summary: "Add readme",
+        body: "Explains the project.\nSecond body line.",
         actions: [
           {
             provider: "GitHub",
@@ -1008,6 +1014,21 @@ describe("Git attribution response normalization", () => {
         file: null,
         lines: [],
         uncommittedLines: [1, 0],
+      }),
+    ).toBeUndefined();
+    expect(
+      normalizeGitAttribution({
+        path: "README.md",
+        status: "available",
+        file: {
+          sha: "abc123456789",
+          shortSha: "abc12345",
+          authorName: "Gordon Beeming",
+          summary: "Add readme",
+          body: 42,
+          actions: [],
+        },
+        lines: [],
       }),
     ).toBeUndefined();
   });
@@ -1424,5 +1445,30 @@ describe("Diff view mode sanitization", () => {
     expect(sanitizeDiffViewMode("split")).toBe("inline");
     expect(sanitizeDiffViewMode(undefined)).toBe("inline");
     expect(sanitizeDiffViewMode(null)).toBe("inline");
+  });
+});
+
+describe("Theme preference sanitization", () => {
+  it("keeps known values and falls back to system for anything else", async () => {
+    const { sanitizeThemePreference } = await import("./tauri");
+
+    expect(sanitizeThemePreference("system")).toBe("system");
+    expect(sanitizeThemePreference("light")).toBe("light");
+    expect(sanitizeThemePreference("dark")).toBe("dark");
+    expect(sanitizeThemePreference("solarized")).toBe("system");
+    expect(sanitizeThemePreference(undefined)).toBe("system");
+    expect(sanitizeThemePreference(null)).toBe("system");
+  });
+});
+
+describe("Code font sanitization", () => {
+  it("keeps known values and falls back to IBM Plex Mono for anything else", async () => {
+    const { sanitizeCodeFont } = await import("./tauri");
+
+    expect(sanitizeCodeFont("ibm-plex-mono")).toBe("ibm-plex-mono");
+    expect(sanitizeCodeFont("system-mono")).toBe("system-mono");
+    expect(sanitizeCodeFont("comic-sans-mono")).toBe("ibm-plex-mono");
+    expect(sanitizeCodeFont(undefined)).toBe("ibm-plex-mono");
+    expect(sanitizeCodeFont(null)).toBe("ibm-plex-mono");
   });
 });

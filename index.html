@@ -10,9 +10,23 @@
     <title>ide</title>
     <script>
       (() => {
-        const prefersDark = window.matchMedia?.("(prefers-color-scheme: dark)")
-          .matches;
-        const theme = prefersDark ? "dark" : "light";
+        // An explicit light/dark choice (mirrored to localStorage by the app)
+        // wins over the OS preference so a pinned theme paints without a flash;
+        // "system" or nothing stored falls back to prefers-color-scheme.
+        let stored = null;
+        try {
+          stored = window.localStorage?.getItem("ide-theme-preference");
+        } catch {
+          stored = null;
+        }
+        const prefersDark =
+          window.matchMedia?.("(prefers-color-scheme: dark)")?.matches ?? false;
+        const theme =
+          stored === "light" || stored === "dark"
+            ? stored
+            : prefersDark
+              ? "dark"
+              : "light";
         document.documentElement.dataset.ideTheme = theme;
         document.documentElement.style.colorScheme = theme;
       })();

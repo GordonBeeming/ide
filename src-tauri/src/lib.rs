@@ -170,6 +170,10 @@ struct PersistedViewSettings {
     show_diagnostics_panel: bool,
     #[serde(default = "default_track_active_file")]
     track_active_file: bool,
+    #[serde(default = "default_git_commit_enabled")]
+    git_commit_enabled: bool,
+    #[serde(default = "default_git_attribution_enabled")]
+    git_attribution_enabled: bool,
     #[serde(default = "default_tree_scan_limit")]
     tree_scan_limit: usize,
     #[serde(default = "default_max_open_file_kb")]
@@ -200,6 +204,11 @@ struct PersistedViewSettings {
     recent_relative_threshold: String,
     #[serde(default = "default_diff_view_mode")]
     diff_view_mode: String,
+    #[serde(default = "default_theme_preference")]
+    theme_preference: String,
+    // Font stack for the editor + diff panes only; UI chrome always uses Space Grotesk.
+    #[serde(default = "default_code_font")]
+    code_font: String,
     // How often the app auto-fetches the current branch's upstream, in seconds.
     // 0 disables it; any other value is clamped to a sane range so it can't hammer
     // a remote. Consumed by the frontend timer only.
@@ -220,6 +229,8 @@ impl Default for PersistedViewSettings {
             show_gitignored_files: default_show_gitignored_files(),
             show_diagnostics_panel: false,
             track_active_file: default_track_active_file(),
+            git_commit_enabled: default_git_commit_enabled(),
+            git_attribution_enabled: default_git_attribution_enabled(),
             tree_scan_limit: default_tree_scan_limit(),
             max_open_file_kb: default_max_open_file_kb(),
             workspace_search_result_limit: default_workspace_search_result_limit(),
@@ -235,6 +246,8 @@ impl Default for PersistedViewSettings {
             date_time_format: default_date_time_format(),
             recent_relative_threshold: default_recent_relative_threshold(),
             diff_view_mode: default_diff_view_mode(),
+            theme_preference: default_theme_preference(),
+            code_font: default_code_font(),
             auto_fetch_seconds: default_auto_fetch_seconds(),
             feature_flags: BTreeMap::new(),
         }
@@ -244,7 +257,7 @@ impl Default for PersistedViewSettings {
 // Flag ids the app currently knows about. Persisted overrides for any id not in
 // this list are pruned on load, so retiring a flag is just removing it here (and
 // from the frontend registry). Keep in sync with src/featureFlags.ts.
-const KNOWN_FEATURE_FLAGS: &[&str] = &["gitAttribution", "gitCommit", "contextMenus"];
+const KNOWN_FEATURE_FLAGS: &[&str] = &["contextMenus"];
 
 fn default_show_gitignored_files() -> bool {
     false
@@ -312,6 +325,10 @@ const KNOWN_RECENT_RELATIVE_THRESHOLDS: &[&str] = &[
 ];
 const DEFAULT_DIFF_VIEW_MODE: &str = "inline";
 const KNOWN_DIFF_VIEW_MODES: &[&str] = &["inline", "sideBySide"];
+const DEFAULT_THEME_PREFERENCE: &str = "system";
+const KNOWN_THEME_PREFERENCES: &[&str] = &["system", "light", "dark"];
+const DEFAULT_CODE_FONT: &str = "ibm-plex-mono";
+const KNOWN_CODE_FONTS: &[&str] = &["ibm-plex-mono", "system-mono"];
 
 fn default_tree_scan_limit() -> usize {
     DEFAULT_TREE_SCAN_LIMIT
@@ -369,6 +386,14 @@ fn default_track_active_file() -> bool {
     true
 }
 
+fn default_git_commit_enabled() -> bool {
+    true
+}
+
+fn default_git_attribution_enabled() -> bool {
+    true
+}
+
 fn default_date_time_format() -> String {
     DEFAULT_DATE_TIME_FORMAT.to_string()
 }
@@ -379,6 +404,14 @@ fn default_recent_relative_threshold() -> String {
 
 fn default_diff_view_mode() -> String {
     DEFAULT_DIFF_VIEW_MODE.to_string()
+}
+
+fn default_theme_preference() -> String {
+    DEFAULT_THEME_PREFERENCE.to_string()
+}
+
+fn default_code_font() -> String {
+    DEFAULT_CODE_FONT.to_string()
 }
 
 fn sanitize_view_settings(mut settings: PersistedViewSettings) -> PersistedViewSettings {
@@ -434,6 +467,12 @@ fn sanitize_view_settings(mut settings: PersistedViewSettings) -> PersistedViewS
     }
     if !KNOWN_DIFF_VIEW_MODES.contains(&settings.diff_view_mode.as_str()) {
         settings.diff_view_mode = default_diff_view_mode();
+    }
+    if !KNOWN_THEME_PREFERENCES.contains(&settings.theme_preference.as_str()) {
+        settings.theme_preference = default_theme_preference();
+    }
+    if !KNOWN_CODE_FONTS.contains(&settings.code_font.as_str()) {
+        settings.code_font = default_code_font();
     }
     settings
         .feature_flags
@@ -2588,13 +2627,51 @@ fn persist_ui_state(state: &AppState) -> Result<(), CommandError> {
     std::fs::write(path, contents).map_err(|error| CommandError::UiState(error.to_string()))
 }
 
+// gitCommit/gitAttribution used to be preview flags; a ui-state.json written
+// before they became settings has no gitCommitEnabled/gitAttributionEnabled
+// key at all. Seed the new setting from the old override so a user who opted
+// out stays opted out, before sanitize_view_settings prunes the retired
+// feature-flag ids. Operates on the raw JSON (not the typed struct) because
+// once deserialized, an explicit `false` and a defaulted `true` are
+// indistinguishable.
+fn migrate_git_feature_flags_to_settings(value: &mut serde_json::Value) {
+    let Some(view) = value.get_mut("view").and_then(|v| v.as_object_mut()) else {
+        return;
+    };
+    let overrides = view
+        .get("featureFlags")
+        .and_then(|flags| flags.as_object())
+        .cloned();
+    for (setting_key, flag_id) in [
+        ("gitCommitEnabled", "gitCommit"),
+        ("gitAttributionEnabled", "gitAttribution"),
+    ] {
+        if view.contains_key(setting_key) {
+            continue;
+        }
+        if let Some(override_value) = overrides
+            .as_ref()
+            .and_then(|flags| flags.get(flag_id))
+            .and_then(|v| v.as_bool())
+        {
+            view.insert(
+                setting_key.to_string(),
+                serde_json::Value::Bool(override_value),
+            );
+        }
+    }
+}
+
 fn load_ui_state(path: &Path) -> Result<AppUiState, std::io::Error> {
     if !path.exists() {
         return Ok(AppUiState::default());
     }
 
     let contents = std::fs::read_to_string(path)?;
-    let mut state: AppUiState = serde_json::from_str(&contents).map_err(std::io::Error::other)?;
+    let mut value: serde_json::Value =
+        serde_json::from_str(&contents).map_err(std::io::Error::other)?;
+    migrate_git_feature_flags_to_settings(&mut value);
+    let mut state: AppUiState = serde_json::from_value(value).map_err(std::io::Error::other)?;
     state.view = sanitize_view_settings(state.view);
     Ok(state)
 }
@@ -3524,6 +3601,8 @@ mod tests {
                 show_gitignored_files: false,
                 show_diagnostics_panel: true,
                 track_active_file: false,
+                git_commit_enabled: false,
+                git_attribution_enabled: false,
                 tree_scan_limit: 12_000,
                 max_open_file_kb: 8_192,
                 workspace_search_result_limit: 750,
@@ -3539,6 +3618,8 @@ mod tests {
                 date_time_format: "yyyyMmDdHhMm".to_string(),
                 recent_relative_threshold: "twoDays".to_string(),
                 diff_view_mode: "sideBySide".to_string(),
+                theme_preference: "dark".to_string(),
+                code_font: "system-mono".to_string(),
                 auto_fetch_seconds: 120,
                 feature_flags: BTreeMap::new(),
             },
@@ -3574,6 +3655,8 @@ mod tests {
         assert_eq!(loaded.view.date_time_format, "yyyyMmDdHhMm");
         assert_eq!(loaded.view.recent_relative_threshold, "twoDays");
         assert_eq!(loaded.view.diff_view_mode, "sideBySide");
+        assert_eq!(loaded.view.theme_preference, "dark");
+        assert_eq!(loaded.view.code_font, "system-mono");
         assert_eq!(loaded.view.auto_fetch_seconds, 120);
         assert_eq!(loaded.workspaces.len(), 1);
         assert_eq!(
@@ -3623,7 +3706,7 @@ mod tests {
         *state.ui_state_store_path.write().unwrap() = Some(ui_state_path.clone());
 
         let mut flags = BTreeMap::new();
-        flags.insert("gitAttribution".to_string(), true);
+        flags.insert("contextMenus".to_string(), true);
         flags.insert("retiredFlag".to_string(), true);
 
         let sanitized = sanitize_view_settings(PersistedViewSettings {
@@ -3631,7 +3714,7 @@ mod tests {
             ..PersistedViewSettings::default()
         });
 
-        assert_eq!(sanitized.feature_flags.get("gitAttribution"), Some(&true));
+        assert_eq!(sanitized.feature_flags.get("contextMenus"), Some(&true));
         assert!(!sanitized.feature_flags.contains_key("retiredFlag"));
 
         *state.ui_state.write().unwrap() = AppUiState {
@@ -3641,8 +3724,25 @@ mod tests {
         persist_ui_state(&state).unwrap();
 
         let loaded = load_ui_state(&ui_state_path).unwrap();
-        assert_eq!(loaded.view.feature_flags.get("gitAttribution"), Some(&true));
+        assert_eq!(loaded.view.feature_flags.get("contextMenus"), Some(&true));
         assert!(!loaded.view.feature_flags.contains_key("retiredFlag"));
+    }
+
+    #[test]
+    fn code_font_defaults_and_rejects_unknown_values() {
+        assert_eq!(PersistedViewSettings::default().code_font, "ibm-plex-mono");
+
+        let sanitized = sanitize_view_settings(PersistedViewSettings {
+            code_font: "comic-sans-mono".to_string(),
+            ..PersistedViewSettings::default()
+        });
+        assert_eq!(sanitized.code_font, "ibm-plex-mono");
+
+        let sanitized = sanitize_view_settings(PersistedViewSettings {
+            code_font: "system-mono".to_string(),
+            ..PersistedViewSettings::default()
+        });
+        assert_eq!(sanitized.code_font, "system-mono");
     }
 
     #[test]
@@ -3675,7 +3775,7 @@ mod tests {
 
         std::fs::write(
             &ui_state_path,
-            r#"{"view":{"showDotfiles":false,"showGeneratedInternal":false,"dateTimeFormat":"relative","recentRelativeThreshold":"bogus","diffViewMode":"bogus","featureFlags":{"gitAttribution":false,"ghostFlag":true}},"workspaces":[]}"#,
+            r#"{"view":{"showDotfiles":false,"showGeneratedInternal":false,"dateTimeFormat":"relative","recentRelativeThreshold":"bogus","diffViewMode":"bogus","featureFlags":{"contextMenus":false,"ghostFlag":true}},"workspaces":[]}"#,
         )
         .unwrap();
 
@@ -3687,11 +3787,55 @@ mod tests {
             DEFAULT_RECENT_RELATIVE_THRESHOLD
         );
         assert_eq!(loaded.view.diff_view_mode, DEFAULT_DIFF_VIEW_MODE);
-        assert_eq!(
-            loaded.view.feature_flags.get("gitAttribution"),
-            Some(&false)
-        );
+        assert_eq!(loaded.view.feature_flags.get("contextMenus"), Some(&false));
         assert!(!loaded.view.feature_flags.contains_key("ghostFlag"));
+    }
+
+    #[test]
+    fn git_settings_migrate_from_retired_preview_flag_overrides() {
+        let dir = tempdir().unwrap();
+
+        let opted_out_path = dir.path().join("opted-out.json");
+        std::fs::write(
+            &opted_out_path,
+            r#"{"view":{"showDotfiles":false,"showGeneratedInternal":false,"featureFlags":{"gitCommit":false,"gitAttribution":false}},"workspaces":[]}"#,
+        )
+        .unwrap();
+        let opted_out = load_ui_state(&opted_out_path).unwrap();
+        assert!(!opted_out.view.git_commit_enabled);
+        assert!(!opted_out.view.git_attribution_enabled);
+        assert!(!opted_out.view.feature_flags.contains_key("gitCommit"));
+        assert!(!opted_out.view.feature_flags.contains_key("gitAttribution"));
+
+        let opted_in_path = dir.path().join("opted-in.json");
+        std::fs::write(
+            &opted_in_path,
+            r#"{"view":{"showDotfiles":false,"showGeneratedInternal":false,"featureFlags":{"gitCommit":true,"gitAttribution":true}},"workspaces":[]}"#,
+        )
+        .unwrap();
+        let opted_in = load_ui_state(&opted_in_path).unwrap();
+        assert!(opted_in.view.git_commit_enabled);
+        assert!(opted_in.view.git_attribution_enabled);
+
+        let no_override_path = dir.path().join("no-override.json");
+        std::fs::write(
+            &no_override_path,
+            r#"{"view":{"showDotfiles":false,"showGeneratedInternal":false},"workspaces":[]}"#,
+        )
+        .unwrap();
+        let no_override = load_ui_state(&no_override_path).unwrap();
+        assert!(no_override.view.git_commit_enabled);
+        assert!(no_override.view.git_attribution_enabled);
+
+        // An explicit new-setting value always wins over a stale old override.
+        let explicit_wins_path = dir.path().join("explicit-wins.json");
+        std::fs::write(
+            &explicit_wins_path,
+            r#"{"view":{"showDotfiles":false,"showGeneratedInternal":false,"gitCommitEnabled":true,"featureFlags":{"gitCommit":false}},"workspaces":[]}"#,
+        )
+        .unwrap();
+        let explicit_wins = load_ui_state(&explicit_wins_path).unwrap();
+        assert!(explicit_wins.view.git_commit_enabled);
     }
 
     #[test]

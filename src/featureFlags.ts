@@ -8,7 +8,7 @@
 // and from KNOWN_FEATURE_FLAGS in src-tauri/src/lib.rs prunes any stale override
 // the next time settings load.
 
-export type FeatureFlagId = "gitAttribution" | "gitCommit" | "contextMenus";
+export type FeatureFlagId = "contextMenus";
 
 // "preview" flags surface in Settings → Preview Features for opt-in/opt-out.
 // "internal" flags are gated in code only and never rendered as a user toggle.
@@ -30,30 +30,6 @@ export interface FeatureFlagDefinition {
 }
 
 export const FEATURE_FLAGS: Record<FeatureFlagId, FeatureFlagDefinition> = {
-  gitAttribution: {
-    id: "gitAttribution",
-    label: "Git attribution",
-    description:
-      "Show authorship and last-change attribution from Git in the editor. In progress and off by default.",
-    defaultEnabled: false,
-    visibility: "preview",
-    lifecycle: "preview",
-    graduationCriteria:
-      "Attribution renders correctly across large repos without slowing editor open. Once stable, promote to a Git setting category or make it always-on and remove this flag.",
-    promotionNote: "Promote into a future Git/source-control settings category.",
-  },
-  gitCommit: {
-    id: "gitCommit",
-    label: "Git commit",
-    description:
-      "Commit selected changed files from the sidebar, and sync (fetch, pull, push) the current branch, without leaving the editor.",
-    defaultEnabled: true,
-    visibility: "preview",
-    lifecycle: "preview",
-    graduationCriteria:
-      "Selective commit and sync are reliable across large repos and worktree edge cases (symlinks, executable bits, unborn/detached HEAD, merge conflicts). Once stable, promote to a Git settings category or make it always-on and remove this flag.",
-    promotionNote: "Promote into a future Git/source-control settings category.",
-  },
   contextMenus: {
     id: "contextMenus",
     label: "Context menus",

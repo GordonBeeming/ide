@@ -57,7 +57,7 @@ export const diffTheme = EditorView.theme({
   // so these stay unscoped — there's no "a"/"b" pane to distinguish.
   ".cm-deletedChunk": {
     backgroundColor: "color-mix(in oklch, var(--danger) 10%, transparent) !important",
-    color: "var(--muted)",
+    color: "var(--text-muted)",
   },
   ".cm-deletedText": {
     background: "color-mix(in oklch, var(--danger) 24%, transparent) !important",
@@ -69,8 +69,8 @@ export const diffTheme = EditorView.theme({
   // Folded unchanged regions between chunks — shared by both modes and both
   // panes, no side-specific meaning.
   ".cm-collapsedLines": {
-    color: "var(--muted)",
-    backgroundColor: "var(--panel) !important",
+    color: "var(--text-muted)",
+    backgroundColor: "var(--surface) !important",
     fontSize: "11px",
   },
 });

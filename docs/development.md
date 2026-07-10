@@ -1,5 +1,18 @@
 # Development
 
+## Requirements
+
+- Node.js 24 or newer
+- npm 11 or newer
+- Rust 1.95 or newer
+- macOS, Linux, or Windows with the normal Tauri platform prerequisites
+
+Optional language-server tools, per language:
+
+- `rust-analyzer` for Rust
+- `typescript-language-server` for TypeScript and React
+- OmniSharp or another standalone C# LSP for C#
+
 ## Local Run
 
 Run the desktop app from the repository root:
@@ -94,6 +107,16 @@ npm run tauri:dev
 
 `run-tests.sh` runs `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test`, `cargo check`, and `cargo audit` when `cargo-audit` is installed. If `cargo-audit` is missing, the script prints an explicit warning so the advisory scan gap is visible.
 
+Transitive Rust advisory warnings are reviewed and recorded in `src-tauri/.cargo/audit.toml`; a new advisory warning fails the local gate until it has been reviewed there.
+
+## Design Constraints
+
+- Avoid heavy editor/runtime dependencies.
+- Keep editor and language support lazy-loaded.
+- Prefer Rust-native filesystem and process work.
+- Keep LSP optional and per-language.
+- Do not add GitHub workflows yet.
+
 ## Architecture
 
 The app is intentionally split into a small always-loaded shell and lazy-loaded editor pieces.
@@ -146,7 +169,7 @@ The lifecycle runs in four steps:
 
 When promoting a flag to a real setting, migrate any saved override into the new setting before the flag id is pruned, so a user who opted in keeps their preference.
 
-`gitAttribution` is the first seeded flag, a preview flag defaulting off. It reserves the id the Git attribution feature will check; no attribution behavior ships with the flag itself.
+`contextMenus` is a live example: a preview flag defaulting on while its per-surface context menus round out. `gitCommit` and `gitAttribution` followed the same path and have since graduated into the Git settings category.
 
 ## Performance Notes
 
@@ -322,3 +345,65 @@ The Codex MCP endpoint exposes equivalent read-only tools with snake_case names:
 Write-capable tools such as `openDiff`, `saveDocument`, or code execution should not be added until the editor has a visible review/confirmation surface for those actions.
 
 Current public Codex docs confirm Codex `/ide` consumes open files and selection context in Codex-owned IDE surfaces, that third-party tools can integrate with Codex through MCP, and that `codex app-server` is the rich-client protocol used by clients such as the Codex VS Code extension. They do not document a Claude-style third-party IDE lockfile protocol. Treat app-server support as a future integration path, not as the current editor-context bridge.
+
+## Capability inventory
+
+The running record of what's implemented, kept here as the development ledger (the README stays consumer-focused).
+
+Implemented:
+
+- Tauri 2 desktop shell with a Rust backend.
+- React frontend.
+- File tree with package-backed coloured file icons, keyboard expansion/opening, accessible selection/expanded state, and folder fallbacks.
+- Native folder picker for switching workspaces.
+- Native toolbar buttons for opening files and folders in the desktop app.
+- Native File menu with New File, New Folder, Open File, Open Folder, Recents, Save, Reload, Rename/Delete, Close Tab, and Close All.
+- Native categorized Settings dialog for view toggles, performance limits, search limits, and OS storage locations.
+- File/folder launch targets through the local runner and macOS Finder Quick Action.
+- Packaged-app file associations for common text, code, web, config, and .NET project files.
+- Runtime handling for native OS file-open events, including single-process window creation/focus for launched files and folders.
+- Explicit workspace loading, empty, and load-failure retry states.
+- Collapsible sidebar for focused editing.
+- Activity-rail navigation between Files, Search, and Source control, with a theme toggle and Settings on the rail.
+- Unified workspace search with file-name and file-content scopes, visible capped-result notices, and searched/skipped file counts.
+- Current-file search over loaded and unsaved editor contents, with Enter/Shift+Enter match navigation.
+- Lightweight command palette for discoverable editor and workspace commands, including native file/folder open actions in the desktop app.
+- Keyboard quick-open palette for opening editor-supported files by path, including arrow-key result selection and SQLite-backed candidates from indexed workspace metadata with bounded on-demand folder expansion.
+- Settings Storage view that shows OS app-data paths plus live workspace-index coverage counts, so scan/cache limits are visible instead of hidden.
+- IntelliJ-style keyboard file creation, tab navigation, and close commands.
+- Native View menu Key Bindings dialog with searchable supported shortcuts.
+- Native Search menu with Go to File, Go to Line, Find in File, and Find in Files actions.
+- Native Navigate menu actions for LSP-backed Go to Definition and Find References.
+- Dirty-file prompts before closing tabs or the native app window.
+- Reload active files from disk, with confirmation before discarding unsaved edits.
+- New-file and new-folder creation inside the current workspace.
+- File and folder rename inside the current workspace.
+- Confirmed file and folder deletion inside the current workspace (trash or permanent).
+- Save active file and Save All commands.
+- Stale-save protection so externally modified files are not silently overwritten.
+- Guarded Rust-native workspace scanning, file/folder creation, rename, deletion, and file read/write commands.
+- SQLite-backed workspace metadata index stored in OS app-local data, refreshed from initial scans, lazy folder loads, bounded quick-open expansion, and editor file mutations.
+- Bounded initial tree scans surface a visible notice when the configured entry cap is reached, while folder expansion continues loading children on demand.
+- User preferences and recents are stored in OS app data with paths exposed from Settings for backup; disposable workspace indexes stay in OS app-local data so they can be rebuilt.
+- Common binary/media/font/archive files select in the tree without attempting text-editor reads.
+- CodeMirror 6 editor.
+- Syntax highlighting for common code and config files, including Rust, TypeScript, JavaScript, React/TSX/JSX, JSON, Markdown, shell scripts, HTML, CSS/SCSS/Sass, C#, C/C++, Java/Kotlin/Scala, Python, Go, Ruby, SQL, XML/YAML/TOML, Dockerfiles, PowerShell, diffs, and .NET project files.
+- Lazy editor loading and lazy language loading for better startup performance.
+- Light, dark, and follow-the-system themes with a persisted preference, a pre-paint bootstrap to avoid a wrong-theme flash, and a code-font setting for editor surfaces.
+- Selective git commits from the sidebar with a tri-state changed-files tree, plus fetch/pull/push sync with live merge-conflict resolution.
+- Inline git attribution in the editor and status bar, with a commit info card showing the full message, author avatar, and per-remote open actions.
+- Per-surface context menus (tree, tabs, editor, search, commit panel) behind a preview flag.
+- Active file, open file, and selection context stored in backend state.
+- LSP process manager for Rust, TypeScript/React, and C# with status refresh after bridge events.
+- LSP-backed editor keymaps from CodeMirror for definition, references, hover, rename, formatting, and signature help when the matching language server is installed.
+- LSP diagnostics captured for read-only agent context, with an optional diagnostics panel for precise line/column navigation.
+- Local HTTP context endpoint for terminal/browser integrations.
+- Claude Code `/ide` discovery bridge with authenticated localhost WebSocket MCP and read-only editor-context tools.
+- Codex-compatible read-only MCP endpoint with a persisted app-local bearer token.
+- Bearer-token protection for mutating local HTTP browser API calls.
+
+Planned:
+
+- Diff review and write-capable Claude bridge tools with explicit editor UI review.
+- Deeper Codex integration through `codex app-server` research once the editor has an explicit review/approval surface for rich agent workflows.
+- PR-ready local polish and testing workflow.

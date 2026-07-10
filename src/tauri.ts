@@ -111,6 +111,7 @@ export interface GitCommitInfo {
   authorEmail?: string;
   authoredAtSeconds?: number;
   summary: string;
+  body?: string;
   actions: GitCommitAction[];
 }
 
@@ -235,12 +236,36 @@ export function sanitizeDiffViewMode(value: unknown): DiffViewMode {
   return value === "inline" || value === "sideBySide" ? value : defaultDiffViewMode;
 }
 
+// "system" defers to the OS `prefers-color-scheme`; "light"/"dark" pin the
+// theme regardless of the OS. Mirrored to localStorage (see themePreferenceStorageKey)
+// so the index.html pre-paint bootstrap can honor an explicit choice without a flash.
+export type ThemePreference = "system" | "light" | "dark";
+
+export const defaultThemePreference: ThemePreference = "system";
+
+export function sanitizeThemePreference(value: unknown): ThemePreference {
+  return value === "system" || value === "light" || value === "dark"
+    ? value
+    : defaultThemePreference;
+}
+
+// Font stack for the editor + diff panes only; UI chrome always uses Space Grotesk.
+export type CodeFont = "ibm-plex-mono" | "system-mono";
+
+export const defaultCodeFont: CodeFont = "ibm-plex-mono";
+
+export function sanitizeCodeFont(value: unknown): CodeFont {
+  return value === "ibm-plex-mono" || value === "system-mono" ? value : defaultCodeFont;
+}
+
 export interface PersistedViewSettings {
   showDotfiles: boolean;
   showGeneratedInternal: boolean;
   showGitignoredFiles?: boolean;
   showDiagnosticsPanel?: boolean;
   trackActiveFile?: boolean;
+  gitCommitEnabled?: boolean;
+  gitAttributionEnabled?: boolean;
   treeScanLimit?: number;
   maxOpenFileKb?: number;
   workspaceSearchResultLimit?: number;
@@ -256,6 +281,8 @@ export interface PersistedViewSettings {
   dateTimeFormat?: DateTimeFormatId;
   recentRelativeThreshold?: RecentRelativeThresholdId;
   diffViewMode?: DiffViewMode;
+  themePreference?: ThemePreference;
+  codeFont?: CodeFont;
   // Seconds between background auto-fetches; 0 disables it. Clamped on the backend.
   autoFetchSeconds?: number;
   // Persisted feature-flag overrides only; defaults live in src/featureFlags.ts.
@@ -313,6 +340,8 @@ const defaultUiSnapshot: PersistedUiSnapshot = {
     showGitignoredFiles: false,
     showDiagnosticsPanel: false,
     trackActiveFile: true,
+    gitCommitEnabled: true,
+    gitAttributionEnabled: true,
     treeScanLimit: 10000,
     maxOpenFileKb: 5120,
     workspaceSearchResultLimit: 200,
@@ -328,6 +357,8 @@ const defaultUiSnapshot: PersistedUiSnapshot = {
     dateTimeFormat: defaultDateTimeFormat,
     recentRelativeThreshold: defaultRecentRelativeThreshold,
     diffViewMode: defaultDiffViewMode,
+    themePreference: defaultThemePreference,
+    codeFont: defaultCodeFont,
     autoFetchSeconds: 60,
     featureFlags: {},
   },
@@ -1030,6 +1061,14 @@ function normalizeGitCommitInfo(value: unknown): GitCommitInfo | undefined {
     return undefined;
   }
 
+  if (
+    candidate.body !== undefined &&
+    candidate.body !== null &&
+    typeof candidate.body !== "string"
+  ) {
+    return undefined;
+  }
+
   const actions = candidate.actions
     .map(normalizeGitCommitAction)
     .filter((action): action is GitCommitAction => Boolean(action));
@@ -1046,6 +1085,7 @@ function normalizeGitCommitInfo(value: unknown): GitCommitInfo | undefined {
         ? candidate.authoredAtSeconds
         : undefined,
     summary: candidate.summary,
+    body: typeof candidate.body === "string" ? candidate.body : undefined,
     actions,
   };
 }
@@ -1367,7 +1407,7 @@ function httpBase() {
 }
 
 export function apiBaseForLocation(location: Pick<Location, "port">) {
-  if (location.port === "1420") {
+  if (location.port === "14717") {
     return "http://127.0.0.1:17877";
   }
   return "";
@@ -1375,12 +1415,12 @@ export function apiBaseForLocation(location: Pick<Location, "port">) {
 
 // When the IDE is served over HTTP at `/{hash}/`, every API call has to carry that
 // same prefix so the server can route it to the right open workspace. The Vite dev
-// server (port 1420) proxies to a single shared workspace and has no hash, so it
+// server (port 14717) proxies to a single shared workspace and has no hash, so it
 // returns "". The native Tauri app never reaches this path (it uses invoke()).
 export function workspacePathPrefix(
   location: Pick<Location, "pathname" | "port">,
 ): string {
-  if (location.port === "1420") {
+  if (location.port === "14717") {
     return "";
   }
   const segment = location.pathname.split("/").find((part) => part.length > 0);

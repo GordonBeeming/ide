@@ -15,22 +15,26 @@ import {
 import { listen } from "@tauri-apps/api/event";
 import {
   Check,
+  ChevronDown,
   ChevronRight,
   Circle,
   Copy,
   ExternalLink,
   FileInput,
+  Files,
   Link2,
   FilePlus,
   FileCog,
   FolderOpen,
   FolderPlus,
   GitBranch,
-  GitCommitHorizontal,
   GitCompareArrows,
   ListOrdered,
   ListFilter,
   Loader,
+  Moon,
+  MoonStar,
+  MoreHorizontal,
   PanelLeftClose,
   PanelLeftOpen,
   Pencil,
@@ -40,6 +44,8 @@ import {
   Save,
   SaveAll,
   Search,
+  Settings,
+  Sun,
   Trash2,
   TriangleAlert,
   X,
@@ -134,7 +140,9 @@ import {
   recordRecentFile,
   renameFile,
   revealInFileManager,
+  sanitizeCodeFont,
   sanitizeDiffViewMode,
+  sanitizeThemePreference,
   searchIndexedFiles,
   searchFiles,
   setWorkspaceRootPath,
@@ -147,8 +155,12 @@ import {
   updateAgentContext,
   updateUiState,
   writeFile,
+  defaultCodeFont,
   defaultDiffViewMode,
+  defaultThemePreference,
+  type CodeFont,
   type DiffViewMode,
+  type ThemePreference,
   type OpenLaunchRequest,
   type PersistedUiSnapshot,
   type SettingsLocations,
@@ -169,7 +181,7 @@ import {
   workspacePathToFileUri,
 } from "./lsp";
 import { unlistenNativeCallbacks, type NativeUnlisten } from "./nativeEvents";
-import { darkSchemeQuery, systemPrefersDark } from "./systemTheme";
+import { darkSchemeQuery, systemPrefersDark, themePreferenceStorageKey } from "./systemTheme";
 import {
   addPreviewTab,
   adjacentTabPath,
@@ -236,6 +248,7 @@ type SettingsCategory =
   | "view"
   | "performance"
   | "search"
+  | "git"
   | "preview"
   | "storage";
 
@@ -247,9 +260,16 @@ const settingsCategories: Array<{
   { id: "view", title: "View", detail: "Tree visibility" },
   { id: "performance", title: "Performance", detail: "Scan, file, and palette caps" },
   { id: "search", title: "Search", detail: "Search result and file caps" },
+  { id: "git", title: "Git", detail: "Commit panel and attribution" },
   { id: "preview", title: "Preview Features", detail: "Opt into in-progress features" },
   { id: "storage", title: "Storage", detail: "Settings and index files" },
 ];
+
+function themeToggleTitle(preference: ThemePreference): string {
+  const current =
+    preference === "system" ? "System" : preference === "light" ? "Light" : "Dark";
+  return `Theme: ${current} (click to change)`;
+}
 
 type KeyBindingCategory = "File" | "Search" | "Navigate" | "View" | "Tabs" | "Tree" | "Dialogs";
 
@@ -590,6 +610,8 @@ export default function App() {
   const [showGitignoredFiles, setShowGitignoredFiles] = useState(false);
   const [showDiagnosticsPanel, setShowDiagnosticsPanel] = useState(false);
   const [trackActiveFile, setTrackActiveFile] = useState(true);
+  const [gitCommitEnabled, setGitCommitEnabled] = useState(true);
+  const [gitAttributionEnabled, setGitAttributionEnabled] = useState(true);
   const [treeScanLimit, setTreeScanLimit] = useState(defaultTreeScanLimit);
   const [maxOpenFileKb, setMaxOpenFileKb] = useState(defaultMaxOpenFileKb);
   const [workspaceSearchResultLimit, setWorkspaceSearchResultLimit] = useState(
@@ -628,6 +650,9 @@ export default function App() {
   const [autoFetchSeconds, setAutoFetchSeconds] = useState(defaultAutoFetchSeconds);
   const [featureFlags, setFeatureFlags] = useState<FeatureFlagOverrides>({});
   const [prefersDark, setPrefersDark] = useState(systemPrefersDark);
+  const [themePreference, setThemePreference] =
+    useState<ThemePreference>(defaultThemePreference);
+  const [codeFont, setCodeFont] = useState<CodeFont>(defaultCodeFont);
   const [uiStateLoaded, setUiStateLoaded] = useState(false);
   const [workspaceUiRestored, setWorkspaceUiRestored] = useState(false);
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(() => new Set());
@@ -727,9 +752,12 @@ export default function App() {
   const hasDirtyFiles = dirtyFiles.length > 0;
   const activeSelection = selection?.filePath === activePath ? selection : undefined;
   const cursorPosition = cursorStatus(activePath, cursor, revealTarget);
-  const gitAttributionEnabled = isFeatureEnabled("gitAttribution", featureFlags);
-  const gitCommitEnabled = isFeatureEnabled("gitCommit", featureFlags);
   const contextMenusEnabled = isFeatureEnabled("contextMenus", featureFlags);
+  // An explicit light/dark preference pins the theme; "system" defers to the OS
+  // signal. This single value drives the document theme, the shell marker, and
+  // the editor/diff panes so every surface resolves the theme the same way.
+  const effectiveDark =
+    themePreference === "system" ? prefersDark : themePreference === "dark";
   // Live merge state, read straight off the polled Git status so the conflict UI
   // updates on its own as the user resolves files (rather than freezing on the
   // one-shot sync result). Defaults tolerate an older status shape / test mock.
@@ -772,9 +800,13 @@ export default function App() {
     ? sidebarFiles.find((file) => file.path === renameFromPath)
     : undefined;
   const tree = useMemo(() => buildTree(sidebarFiles), [sidebarFiles]);
+  // The name filter only narrows the tree while the Search panel's names scope
+  // is active. Files mode always shows the full tree — otherwise a leftover
+  // query would keep silently filtering it with no visible input to clear.
+  const treeFilter = activeSidebarSearch === "filter" ? filter.trim().toLowerCase() : "";
   const filteredTree = useMemo(
-    () => filterTree(tree, filter.trim().toLowerCase()),
-    [filter, tree],
+    () => filterTree(tree, treeFilter),
+    [treeFilter, tree],
   );
   const changedFiles =
     gitCommitEnabled && gitStatus?.status === "available" ? gitStatus.files : [];
@@ -861,12 +893,23 @@ export default function App() {
     () => filterKeyBindings(keyBindings, keyBindingsQuery),
     [keyBindingsQuery],
   );
-  const filterExpanded = activeSidebarSearch === "filter" || filter.trim().length > 0;
   // Gated on the flag so disabling `gitCommit` mid-session always drops the
   // app out of commit mode, even if `activeSidebarSearch` is still "commit"
   // from before the flag flipped off.
   const commitModeActive = gitCommitEnabled && activeSidebarSearch === "commit";
-  const filterVisible = activeSidebarSearch !== "content" && !commitModeActive && filterExpanded;
+  // The activity rail selects one of three panels. "filter"/"content" are the
+  // two scopes of the unified Search panel (names vs. contents chips); the panel
+  // itself is open for either. Files is the resting state (no search, no commit).
+  const searchPanelActive =
+    activeSidebarSearch === "filter" || activeSidebarSearch === "content";
+  const searchScopeNames = activeSidebarSearch === "filter";
+  const filesPanelActive = !commitModeActive && !searchPanelActive;
+  const railMode: "files" | "search" | "commit" = commitModeActive
+    ? "commit"
+    : searchPanelActive
+      ? "search"
+      : "files";
+  // Kept for the names scope's input + tree filtering (relocated into Search).
   const contentSearchActive = activeSidebarSearch === "content";
   const contentSearchReady = contentQuery.trim().length >= 2;
   const contentSearchStatsText =
@@ -957,8 +1000,28 @@ export default function App() {
   }, []);
 
   useLayoutEffect(() => {
-    applyDocumentTheme(prefersDark);
-  }, [prefersDark]);
+    applyDocumentTheme(effectiveDark);
+  }, [effectiveDark]);
+
+  // Mirror the explicit choice to localStorage so the index.html pre-paint
+  // bootstrap honors it on the next launch; "system" clears the key so the
+  // bootstrap falls back to the OS preference. Waits for the persisted snapshot
+  // — before it loads, state holds the "system" default and mirroring that
+  // would wipe a stored light/dark key the user actually chose. Guarded —
+  // localStorage can throw in a locked-down webview.
+  useEffect(() => {
+    if (!uiStateLoaded) return;
+    try {
+      if (themePreference === "system") {
+        window.localStorage?.removeItem(themePreferenceStorageKey);
+      } else {
+        window.localStorage?.setItem(themePreferenceStorageKey, themePreference);
+      }
+    } catch {
+      // A theme preference that fails to persist only costs a one-frame flash on
+      // the next launch; it must never break the running app.
+    }
+  }, [themePreference, uiStateLoaded]);
 
   useEffect(() => {
     if (activeSidebarSearch === "filter") {
@@ -1073,6 +1136,8 @@ export default function App() {
     setShowGitignoredFiles(snapshot.view.showGitignoredFiles ?? false);
     setShowDiagnosticsPanel(Boolean(snapshot.view.showDiagnosticsPanel));
     setTrackActiveFile(snapshot.view.trackActiveFile ?? true);
+    setGitCommitEnabled(snapshot.view.gitCommitEnabled ?? true);
+    setGitAttributionEnabled(snapshot.view.gitAttributionEnabled ?? true);
     setTreeScanLimit(sanitizeTreeScanLimit(snapshot.view.treeScanLimit));
     setMaxOpenFileKb(
       sanitizeNumberLimit(
@@ -1157,6 +1222,8 @@ export default function App() {
       sanitizeRecentRelativeThreshold(snapshot.view.recentRelativeThreshold),
     );
     setDiffViewMode(sanitizeDiffViewMode(snapshot.view.diffViewMode));
+    setThemePreference(sanitizeThemePreference(snapshot.view.themePreference));
+    setCodeFont(sanitizeCodeFont(snapshot.view.codeFont));
     setAutoFetchSeconds(sanitizeAutoFetchSeconds(snapshot.view.autoFetchSeconds));
     setFeatureFlags(sanitizeFeatureFlagOverrides(snapshot.view.featureFlags));
     setExpandedFolders(new Set(snapshot.workspace.expandedFolders));
@@ -2438,6 +2505,8 @@ export default function App() {
           showGitignoredFiles,
           showDiagnosticsPanel,
           trackActiveFile,
+          gitCommitEnabled,
+          gitAttributionEnabled,
           treeScanLimit,
           maxOpenFileKb,
           workspaceSearchResultLimit,
@@ -2452,6 +2521,8 @@ export default function App() {
           dateTimeFormat,
           recentRelativeThreshold,
           diffViewMode,
+          themePreference,
+          codeFont,
           autoFetchSeconds,
           featureFlags,
         },
@@ -2485,6 +2556,8 @@ export default function App() {
     showGitignoredFiles,
     showDiagnosticsPanel,
     trackActiveFile,
+    gitCommitEnabled,
+    gitAttributionEnabled,
     singleFileMode,
     treeScanLimit,
     maxOpenFileKb,
@@ -2500,6 +2573,8 @@ export default function App() {
     dateTimeFormat,
     recentRelativeThreshold,
     diffViewMode,
+    themePreference,
+    codeFont,
     autoFetchSeconds,
     featureFlags,
     uiStateLoaded,
@@ -2615,6 +2690,43 @@ export default function App() {
 
   const toggleSidebar = useCallback(() => {
     setSidebarCollapsed((current) => !current);
+  }, []);
+
+  // The rail toggle cycles system → light → dark → system: the two explicit
+  // states pin the theme, and the third click returns to following the OS.
+  const cycleThemePreference = useCallback(() => {
+    setThemePreference((current) => {
+      const next: ThemePreference =
+        current === "system" ? "light" : current === "light" ? "dark" : "system";
+      setStatus(
+        next === "system"
+          ? "Theme follows system"
+          : next === "light"
+            ? "Theme set to light"
+            : "Theme set to dark",
+      );
+      return next;
+    });
+  }, []);
+
+  // Activity-rail navigation. Each opens its panel and un-collapses the sidebar,
+  // since the rail is the one control that stays visible while collapsed and is
+  // how a hidden panel comes back.
+  const showFilesPanel = useCallback(() => {
+    setSidebarCollapsed(false);
+    setActiveSidebarSearch(undefined);
+  }, []);
+
+  const showSearchPanel = useCallback(() => {
+    setSidebarCollapsed(false);
+    // Re-open at the last-used scope, defaulting to contents (matches the
+    // Find-in-files shortcut, which is the common entry point).
+    setActiveSidebarSearch((current) => (current === "filter" ? "filter" : "content"));
+  }, []);
+
+  const showCommitPanel = useCallback(() => {
+    setSidebarCollapsed(false);
+    setActiveSidebarSearch("commit");
   }, []);
 
   const zoomEditor = useCallback((direction: 1 | -1) => {
@@ -4343,6 +4455,83 @@ export default function App() {
     [buildTreeFileMenuEntries, buildTreeFolderMenuEntries, openMenu],
   );
 
+  // Reuses the context-menu machinery (one menu at a time, keyboard nav, focus
+  // restore) for the sidebar header's dropdown + overflow, anchoring it under
+  // the trigger button rather than at a cursor position.
+  const openMenuAtElement = useCallback(
+    (element: HTMLElement, entries: MenuEntry[]) => {
+      const rect = element.getBoundingClientRect();
+      openMenu(
+        {
+          clientX: rect.left,
+          clientY: rect.bottom + 4,
+          preventDefault: () => {},
+          stopPropagation: () => {},
+        },
+        entries,
+      );
+    },
+    [openMenu],
+  );
+
+  const openWorkspaceMenu = useCallback(
+    (event: ReactMouseEvent<HTMLButtonElement>) => {
+      openMenuAtElement(event.currentTarget, [
+        {
+          id: "open_folder",
+          label: "Open Folder…",
+          icon: FolderOpen,
+          disabled: !nativePickerAvailable,
+          onSelect: () => void openWorkspace(),
+        },
+        {
+          id: "open_file",
+          label: "Open File…",
+          icon: FileInput,
+          disabled: !nativePickerAvailable,
+          onSelect: () => void openFileFromDialog(),
+        },
+      ]);
+    },
+    [nativePickerAvailable, openFileFromDialog, openMenuAtElement, openWorkspace],
+  );
+
+  const openWorkspaceOverflowMenu = useCallback(
+    (event: ReactMouseEvent<HTMLButtonElement>) => {
+      openMenuAtElement(event.currentTarget, [
+        {
+          id: "rename",
+          label: "Rename…",
+          icon: Pencil,
+          disabled: !selectedEntry,
+          onSelect: openRenameDialog,
+        },
+        {
+          id: "delete",
+          label: "Delete…",
+          icon: Trash2,
+          danger: true,
+          disabled: !selectedEntry,
+          onSelect: requestDeleteSelectedFile,
+        },
+        menuSeparator,
+        {
+          id: "refresh",
+          label: "Refresh Files",
+          icon: RefreshCw,
+          onSelect: () => void refreshWorkspace(),
+        },
+      ]);
+    },
+    [
+      openMenuAtElement,
+      openRenameDialog,
+      refreshWorkspace,
+      requestDeleteSelectedFile,
+      selectedEntry,
+    ],
+  );
+
   const handleTreeBackgroundContextMenu = useCallback(
     (event: ReactMouseEvent) => {
       openMenu(event, [
@@ -4919,138 +5108,181 @@ export default function App() {
   return (
     <main
       className={appShellClass(sidebarCollapsed)}
-      data-ide-theme={prefersDark ? "dark" : "light"}
+      data-ide-theme={effectiveDark ? "dark" : "light"}
       data-context-menus={contextMenusEnabled ? "true" : undefined}
       style={appShellStyle}
     >
+      <nav className="activity-rail" aria-label="Activity">
+        <button
+          className={[
+            "activity-rail__item",
+            railMode === "files" ? "activity-rail__item--active" : "",
+          ].join(" ")}
+          title="Files"
+          aria-label="Files"
+          aria-pressed={railMode === "files"}
+          onClick={showFilesPanel}
+        >
+          <Files size={18} />
+        </button>
+        <button
+          className={[
+            "activity-rail__item",
+            railMode === "search" ? "activity-rail__item--active" : "",
+          ].join(" ")}
+          title="Search"
+          aria-label="Search"
+          aria-pressed={railMode === "search"}
+          onClick={showSearchPanel}
+        >
+          <Search size={18} />
+        </button>
+        {gitCommitEnabled ? (
+          <button
+            className={[
+              "activity-rail__item",
+              railMode === "commit" ? "activity-rail__item--active" : "",
+            ].join(" ")}
+            title="Source control"
+            aria-label={
+              changedFilePaths.length > 0
+                ? `Source control, ${changedFilePaths.length} pending ${
+                    changedFilePaths.length === 1 ? "change" : "changes"
+                  }`
+                : "Source control"
+            }
+            aria-pressed={railMode === "commit"}
+            onClick={showCommitPanel}
+          >
+            <GitBranch size={18} />
+            {changedFilePaths.length > 0 ? (
+              <span className="activity-rail__badge" aria-hidden="true">
+                {changedFilePaths.length}
+              </span>
+            ) : null}
+          </button>
+        ) : null}
+        <span className="activity-rail__spacer" />
+        <button
+          className="activity-rail__item"
+          title={themeToggleTitle(themePreference)}
+          aria-label={themeToggleTitle(themePreference)}
+          onClick={cycleThemePreference}
+        >
+          {themePreference === "system" ? (
+            <MoonStar size={17} />
+          ) : effectiveDark ? (
+            <Moon size={17} />
+          ) : (
+            <Sun size={17} />
+          )}
+        </button>
+        <button
+          className="activity-rail__item"
+          title="Settings"
+          aria-label="Settings"
+          onClick={() => setSettingsOpen(true)}
+        >
+          <Settings size={17} />
+        </button>
+      </nav>
+
       <aside className="sidebar" aria-hidden={sidebarCollapsed}>
         <div className="sidebar__header" title={appTitle}>
+          <button
+            className="sidebar__workspace"
+            type="button"
+            title={appTitle}
+            aria-label="Workspace menu"
+            aria-haspopup="menu"
+            onClick={openWorkspaceMenu}
+          >
+            <span className="sidebar__workspace-name">{workspaceTitle || "no folder"}</span>
+            <ChevronDown size={13} aria-hidden="true" />
+          </button>
           <div className="sidebar__actions">
             <button
-              className="icon-button"
-              title="Open folder"
-              onClick={openWorkspace}
-              disabled={!nativePickerAvailable}
+              className="icon-button icon-button--sidebar"
+              title="New file"
+              aria-label="New file"
+              onClick={openNewFileDialog}
             >
-              <FolderOpen size={17} />
+              <FilePlus size={15} />
             </button>
             <button
-              className="icon-button"
-              title="Open file"
-              onClick={openFileFromDialog}
-              disabled={!nativePickerAvailable}
+              className="icon-button icon-button--sidebar"
+              title="New folder"
+              aria-label="New folder"
+              onClick={openNewFolderDialog}
             >
-              <FileInput size={17} />
+              <FolderPlus size={15} />
             </button>
-            <button className="icon-button" title="New file" onClick={openNewFileDialog}>
-              <FilePlus size={17} />
-            </button>
-            <button className="icon-button" title="New folder" onClick={openNewFolderDialog}>
-              <FolderPlus size={17} />
-            </button>
-            <button className="icon-button" title="Rename selected item" onClick={openRenameDialog}>
-              <Pencil size={16} />
-            </button>
-            <button className="icon-button" title="Delete selected item" onClick={requestDeleteSelectedFile}>
-              <Trash2 size={16} />
-            </button>
-            <button className="icon-button" title="Refresh files" onClick={refreshWorkspace}>
-              <RefreshCw size={16} />
+            <button
+              className="icon-button icon-button--sidebar"
+              title="More actions — rename, delete, refresh"
+              aria-label="More file actions"
+              aria-haspopup="menu"
+              onClick={openWorkspaceOverflowMenu}
+            >
+              <MoreHorizontal size={15} />
             </button>
           </div>
         </div>
 
-        <div className="search-tools" aria-label="Workspace search controls">
-          <button
-            className={[
-              "icon-button",
-              filterExpanded ? "icon-button--active" : "",
-            ].join(" ")}
-            title="Filter files"
-            aria-label="Filter files"
-            // Keep the focused input from blurring on mousedown: its empty-query
-            // onBlur would clear the mode first, making this click's toggle
-            // reopen the panel it was meant to close.
-            onMouseDown={(event) => event.preventDefault()}
-            onClick={() =>
-              setActiveSidebarSearch((current) => (current === "filter" ? undefined : "filter"))
-            }
-          >
-            <ListFilter size={16} />
-          </button>
-          <button
-            className={[
-              "icon-button",
-              contentSearchActive ? "icon-button--active" : "",
-            ].join(" ")}
-            title="Search contents"
-            aria-label="Search contents"
-            // Same blur-race guard as the filter toggle above.
-            onMouseDown={(event) => event.preventDefault()}
-            onClick={() =>
-              setActiveSidebarSearch((current) => (current === "content" ? undefined : "content"))
-            }
-          >
-            <Search size={16} />
-          </button>
-          {gitCommitEnabled ? (
-            <button
-              className={[
-                "icon-button",
-                commitModeActive ? "icon-button--active" : "",
-              ].join(" ")}
-              title="Commit changes"
-              aria-label="Commit changes"
-              onClick={() =>
-                setActiveSidebarSearch((current) => (current === "commit" ? undefined : "commit"))
-              }
-            >
-              <GitCommitHorizontal size={16} />
-            </button>
-          ) : null}
-        </div>
-
-        {filterVisible ? (
-          <label className="search-box">
-            <ListFilter size={15} />
-            <input
-              ref={sidebarFilterInputRef}
-              value={filter}
-              onBlur={() => {
-                if (!filter.trim()) {
-                  setActiveSidebarSearch((current) =>
-                    current === "filter" ? undefined : current,
-                  );
-                }
-              }}
-              onChange={(event) => setFilter(event.target.value)}
-              onKeyDown={handleFilterSearchKeyDown}
-              placeholder="Filter files"
-            />
-          </label>
+        {railMode === "search" ? (
+          <div className="search-panel" aria-label="Workspace search">
+            <div className="search-panel__top">
+              <label className="search-field">
+                {searchScopeNames ? <ListFilter size={15} /> : <Search size={15} />}
+                {searchScopeNames ? (
+                  <input
+                    ref={sidebarFilterInputRef}
+                    value={filter}
+                    onChange={(event) => setFilter(event.target.value)}
+                    onKeyDown={handleFilterSearchKeyDown}
+                    placeholder="Filter by name"
+                    aria-label="Filter files by name"
+                  />
+                ) : (
+                  <input
+                    ref={sidebarContentSearchInputRef}
+                    value={contentQuery}
+                    onChange={(event) => setContentQuery(event.target.value)}
+                    onKeyDown={handleContentSearchKeyDown}
+                    placeholder="Search in files"
+                    aria-label="Search file contents"
+                  />
+                )}
+              </label>
+              <div className="search-scope" role="group" aria-label="Search scope">
+                <button
+                  className={[
+                    "search-scope__chip",
+                    searchScopeNames ? "search-scope__chip--active" : "",
+                  ].join(" ")}
+                  type="button"
+                  aria-pressed={searchScopeNames}
+                  onClick={() => setActiveSidebarSearch("filter")}
+                >
+                  names
+                </button>
+                <button
+                  className={[
+                    "search-scope__chip",
+                    !searchScopeNames ? "search-scope__chip--active" : "",
+                  ].join(" ")}
+                  type="button"
+                  aria-pressed={!searchScopeNames}
+                  onClick={() => setActiveSidebarSearch("content")}
+                >
+                  contents
+                </button>
+              </div>
+            </div>
+          </div>
         ) : null}
 
-        {contentSearchActive ? (
-          <label className="search-box">
-            <Search size={15} />
-            <input
-              ref={sidebarContentSearchInputRef}
-              value={contentQuery}
-              onBlur={() => {
-                if (!contentQuery.trim()) {
-                  setActiveSidebarSearch((current) =>
-                    current === "content" ? undefined : current,
-                  );
-                }
-              }}
-              onChange={(event) => setContentQuery(event.target.value)}
-              onKeyDown={handleContentSearchKeyDown}
-              placeholder="Search contents"
-            />
-          </label>
-        ) : null}
-
-        {contentSearchActive ? (
+        {railMode === "search" && !searchScopeNames ? (
           <div
             className="search-results search-results--sidebar"
             aria-label="Content search results"
@@ -5365,7 +5597,7 @@ export default function App() {
           </div>
         ) : null}
 
-        {!contentSearchActive && !commitModeActive ? (
+        {filesPanelActive || (searchPanelActive && searchScopeNames) ? (
           <nav
             className="file-tree"
             role="tree"
@@ -5383,14 +5615,14 @@ export default function App() {
               </div>
             ) : filteredTree.length === 0 ? (
               <div className="tree-empty" role="status">
-                {filter.trim() ? "No matching files" : "Empty workspace"}
+                {treeFilter ? "No matching files" : "Empty workspace"}
               </div>
             ) : (
               filteredTree.map((node) => (
                 <TreeItem
                   key={node.path}
                   expandedFolders={expandedFolders}
-                  forceExpanded={Boolean(filter.trim())}
+                  forceExpanded={Boolean(treeFilter)}
                   node={node}
                   selectedPath={selectedPath}
                   onOpen={openPath}
@@ -5405,7 +5637,7 @@ export default function App() {
           </nav>
         ) : null}
 
-        {workspaceScanTruncated && !singleFileMode ? (
+        {workspaceScanTruncated && !singleFileMode && filesPanelActive ? (
           <div className="sidebar-scan-status" role="status">
             <button
               className="sidebar-scan-status__button"
@@ -5422,7 +5654,7 @@ export default function App() {
           </div>
         ) : null}
 
-        {showDiagnosticsPanel ? (
+        {showDiagnosticsPanel && filesPanelActive ? (
           <div className="diagnostics-panel" aria-label="Diagnostics">
             <div className="diagnostics-panel__header">
               <span>Diagnostics</span>
@@ -5490,6 +5722,7 @@ export default function App() {
                     file.diff ? "tab--diff" : "",
                   ].join(" ")}
                   key={file.path}
+                  title={file.diff ? `${file.diff.filePath} (Working Tree)` : file.path}
                   onClick={() => {
                     setActivePath(file.path);
                     void checkOpenFileDiskState(file.path, "activate");
@@ -5510,7 +5743,11 @@ export default function App() {
                   }
                 >
                   {file.diff ? <GitCompareArrows size={15} /> : <FileCog size={15} />}
-                  <span>{file.diff ? `${file.diff.filePath} (Working Tree)` : file.path}</span>
+                  <span>
+                    {file.diff
+                      ? `${lastSegment(file.diff.filePath)} (Working Tree)`
+                      : lastSegment(file.path)}
+                  </span>
                   {!file.diff && file.dirty ? <Circle className="dirty-dot" size={8} /> : null}
                   <span
                     className="tab__close"
@@ -5617,7 +5854,7 @@ export default function App() {
               </div>
             ) : (
               <button
-                className="icon-button"
+                className="icon-button icon-button--topbar"
                 title="Find in file"
                 aria-label="Find in file"
                 disabled={!activeFile}
@@ -5626,8 +5863,9 @@ export default function App() {
                 <Search size={17} />
               </button>
             )}
+            <span className="topbar__sep" aria-hidden="true" />
             <button
-              className="icon-button"
+              className="icon-button icon-button--topbar"
               title="Save"
               onClick={saveActive}
               disabled={!activeFileIsDirty}
@@ -5635,7 +5873,7 @@ export default function App() {
               <Save size={17} />
             </button>
             <button
-              className="icon-button"
+              className="icon-button icon-button--topbar"
               title="Save all"
               onClick={saveAll}
               disabled={!hasDirtyFiles}
@@ -5643,15 +5881,16 @@ export default function App() {
               <SaveAll size={17} />
             </button>
             <button
-              className="icon-button"
+              className="icon-button icon-button--topbar"
               title="Reload from disk"
               onClick={requestReloadActiveFile}
               disabled={!activeFile}
             >
               <RotateCcw size={16} />
             </button>
+            <span className="topbar__sep" aria-hidden="true" />
             <button
-              className="icon-button"
+              className="icon-button icon-button--topbar"
               title={sidebarToggleTitle(sidebarCollapsed)}
               onClick={toggleSidebar}
             >
@@ -5702,7 +5941,8 @@ export default function App() {
                 modified={activeFile.diff.modified}
                 isBinary={activeFile.diff.isBinary}
                 isTooLarge={activeFile.diff.isTooLarge}
-                prefersDark={prefersDark}
+                prefersDark={effectiveDark}
+                codeFont={codeFont}
                 viewMode={diffViewMode}
                 onViewModeChange={setDiffViewMode}
                 commitModeActive={commitModeActive}
@@ -5717,7 +5957,8 @@ export default function App() {
                 gitAttribution={activeGitAttribution}
                 isDirty={activeFile.dirty}
                 path={activeFile.path}
-                prefersDark={prefersDark}
+                prefersDark={effectiveDark}
+                codeFont={codeFont}
                 recentRelativeThreshold={recentRelativeThreshold}
                 revealLine={
                   revealTarget?.path === activeFile.path ? revealTarget.lineNumber : undefined
@@ -5754,6 +5995,12 @@ export default function App() {
 
         <footer className="statusbar">
           <span className="statusbar__state">{status}</span>
+          {syncBranchLabel ? (
+            <span className="statusbar__branch" title={`On branch ${syncBranchLabel}`}>
+              <GitBranch size={11} aria-hidden="true" />
+              <span className="statusbar__branch-name">{syncBranchLabel}</span>
+            </span>
+          ) : null}
           <span className="statusbar__path">
             {activeFile?.diff
               ? `${activeFile.diff.filePath} (Working Tree)`
@@ -5787,43 +6034,46 @@ export default function App() {
       {gitCommitPopover ? (
         <div
           aria-label="Git commit details"
-          className="git-commit-popover"
+          className={
+            gitCommitPopover.actions.length
+              ? "git-commit-popover"
+              : "git-commit-popover git-commit-popover--no-actions"
+          }
           role="dialog"
         >
           <div className="git-commit-popover__header">
-            <span>{gitCommitPopover.shortSha}</span>
+            <span className="git-commit-popover__sha">{gitCommitPopover.shortSha}</span>
+            <span className="git-commit-popover__time">
+              {commitDateLabel(gitCommitPopover, dateTimeFormat, recentRelativeThreshold)}
+            </span>
             <button
               aria-label="Close Git commit details"
-              className="icon-button"
+              className="icon-button icon-button--sidebar git-commit-popover__close"
               onClick={() => setGitCommitPopover(undefined)}
               ref={gitCommitPopoverCloseRef}
               type="button"
             >
-              <X size={14} />
+              <X size={13} />
             </button>
           </div>
-          <strong>{gitCommitPopover.summary}</strong>
-          <dl>
-            <div>
-              <dt>Author</dt>
-              <dd>{gitCommitPopover.authorName}</dd>
-            </div>
-            <div>
-              <dt>Committed</dt>
-              <dd>
-                {commitDateLabel(
-                  gitCommitPopover,
-                  dateTimeFormat,
-                  recentRelativeThreshold,
-                )}
-              </dd>
-            </div>
-          </dl>
+          <div className="git-commit-popover__content">
+            <strong className="git-commit-popover__summary">{gitCommitPopover.summary}</strong>
+            {gitCommitPopover.body ? (
+              <p className="git-commit-popover__body-text">{gitCommitPopover.body}</p>
+            ) : null}
+            <span className="git-commit-popover__author">
+              <GitCommitAvatar
+                authorEmail={gitCommitPopover.authorEmail}
+                authorName={gitCommitPopover.authorName}
+              />
+              {gitCommitPopover.authorName}
+            </span>
+          </div>
           {gitCommitPopover.actions.length ? (
             <div className="git-commit-popover__actions">
               {gitCommitPopover.actions.map((action) => (
                 <button
-                  className="command-button"
+                  className="git-commit-popover__action"
                   key={`${action.remoteName}:${action.url}`}
                   onClick={() => window.open(action.url, "_blank", "noopener,noreferrer")}
                   type="button"
@@ -6098,37 +6348,78 @@ export default function App() {
             aria-modal="true"
             aria-labelledby="about-title"
           >
+            <h2 id="about-title" className="sr-only">
+              {appInfo.name}
+            </h2>
             <button
               aria-label="Close"
-              className="tiny-icon-button about-dialog__close"
+              className="icon-button about-dialog__close"
               onClick={() => setAboutOpen(false)}
               title="Close"
               type="button"
             >
               <X size={14} />
             </button>
-            <img
-              alt=""
-              className="about-dialog__icon"
-              src="/icon-128.png"
+            {/* Inline mark (Turn-3 3d wordmark): dark tile, "ıde" wordmark, xylem
+                leaf as the dot of the "i", and a blinking insertion caret. The
+                caret animation is CSS-only and honors prefers-reduced-motion. */}
+            <svg
+              className="about-dialog__mark"
               width={96}
               height={96}
-            />
-            <div className="about-dialog__body">
-              <div>
-                <h2 id="about-title">{appInfo.name}</h2>
-                <div className="about-dialog__version">Version {appInfo.version}</div>
-              </div>
-              <p>{appInfo.description}</p>
-              <a
-                className="about-dialog__link"
-                href={appInfo.repository}
-                rel="noreferrer"
-                target="_blank"
+              viewBox="0 0 512 512"
+              role="img"
+              aria-label={`${appInfo.name} icon`}
+            >
+              <rect width="512" height="512" rx="115" fill="#0b1120" />
+              <text
+                x="70"
+                y="336"
+                fontFamily="'Space Grotesk', sans-serif"
+                fontWeight="700"
+                fontSize="224"
+                letterSpacing="-9"
+                fill="#e8eef6"
               >
-                {repositoryLabel}
-                <ExternalLink size={13} />
-              </a>
+                &#305;de
+              </text>
+              <path
+                d="M98 106 C 124 126 124 162 98 182 C 72 162 72 126 98 106 Z"
+                fill="#22d3ee"
+              />
+              <rect
+                className="about-dialog__caret"
+                x="420"
+                y="172"
+                width="28"
+                height="166"
+                rx="8"
+                fill="#22d3ee"
+              />
+            </svg>
+            <div className="about-dialog__body">
+              <div className="about-dialog__version">Version {appInfo.version}</div>
+              <p>{appInfo.description}</p>
+              <div className="about-dialog__links">
+                <a
+                  className="about-dialog__link"
+                  href={appInfo.repository}
+                  rel="noreferrer"
+                  target="_blank"
+                >
+                  {repositoryLabel}
+                  <ExternalLink size={12} />
+                </a>
+                <a
+                  className="about-dialog__link"
+                  href="https://gordonbeeming.com"
+                  rel="noreferrer"
+                  target="_blank"
+                >
+                  gordonbeeming.com
+                  <ExternalLink size={12} />
+                </a>
+              </div>
               <div className="about-dialog__meta">
                 {appInfo.authors.join(", ") || "Gordon Beeming"}
               </div>
@@ -6304,6 +6595,65 @@ export default function App() {
                         />
                         <span>Track active file</span>
                       </label>
+                      <div className="settings-row">
+                        <span>Code font</span>
+                        <div
+                          className="settings-font-toggle"
+                          role="radiogroup"
+                          aria-label="Code font"
+                          // Roving tabindex: only the checked radio is tabbable;
+                          // arrow keys select (and focus) the other option, per
+                          // the WAI-ARIA radio-group pattern.
+                          onKeyDown={(event) => {
+                            if (
+                              !["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(
+                                event.key,
+                              )
+                            ) {
+                              return;
+                            }
+                            event.preventDefault();
+                            const next: CodeFont =
+                              codeFont === "ibm-plex-mono" ? "system-mono" : "ibm-plex-mono";
+                            setCodeFont(next);
+                            setStatus(
+                              next === "ibm-plex-mono"
+                                ? "Code font set to IBM Plex Mono"
+                                : "Code font set to System mono",
+                            );
+                            const radios =
+                              event.currentTarget.querySelectorAll<HTMLButtonElement>(
+                                '[role="radio"]',
+                              );
+                            radios[next === "ibm-plex-mono" ? 0 : 1]?.focus();
+                          }}
+                        >
+                          <button
+                            type="button"
+                            role="radio"
+                            aria-checked={codeFont === "ibm-plex-mono"}
+                            tabIndex={codeFont === "ibm-plex-mono" ? 0 : -1}
+                            onClick={() => {
+                              setCodeFont("ibm-plex-mono");
+                              setStatus("Code font set to IBM Plex Mono");
+                            }}
+                          >
+                            IBM Plex Mono
+                          </button>
+                          <button
+                            type="button"
+                            role="radio"
+                            aria-checked={codeFont === "system-mono"}
+                            tabIndex={codeFont === "system-mono" ? 0 : -1}
+                            onClick={() => {
+                              setCodeFont("system-mono");
+                              setStatus("Code font set to System mono");
+                            }}
+                          >
+                            System mono
+                          </button>
+                        </div>
+                      </div>
                       <label className="settings-row settings-row--stacked">
                         <span>Date and time format</span>
                         <select
@@ -6574,6 +6924,62 @@ export default function App() {
                             setStatus(`Current-file result rows set to ${next}`);
                           }}
                         />
+                      </label>
+                    </section>
+                  ) : null}
+
+                  {settingsCategory === "git" ? (
+                    <section
+                      className="settings-section"
+                      aria-label="Git"
+                      role="tabpanel"
+                      id="settings-panel-git"
+                      aria-labelledby="settings-tab-git"
+                    >
+                      <div className="settings-section__title">Git</div>
+                      <label className="settings-row settings-flag">
+                        <input
+                          type="checkbox"
+                          aria-label="Git commit"
+                          checked={gitCommitEnabled}
+                          onChange={(event) => {
+                            setGitCommitEnabled(event.target.checked);
+                            setStatus(
+                              event.target.checked
+                                ? "Enabled Git commit"
+                                : "Disabled Git commit",
+                            );
+                          }}
+                        />
+                        <span className="settings-flag__text">
+                          <span className="settings-flag__label">Git commit</span>
+                          <span className="settings-flag__desc">
+                            Show the source-control panel on the activity rail and commit
+                            changed files from it.
+                          </span>
+                        </span>
+                      </label>
+                      <label className="settings-row settings-flag">
+                        <input
+                          type="checkbox"
+                          aria-label="Git attribution"
+                          checked={gitAttributionEnabled}
+                          onChange={(event) => {
+                            setGitAttributionEnabled(event.target.checked);
+                            setStatus(
+                              event.target.checked
+                                ? "Enabled Git attribution"
+                                : "Disabled Git attribution",
+                            );
+                          }}
+                        />
+                        <span className="settings-flag__text">
+                          <span className="settings-flag__label">Git attribution</span>
+                          <span className="settings-flag__desc">
+                            Show the last-commit author and message inline in the editor and
+                            status bar.
+                          </span>
+                        </span>
                       </label>
                     </section>
                   ) : null}
@@ -7755,6 +8161,108 @@ function fullCommitDescription(
   ]
     .filter(Boolean)
     .join(" - ");
+}
+
+// Resolved SHA-256 hex digests, keyed by lowercased/trimmed email. Module-level
+// so every popover reopen (and every mounted GitCommitAvatar for the same
+// author) reuses the hash instead of re-hashing and re-flashing the fallback.
+const gitCommitAvatarHashCache = new Map<string, string>();
+// Entries are ~100 bytes, but a long session across many repos shouldn't grow
+// the map forever; a coarse clear is enough since entries re-hash cheaply.
+const gitCommitAvatarHashCacheLimit = 256;
+
+async function sha256Hex(value: string): Promise<string> {
+  // crypto (or subtle) can be absent in non-secure contexts and bare test
+  // environments; throwing lands in the caller's catch, which shows the
+  // monogram instead.
+  const subtle = globalThis.crypto?.subtle;
+  if (!subtle) {
+    throw new Error("WebCrypto subtle is not available");
+  }
+  const digest = await subtle.digest("SHA-256", new TextEncoder().encode(value));
+  return Array.from(new Uint8Array(digest))
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+function initialsForCommitAuthor(authorName: string): string {
+  const initials = authorName
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    // Spread before indexing so astral-plane characters (emoji, rare CJK)
+    // yield a whole code point instead of a lone surrogate half.
+    .map((word) => [...word][0].toUpperCase())
+    .join("");
+  return initials || "?";
+}
+
+// Gravatar accepts a SHA-256 email hash (in addition to the legacy MD5 one);
+// `d=404` makes a miss fail the <img> load instead of serving a placeholder,
+// so onError can swap in the monogram.
+function GitCommitAvatar({
+  authorEmail,
+  authorName,
+}: {
+  authorEmail?: string;
+  authorName: string;
+}) {
+  const cacheKey = authorEmail?.trim().toLowerCase();
+  const [hash, setHash] = useState<string | undefined>(
+    cacheKey ? gitCommitAvatarHashCache.get(cacheKey) : undefined,
+  );
+  const [imageFailed, setImageFailed] = useState(false);
+
+  useEffect(() => {
+    setImageFailed(false);
+    if (!cacheKey) {
+      setHash(undefined);
+      return;
+    }
+    const cached = gitCommitAvatarHashCache.get(cacheKey);
+    if (cached) {
+      setHash(cached);
+      return;
+    }
+    let cancelled = false;
+    sha256Hex(cacheKey)
+      .then((hex) => {
+        if (gitCommitAvatarHashCache.size >= gitCommitAvatarHashCacheLimit) {
+          gitCommitAvatarHashCache.clear();
+        }
+        gitCommitAvatarHashCache.set(cacheKey, hex);
+        if (!cancelled) setHash(hex);
+      })
+      .catch(() => {
+        // No WebCrypto available (or the hash failed) — the monogram fallback
+        // below covers it, so there's nothing further to surface here.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [cacheKey]);
+
+  if (hash && !imageFailed) {
+    return (
+      <img
+        alt=""
+        className="git-commit-popover__avatar git-commit-popover__avatar--image"
+        referrerPolicy="no-referrer"
+        src={`https://gravatar.com/avatar/${hash}?s=48&d=404`}
+        onError={() => setImageFailed(true)}
+      />
+    );
+  }
+
+  return (
+    <span
+      aria-hidden="true"
+      className="git-commit-popover__avatar git-commit-popover__avatar--monogram"
+    >
+      {initialsForCommitAuthor(authorName)}
+    </span>
+  );
 }
 
 function isMacPlatform() {

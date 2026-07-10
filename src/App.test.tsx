@@ -458,7 +458,10 @@ describe("App shell interactions", () => {
       ),
     );
     await waitFor(() => expect(document.title).toBe("ide - sample-repo/packages/editor"));
-    expect(screen.queryByText("sample-repo/packages/editor")).not.toBeInTheDocument();
+    // The compact header shows the workspace label on its dropdown trigger.
+    expect(screen.getByRole("button", { name: "Workspace menu" })).toHaveTextContent(
+      "sample-repo/packages/editor",
+    );
     expect(screen.queryByText("Workspace")).not.toBeInTheDocument();
   });
 
@@ -580,6 +583,47 @@ describe("App shell interactions", () => {
     expect(screen.getByText("No file selected").closest(".editor-region")).not.toHaveClass(
       "editor-region--light",
     );
+  });
+
+  it("pins an explicit theme from the rail toggle, overriding the system preference", async () => {
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    window.localStorage.removeItem("ide-theme-preference");
+    render(<App />);
+
+    expect(await treeButton("README.md")).toBeInTheDocument();
+    // System preference is light and nothing is pinned yet.
+    expect(document.documentElement).toHaveAttribute("data-ide-theme", "light");
+
+    const toggle = screen.getByRole("button", { name: /^Theme:/ });
+    fireEvent.click(toggle); // system -> light
+    fireEvent.click(toggle); // light -> dark, pinned over the light system pref
+
+    expect(document.documentElement).toHaveAttribute("data-ide-theme", "dark");
+    expect(window.localStorage.getItem("ide-theme-preference")).toBe("dark");
+    await waitFor(() =>
+      expect(tauriMocks.updateUiState).toHaveBeenLastCalledWith(
+        expect.objectContaining({ themePreference: "dark" }),
+        expect.anything(),
+      ),
+    );
+  });
+
+  it("restores a persisted explicit theme over the system preference", async () => {
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    tauriMocks.getUiState.mockResolvedValueOnce({
+      view: {
+        showDotfiles: false,
+        showGeneratedInternal: false,
+        themePreference: "dark",
+      },
+      workspace: { expandedFolders: [], openFiles: [] },
+    });
+
+    render(<App />);
+
+    expect(await treeButton("README.md")).toBeInTheDocument();
+    // System is light, but the persisted explicit choice wins.
+    expect(document.documentElement).toHaveAttribute("data-ide-theme", "dark");
   });
 
   it("opens a launched file even when the workspace scan omitted it", async () => {
@@ -1176,7 +1220,7 @@ describe("App shell interactions", () => {
     }
   });
 
-  it("shows preview feature flags and persists a toggle", async () => {
+  it("shows the remaining preview feature flag and persists a toggle", async () => {
     (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
     render(<App />);
 
@@ -1184,30 +1228,57 @@ describe("App shell interactions", () => {
     await openSettingsDialog();
     selectSettingsTab("Preview Features");
 
-    const toggle = await screen.findByLabelText("Git attribution");
-    expect(toggle).not.toBeChecked();
-    // Internal-only flags must never surface here.
+    const toggle = await screen.findByLabelText("Context menus");
+    expect(toggle).toBeChecked();
+    // Internal-only flags must never surface here, and graduated settings
+    // (Git commit/attribution) no longer live on this tab either.
     expect(screen.queryByLabelText("Show dotfiles and dot folders")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Git commit")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Git attribution")).not.toBeInTheDocument();
 
     fireEvent.click(toggle);
 
     await waitFor(() =>
       expect(tauriMocks.updateUiState).toHaveBeenLastCalledWith(
         expect.objectContaining({
-          featureFlags: expect.objectContaining({ gitAttribution: true }),
+          featureFlags: expect.objectContaining({ contextMenus: false }),
         }),
         expect.anything(),
       ),
     );
   });
 
-  it("restores a persisted preview flag override", async () => {
+  it("shows the Git category and persists a setting toggle", async () => {
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    render(<App />);
+
+    expect(await treeButton("README.md")).toBeInTheDocument();
+    await openSettingsDialog();
+    selectSettingsTab("Git");
+
+    const commitToggle = await screen.findByLabelText("Git commit");
+    const attributionToggle = await screen.findByLabelText("Git attribution");
+    expect(commitToggle).toBeChecked();
+    expect(attributionToggle).toBeChecked();
+
+    fireEvent.click(attributionToggle);
+
+    await waitFor(() =>
+      expect(tauriMocks.updateUiState).toHaveBeenLastCalledWith(
+        expect.objectContaining({ gitAttributionEnabled: false }),
+        expect.anything(),
+      ),
+    );
+  });
+
+  it("restores persisted Git settings", async () => {
     (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
     tauriMocks.getUiState.mockResolvedValueOnce({
       view: {
         showDotfiles: false,
         showGeneratedInternal: false,
-        featureFlags: { gitAttribution: true, retiredFlag: true },
+        gitCommitEnabled: false,
+        gitAttributionEnabled: false,
       },
       workspace: { expandedFolders: [], openFiles: [] },
     });
@@ -1216,13 +1287,23 @@ describe("App shell interactions", () => {
 
     expect(await treeButton("README.md")).toBeInTheDocument();
     await openSettingsDialog();
-    selectSettingsTab("Preview Features");
+    selectSettingsTab("Git");
 
-    expect(await screen.findByLabelText("Git attribution")).toBeChecked();
+    expect(await screen.findByLabelText("Git commit")).not.toBeChecked();
+    expect(await screen.findByLabelText("Git attribution")).not.toBeChecked();
   });
 
-  it("does not request Git attribution while the preview flag is disabled", async () => {
+  it("does not request Git attribution while the setting is disabled", async () => {
     (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    tauriMocks.getUiState.mockResolvedValueOnce({
+      view: {
+        showDotfiles: false,
+        showGeneratedInternal: false,
+        gitAttributionEnabled: false,
+      },
+      workspace: { expandedFolders: [], openFiles: [] },
+    });
+
     render(<App />);
 
     fireEvent.doubleClick(await treeButton("README.md"));
@@ -1231,13 +1312,31 @@ describe("App shell interactions", () => {
     expect(tauriMocks.getGitAttribution).not.toHaveBeenCalled();
   });
 
+  it("hides the commit panel while the Git commit setting is disabled", async () => {
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    tauriMocks.getUiState.mockResolvedValueOnce({
+      view: {
+        showDotfiles: false,
+        showGeneratedInternal: false,
+        gitCommitEnabled: false,
+      },
+      workspace: { expandedFolders: [], openFiles: [] },
+    });
+
+    render(<App />);
+
+    expect(await treeButton("README.md")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Git commit panel")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Source control" })).not.toBeInTheDocument();
+  });
+
   it("shows last commit attribution in the status bar when enabled", async () => {
     (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
     tauriMocks.getUiState.mockResolvedValueOnce({
       view: {
         showDotfiles: false,
         showGeneratedInternal: false,
-        featureFlags: { gitAttribution: true },
+        gitAttributionEnabled: true,
       },
       workspace: {
         expandedFolders: [],
@@ -1306,7 +1405,7 @@ describe("App shell interactions", () => {
       view: {
         showDotfiles: false,
         showGeneratedInternal: false,
-        featureFlags: { gitAttribution: true },
+        gitAttributionEnabled: true,
       },
       workspace: {
         expandedFolders: [],
@@ -1359,7 +1458,7 @@ describe("App shell interactions", () => {
       view: {
         showDotfiles: false,
         showGeneratedInternal: false,
-        featureFlags: { gitAttribution: true },
+        gitAttributionEnabled: true,
       },
       workspace: {
         expandedFolders: ["src"],
@@ -1404,6 +1503,169 @@ describe("App shell interactions", () => {
     );
   });
 
+  it("renders the commit body for a multi-line message and omits it for a single-line one", async () => {
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    tauriMocks.getUiState.mockResolvedValueOnce({
+      view: {
+        showDotfiles: false,
+        showGeneratedInternal: false,
+        gitAttributionEnabled: true,
+      },
+      workspace: {
+        expandedFolders: [],
+        openFiles: ["README.md"],
+        activeFile: "README.md",
+      },
+    });
+    tauriMocks.getGitAttribution.mockResolvedValueOnce({
+      path: "README.md",
+      status: "available",
+      file: {
+        sha: "abc123456789",
+        shortSha: "abc12345",
+        authorName: "Gordon Beeming",
+        authoredAtSeconds: Math.floor(Date.now() / 1000) - 3600,
+        summary: "Add readme",
+        body: "Explains the project.\nSecond body line.",
+        actions: [],
+      },
+      lines: [],
+    });
+
+    render(<App />);
+
+    fireEvent.click(await screen.findByText("Last commit"));
+    await screen.findByRole("dialog", { name: "Git commit details" });
+
+    expect(document.querySelector(".git-commit-popover__body-text")?.textContent).toBe(
+      "Explains the project.\nSecond body line.",
+    );
+  });
+
+  it("renders no body node and no footer for a single-line, local-only commit", async () => {
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    tauriMocks.getUiState.mockResolvedValueOnce({
+      view: {
+        showDotfiles: false,
+        showGeneratedInternal: false,
+        gitAttributionEnabled: true,
+      },
+      workspace: {
+        expandedFolders: [],
+        openFiles: ["README.md"],
+        activeFile: "README.md",
+      },
+    });
+    tauriMocks.getGitAttribution.mockResolvedValueOnce({
+      path: "README.md",
+      status: "available",
+      file: {
+        sha: "abc123456789",
+        shortSha: "abc12345",
+        authorName: "Gordon Beeming",
+        authoredAtSeconds: Math.floor(Date.now() / 1000) - 3600,
+        summary: "Add readme",
+        actions: [],
+      },
+      lines: [],
+    });
+
+    render(<App />);
+
+    fireEvent.click(await screen.findByText("Last commit"));
+    const dialog = await screen.findByRole("dialog", { name: "Git commit details" });
+
+    expect(document.querySelector(".git-commit-popover__body-text")).not.toBeInTheDocument();
+    expect(within(dialog).queryByRole("button", { name: /Open in/ })).not.toBeInTheDocument();
+    expect(dialog.querySelector(".git-commit-popover__actions")).not.toBeInTheDocument();
+    expect(dialog).toHaveClass("git-commit-popover--no-actions");
+  });
+
+  it("falls back to a monogram avatar when the commit has no author email", async () => {
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    tauriMocks.getUiState.mockResolvedValueOnce({
+      view: {
+        showDotfiles: false,
+        showGeneratedInternal: false,
+        gitAttributionEnabled: true,
+      },
+      workspace: {
+        expandedFolders: [],
+        openFiles: ["README.md"],
+        activeFile: "README.md",
+      },
+    });
+    tauriMocks.getGitAttribution.mockResolvedValueOnce({
+      path: "README.md",
+      status: "available",
+      file: {
+        sha: "abc123456789",
+        shortSha: "abc12345",
+        authorName: "Gordon Beeming",
+        authoredAtSeconds: Math.floor(Date.now() / 1000) - 3600,
+        summary: "Add readme",
+        actions: [],
+      },
+      lines: [],
+    });
+
+    render(<App />);
+
+    fireEvent.click(await screen.findByText("Last commit"));
+    const dialog = await screen.findByRole("dialog", { name: "Git commit details" });
+
+    expect(within(dialog).getByText("GB")).toBeInTheDocument();
+    expect(dialog.querySelector(".git-commit-popover__avatar--image")).not.toBeInTheDocument();
+  });
+
+  it("loads a SHA-256 gravatar for the commit author and falls back on image error", async () => {
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    tauriMocks.getUiState.mockResolvedValueOnce({
+      view: {
+        showDotfiles: false,
+        showGeneratedInternal: false,
+        gitAttributionEnabled: true,
+      },
+      workspace: {
+        expandedFolders: [],
+        openFiles: ["README.md"],
+        activeFile: "README.md",
+      },
+    });
+    tauriMocks.getGitAttribution.mockResolvedValueOnce({
+      path: "README.md",
+      status: "available",
+      file: {
+        sha: "abc123456789",
+        shortSha: "abc12345",
+        authorName: "Gordon Beeming",
+        authorEmail: "gordon@example.com",
+        authoredAtSeconds: Math.floor(Date.now() / 1000) - 3600,
+        summary: "Add readme",
+        actions: [],
+      },
+      lines: [],
+    });
+
+    render(<App />);
+
+    fireEvent.click(await screen.findByText("Last commit"));
+    const dialog = await screen.findByRole("dialog", { name: "Git commit details" });
+
+    const avatar = await waitFor(() => {
+      const image = dialog.querySelector<HTMLImageElement>(".git-commit-popover__avatar--image");
+      expect(image).toBeInTheDocument();
+      return image as HTMLImageElement;
+    });
+    expect(avatar.src).toMatch(/^https:\/\/gravatar\.com\/avatar\/[0-9a-f]{64}\?s=48&d=404$/);
+    expect(avatar.getAttribute("referrerpolicy")).toBe("no-referrer");
+
+    fireEvent.error(avatar);
+
+    expect(await within(dialog).findByText("GB")).toBeInTheDocument();
+    expect(dialog.querySelector(".git-commit-popover__avatar--image")).not.toBeInTheDocument();
+  });
+
   it("shows OS storage paths from Settings", async () => {
     (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
     render(<App />);
@@ -1429,11 +1691,13 @@ describe("App shell interactions", () => {
       ),
     ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Copy settings file path" })).toBeInTheDocument();
-    expect(await screen.findByLabelText("Workspace index coverage")).toBeInTheDocument();
-    expect(screen.getByText("Indexed files")).toBeInTheDocument();
-    expect(screen.getByText("7")).toBeInTheDocument();
-    expect(screen.getByText("Pending folders")).toBeInTheDocument();
-    expect(screen.getByText("2")).toBeInTheDocument();
+    // Scope the numeric stats to the coverage grid: the source-control rail badge
+    // also renders a small count that would otherwise collide with these.
+    const indexStats = await screen.findByLabelText("Workspace index coverage");
+    expect(within(indexStats).getByText("Indexed files")).toBeInTheDocument();
+    expect(within(indexStats).getByText("7")).toBeInTheDocument();
+    expect(within(indexStats).getByText("Pending folders")).toBeInTheDocument();
+    expect(within(indexStats).getByText("2")).toBeInTheDocument();
     expect(tauriMocks.getWorkspaceIndexStats).toHaveBeenCalledTimes(1);
   });
 
@@ -1930,41 +2194,39 @@ describe("App shell interactions", () => {
     expect(screen.queryByRole("dialog", { name: "ide Test" })).not.toBeInTheDocument();
   });
 
-  it("closes filter and search via their icons without the blur race reopening them", async () => {
+  it("focuses the search input for each scope and returns to the tree", async () => {
     render(<App />);
     await treeButton("README.md");
-    // In a real browser, mousedown on the icon blurs the focused empty input,
-    // whose onBlur clears the mode before the click toggles — reopening the
-    // panel it was meant to close. The guard is preventDefault on the icons'
-    // mousedown, which keeps the input focused through the click so onBlur
-    // never pre-clears the mode. jsdom can't replay that race (it doesn't
-    // move focus on mousedown), and dispatching ANY synthetic mousedown here
-    // corrupts selection bookkeeping for later editor-selection tests — so
-    // this test pins the user-visible contract only: the icon click closes
-    // the focused panel and it stays closed.
-    for (const title of ["Filter files", "Search contents"]) {
-      fireEvent.click(screen.getByTitle(title));
-      const input = await screen.findByPlaceholderText(title);
-      expect(input).toHaveFocus();
 
-      fireEvent.click(screen.getByTitle(title));
-      await waitFor(() =>
-        expect(screen.queryByPlaceholderText(title)).not.toBeInTheDocument(),
-      );
-      expect(await treeButton("README.md")).toBeInTheDocument();
-    }
+    // The Search rail opens the panel at the contents scope and focuses it.
+    fireEvent.click(screen.getByRole("button", { name: "Search" }));
+    const contentInput = await screen.findByPlaceholderText("Search in files");
+    expect(contentInput).toHaveFocus();
+
+    // Switching to the names chip focuses the filter input instead.
+    fireEvent.click(screen.getByRole("button", { name: "names" }));
+    const filterInput = await screen.findByPlaceholderText("Filter by name");
+    expect(filterInput).toHaveFocus();
+
+    // Escape on an empty input drops back to the file tree.
+    fireEvent.keyDown(filterInput, { key: "Escape" });
+    await waitFor(() =>
+      expect(screen.queryByPlaceholderText("Filter by name")).not.toBeInTheDocument(),
+    );
+    expect(await treeButton("README.md")).toBeInTheDocument();
   });
 
   it("keeps search fields collapsed until the search controls are used", async () => {
     render(<App />);
 
     expect(await treeButton("README.md")).toBeInTheDocument();
-    expect(screen.queryByPlaceholderText("Filter files")).not.toBeInTheDocument();
-    expect(screen.queryByPlaceholderText("Search contents")).not.toBeInTheDocument();
+    expect(screen.queryByPlaceholderText("Filter by name")).not.toBeInTheDocument();
+    expect(screen.queryByPlaceholderText("Search in files")).not.toBeInTheDocument();
     expect(screen.queryByPlaceholderText("Find in file")).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByTitle("Filter files"));
-    const filterInput = await screen.findByPlaceholderText("Filter files");
+    fireEvent.click(screen.getByRole("button", { name: "Search" }));
+    fireEvent.click(screen.getByRole("button", { name: "names" }));
+    const filterInput = await screen.findByPlaceholderText("Filter by name");
     expect(filterInput).toHaveFocus();
     fireEvent.change(filterInput, { target: { value: "App" } });
     expect(await treeButton("App.tsx")).toBeInTheDocument();
@@ -1973,18 +2235,18 @@ describe("App shell interactions", () => {
     expect(await treeButton("README.md")).toBeInTheDocument();
     fireEvent.keyDown(filterInput, { key: "Escape" });
     await waitFor(() =>
-      expect(screen.queryByPlaceholderText("Filter files")).not.toBeInTheDocument(),
+      expect(screen.queryByPlaceholderText("Filter by name")).not.toBeInTheDocument(),
     );
 
-    fireEvent.click(screen.getByTitle("Search contents"));
-    const contentInput = await screen.findByPlaceholderText("Search contents");
+    fireEvent.click(screen.getByRole("button", { name: "Search" }));
+    const contentInput = await screen.findByPlaceholderText("Search in files");
     expect(contentInput).toHaveFocus();
     fireEvent.change(contentInput, { target: { value: "readme" } });
     fireEvent.keyDown(contentInput, { key: "Escape" });
     await waitFor(() => expect(contentInput).toHaveValue(""));
     fireEvent.keyDown(contentInput, { key: "Escape" });
     await waitFor(() =>
-      expect(screen.queryByPlaceholderText("Search contents")).not.toBeInTheDocument(),
+      expect(screen.queryByPlaceholderText("Search in files")).not.toBeInTheDocument(),
     );
 
     fireEvent.click(await treeButton("README.md"));
@@ -2104,32 +2366,37 @@ describe("App shell interactions", () => {
     render(<App />);
 
     expect(await treeButton("README.md")).toBeInTheDocument();
-    fireEvent.click(screen.getByTitle("Filter files"));
-    const filterInput = await screen.findByPlaceholderText("Filter files");
+    fireEvent.click(screen.getByRole("button", { name: "Search" }));
+    fireEvent.click(screen.getByRole("button", { name: "names" }));
+    const filterInput = await screen.findByPlaceholderText("Filter by name");
     fireEvent.change(filterInput, { target: { value: "App" } });
     expect(await treeButton("App.tsx")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByTitle("Search contents"));
-    expect(screen.queryByPlaceholderText("Filter files")).not.toBeInTheDocument();
-    const contentInput = await screen.findByPlaceholderText("Search contents");
+    // The contents chip swaps to content search — the names input and tree go away.
+    fireEvent.click(screen.getByRole("button", { name: "contents" }));
+    expect(screen.queryByPlaceholderText("Filter by name")).not.toBeInTheDocument();
+    const contentInput = await screen.findByPlaceholderText("Search in files");
     fireEvent.change(contentInput, { target: { value: "needle" } });
     expect(await screen.findByText("src/App.tsx:4")).toBeInTheDocument();
     expect(screen.queryByLabelText("Workspace files")).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByTitle("Search contents"));
+    // The Files rail returns to the tree, hiding the search inputs.
+    fireEvent.click(screen.getByRole("button", { name: "Files" }));
     await waitFor(() =>
-      expect(screen.queryByPlaceholderText("Search contents")).not.toBeInTheDocument(),
+      expect(screen.queryByPlaceholderText("Search in files")).not.toBeInTheDocument(),
     );
     expect(await screen.findByLabelText("Workspace files")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByTitle("Search contents"));
-    expect(await screen.findByPlaceholderText("Search contents")).toHaveValue("needle");
-    expect(screen.queryByPlaceholderText("Filter files")).not.toBeInTheDocument();
+    // Reopening Search restores the last scope (contents) with its query + results.
+    fireEvent.click(screen.getByRole("button", { name: "Search" }));
+    expect(await screen.findByPlaceholderText("Search in files")).toHaveValue("needle");
+    expect(screen.queryByPlaceholderText("Filter by name")).not.toBeInTheDocument();
     expect(await screen.findByText("src/App.tsx:4")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByTitle("Filter files"));
-    expect(await screen.findByPlaceholderText("Filter files")).toHaveValue("App");
-    expect(screen.queryByPlaceholderText("Search contents")).not.toBeInTheDocument();
+    // The names scope still remembers its own separate query.
+    fireEvent.click(screen.getByRole("button", { name: "names" }));
+    expect(await screen.findByPlaceholderText("Filter by name")).toHaveValue("App");
+    expect(screen.queryByPlaceholderText("Search in files")).not.toBeInTheDocument();
     expect(await screen.findByLabelText("Workspace files")).toBeInTheDocument();
   });
 
@@ -2152,10 +2419,10 @@ describe("App shell interactions", () => {
     act(() => {
       eventMocks.listeners.get("menu://find-in-files")?.({ payload: undefined });
     });
-    expect(await screen.findByPlaceholderText("Search contents")).toHaveFocus();
+    expect(await screen.findByPlaceholderText("Search in files")).toHaveFocus();
     expect(screen.queryByLabelText("Workspace files")).not.toBeInTheDocument();
 
-    fireEvent.keyDown(screen.getByPlaceholderText("Search contents"), { key: "Escape" });
+    fireEvent.keyDown(screen.getByPlaceholderText("Search in files"), { key: "Escape" });
     fireEvent.click(await treeButton("README.md"));
     await findTab("README.md");
     await waitFor(() => expect(eventMocks.listeners.has("menu://find-in-file")).toBe(true));
@@ -2249,7 +2516,7 @@ describe("App shell interactions", () => {
 
     fireEvent.keyDown(window, { key: "f", ctrlKey: true, shiftKey: true });
 
-    expect(await screen.findByPlaceholderText("Search contents")).toHaveFocus();
+    expect(await screen.findByPlaceholderText("Search in files")).toHaveFocus();
   });
 
   it("zooms the editor and app from keyboard shortcuts", async () => {
@@ -2365,8 +2632,8 @@ describe("App shell interactions", () => {
 
     expect(await treeButton("README.md")).toBeInTheDocument();
 
-    expect(screen.getByTitle("Open folder")).toBeDisabled();
-    expect(screen.getByTitle("Open file")).toBeDisabled();
+    expect(openWorkspaceMenuItem("Open Folder…")).toBeDisabled();
+    expect(openWorkspaceMenuItem("Open File…")).toBeDisabled();
   });
 
   it("opens a native file picker result from the toolbar", async () => {
@@ -2376,7 +2643,7 @@ describe("App shell interactions", () => {
     render(<App />);
 
     expect(await treeButton("README.md")).toBeInTheDocument();
-    fireEvent.click(screen.getByTitle("Open file"));
+    fireEvent.click(openWorkspaceMenuItem("Open File…"));
 
     expect(await screen.findByLabelText("Editor notes.md")).toHaveValue("# Notes");
     expect(tauriMocks.pickOpenFile).toHaveBeenCalledTimes(1);
@@ -2434,7 +2701,7 @@ describe("App shell interactions", () => {
     render(<App />);
 
     expect(await treeButton("README.md")).toBeInTheDocument();
-    fireEvent.click(screen.getByTitle("Open folder"));
+    fireEvent.click(openWorkspaceMenuItem("Open Folder…"));
 
     expect(await treeButton("next.md")).toBeInTheDocument();
     await waitFor(() =>
@@ -2462,7 +2729,7 @@ describe("App shell interactions", () => {
 
     expect(screen.queryByRole("dialog", { name: "Command palette" }))
       .not.toBeInTheDocument();
-    expect(await screen.findByPlaceholderText("Search contents")).toHaveFocus();
+    expect(await screen.findByPlaceholderText("Search in files")).toHaveFocus();
   });
 
   it("opens the command palette from the native menu", async () => {
@@ -3651,7 +3918,7 @@ describe("App shell interactions", () => {
 
     await findTab("src/App.tsx");
     expect(await screen.findByText("Reveal line 4")).toBeInTheDocument();
-    fireEvent.click(screen.getByTitle("Search contents"));
+    fireEvent.click(screen.getByRole("button", { name: "Files" }));
     const tree = await screen.findByLabelText("Workspace files");
     expect(await within(tree).findByRole("treeitem", { name: "src" })).toHaveAttribute(
       "aria-expanded",
@@ -3691,13 +3958,59 @@ describe("App shell interactions", () => {
     fireEvent.click(resultPath.closest("button")!);
     await findTab("src/App.tsx");
 
-    fireEvent.click(screen.getByTitle("Search contents"));
+    fireEvent.click(screen.getByRole("button", { name: "Files" }));
     const tree = await screen.findByLabelText("Workspace files");
     expect(await within(tree).findByRole("treeitem", { name: "src" })).toHaveAttribute(
       "aria-expanded",
       "false",
     );
     expect(within(tree).queryByRole("treeitem", { name: "App.tsx" })).not.toBeInTheDocument();
+  });
+
+  it("switches the code font setting and persists the choice", async () => {
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    render(<App />);
+
+    expect(await treeButton("README.md")).toBeInTheDocument();
+    await openSettingsDialog();
+
+    const plexButton = screen.getByRole("radio", { name: "IBM Plex Mono" });
+    const systemButton = screen.getByRole("radio", { name: "System mono" });
+    expect(plexButton).toHaveAttribute("aria-checked", "true");
+    expect(systemButton).toHaveAttribute("aria-checked", "false");
+
+    fireEvent.click(systemButton);
+
+    expect(systemButton).toHaveAttribute("aria-checked", "true");
+    expect(plexButton).toHaveAttribute("aria-checked", "false");
+    await waitFor(() =>
+      expect(tauriMocks.updateUiState).toHaveBeenLastCalledWith(
+        expect.objectContaining({ codeFont: "system-mono" }),
+        expect.anything(),
+      ),
+    );
+  });
+
+  it("restores a persisted code font setting", async () => {
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    tauriMocks.getUiState.mockResolvedValueOnce({
+      view: {
+        showDotfiles: false,
+        showGeneratedInternal: false,
+        codeFont: "system-mono",
+      },
+      workspace: { expandedFolders: [], openFiles: [] },
+    });
+
+    render(<App />);
+
+    expect(await treeButton("README.md")).toBeInTheDocument();
+    await openSettingsDialog();
+
+    expect(screen.getByRole("radio", { name: "System mono" })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
   });
 
   it("clears stale content search results while a new query is searching", async () => {
@@ -3782,18 +4095,18 @@ describe("App shell interactions", () => {
     expect(await screen.findByText("src/App.tsx:4")).toBeInTheDocument();
     expect(tauriMocks.searchFiles).toHaveBeenCalledTimes(1);
 
-    // Hide the pane, then simulate a workspace change via the refresh button.
-    // refreshFiles bumps the search nonce, but nobody can see results right
-    // now, so the search must not re-run.
-    fireEvent.click(screen.getByTitle("Search contents"));
-    fireEvent.click(screen.getByTitle("Refresh files"));
+    // Hide the pane (switch to Files), then simulate a workspace change via the
+    // refresh action. refreshFiles bumps the search nonce, but nobody can see
+    // results right now, so the search must not re-run.
+    fireEvent.click(screen.getByRole("button", { name: "Files" }));
+    fireEvent.click(openOverflowMenuItem("Refresh Files"));
     await waitFor(() => expect(tauriMocks.listFiles).toHaveBeenCalledTimes(2));
     expect(tauriMocks.searchFiles).toHaveBeenCalledTimes(1);
 
     // Reopening the pane on the same query takes the silent-refresh path:
     // the previous match stays on screen with no spinner, then the list
     // swaps once the re-run search resolves.
-    fireEvent.click(screen.getByTitle("Search contents"));
+    fireEvent.click(screen.getByRole("button", { name: "Search" }));
     expect(screen.getByText("src/App.tsx:4")).toBeInTheDocument();
     expect(screen.queryByText("Searching")).not.toBeInTheDocument();
 
@@ -4018,7 +4331,7 @@ describe("App shell interactions", () => {
 
     fireEvent.click(await treeButton("README.md"));
     await findTab("README.md");
-    fireEvent.click(screen.getByTitle("Rename selected item"));
+    fireEvent.click(openOverflowMenuItem("Rename…"));
     expect(screen.getByLabelText("New path")).toHaveValue("README.md");
 
     fireEvent.change(screen.getByLabelText("New path"), {
@@ -4071,7 +4384,7 @@ describe("App shell interactions", () => {
     fireEvent.click(await treeButton("App.tsx"));
     await findTab("src/App.tsx");
     fireEvent.click(await treeButton("src"));
-    fireEvent.click(screen.getByTitle("Rename selected item"));
+    fireEvent.click(openOverflowMenuItem("Rename…"));
     expect(screen.getByRole("dialog", { name: "Rename folder" })).toBeInTheDocument();
 
     fireEvent.change(screen.getByLabelText("New path"), {
@@ -4112,7 +4425,7 @@ describe("App shell interactions", () => {
     render(<App />);
 
     fireEvent.click(await treeButton("README.md"));
-    fireEvent.click(screen.getByTitle("Rename selected item"));
+    fireEvent.click(openOverflowMenuItem("Rename…"));
     fireEvent.change(await screen.findByLabelText("New path"), {
       target: { value: "src/App.tsx" },
     });
@@ -4128,7 +4441,7 @@ describe("App shell interactions", () => {
 
     fireEvent.click(await treeButton("README.md"));
     await findTab("README.md");
-    fireEvent.click(screen.getByTitle("Delete selected item"));
+    fireEvent.click(openOverflowMenuItem("Delete…"));
     expect(screen.getByRole("alertdialog", { name: "Move file to Trash?" })).toHaveTextContent(
       "README.md will be moved to the Trash.",
     );
@@ -4150,7 +4463,7 @@ describe("App shell interactions", () => {
       target: { value: "dirty app" },
     });
     fireEvent.click(await treeButton("src"));
-    fireEvent.click(screen.getByTitle("Delete selected item"));
+    fireEvent.click(openOverflowMenuItem("Delete…"));
     expect(screen.getByRole("alertdialog", { name: "Move folder to Trash?" })).toHaveTextContent(
       "src will be moved to the Trash. Any files inside this folder will also be removed. This selection also has unsaved editor changes.",
     );
@@ -4170,7 +4483,7 @@ describe("App shell interactions", () => {
     render(<App />);
 
     fireEvent.click(await treeButton("README.md"));
-    fireEvent.click(screen.getByTitle("Delete selected item"));
+    fireEvent.click(openOverflowMenuItem("Delete…"));
     fireEvent.click(screen.getByText("Move to Trash"));
 
     await screen.findByText("Error: permission denied");
@@ -4267,11 +4580,12 @@ describe("Git commit sidebar", () => {
     expect(await treeButton("README.md")).toBeInTheDocument();
     expect(screen.queryByLabelText("Git commit panel")).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByTitle("Commit changes"));
+    fireEvent.click(screen.getByTitle("Source control"));
     expect(await screen.findByLabelText("Git commit panel")).toBeInTheDocument();
     expect(screen.queryByLabelText("Workspace files")).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByTitle("Commit changes"));
+    // The Files rail leaves commit mode and restores the tree.
+    fireEvent.click(screen.getByRole("button", { name: "Files" }));
     await waitFor(() =>
       expect(screen.queryByLabelText("Git commit panel")).not.toBeInTheDocument(),
     );
@@ -4299,7 +4613,7 @@ describe("Git commit sidebar", () => {
     render(<App />);
 
     expect(await treeButton("README.md")).toBeInTheDocument();
-    fireEvent.click(screen.getByTitle("Commit changes"));
+    fireEvent.click(screen.getByTitle("Source control"));
 
     const panel = await screen.findByLabelText("Git commit panel");
     expect(await within(panel).findByText("Up to date")).toBeInTheDocument();
@@ -4323,7 +4637,7 @@ describe("Git commit sidebar", () => {
     render(<App />);
 
     expect(await treeButton("README.md")).toBeInTheDocument();
-    fireEvent.click(screen.getByTitle("Commit changes"));
+    fireEvent.click(screen.getByTitle("Source control"));
 
     const panel = await screen.findByLabelText("Git commit panel");
     expect(await within(panel).findByLabelText("2 ahead, 1 behind")).toBeInTheDocument();
@@ -4333,7 +4647,7 @@ describe("Git commit sidebar", () => {
     render(<App />);
 
     expect(await treeButton("README.md")).toBeInTheDocument();
-    fireEvent.click(screen.getByTitle("Commit changes"));
+    fireEvent.click(screen.getByTitle("Source control"));
 
     const panel = await screen.findByLabelText("Git commit panel");
     await waitFor(() => expect(within(panel).getByText("2 / 2")).toBeInTheDocument());
@@ -4357,7 +4671,7 @@ describe("Git commit sidebar", () => {
     render(<App />);
 
     expect(await treeButton("README.md")).toBeInTheDocument();
-    fireEvent.click(screen.getByTitle("Commit changes"));
+    fireEvent.click(screen.getByTitle("Source control"));
 
     const panel = await screen.findByLabelText("Git commit panel");
     await waitFor(() => expect(within(panel).getByText("2 / 2")).toBeInTheDocument());
@@ -4377,7 +4691,7 @@ describe("Git commit sidebar", () => {
     render(<App />);
 
     expect(await treeButton("README.md")).toBeInTheDocument();
-    fireEvent.click(screen.getByTitle("Commit changes"));
+    fireEvent.click(screen.getByTitle("Source control"));
 
     const panel = await screen.findByLabelText("Git commit panel");
     await waitFor(() => expect(within(panel).getByText("2 / 2")).toBeInTheDocument());
@@ -4415,7 +4729,7 @@ describe("Git commit sidebar", () => {
     render(<App />);
 
     expect(await treeButton("README.md")).toBeInTheDocument();
-    fireEvent.click(screen.getByTitle("Commit changes"));
+    fireEvent.click(screen.getByTitle("Source control"));
 
     const panel = await screen.findByLabelText("Git commit panel");
     await waitFor(() => expect(within(panel).getByText("2 / 2")).toBeInTheDocument());
@@ -4453,7 +4767,7 @@ describe("Git commit sidebar", () => {
     render(<App />);
 
     expect(await treeButton("README.md")).toBeInTheDocument();
-    fireEvent.click(screen.getByTitle("Commit changes"));
+    fireEvent.click(screen.getByTitle("Source control"));
 
     const panel = await screen.findByLabelText("Git commit panel");
     await waitFor(() => expect(within(panel).getByText("2 / 2")).toBeInTheDocument());
@@ -4495,7 +4809,7 @@ describe("Git commit sidebar", () => {
     render(<App />);
 
     expect(await treeButton("README.md")).toBeInTheDocument();
-    fireEvent.click(screen.getByTitle("Commit changes"));
+    fireEvent.click(screen.getByTitle("Source control"));
 
     const panel = await screen.findByLabelText("Git commit panel");
     const row = await within(panel).findByText("gone.txt");
@@ -4511,7 +4825,7 @@ describe("Git commit sidebar", () => {
     render(<App />);
 
     expect(await treeButton("README.md")).toBeInTheDocument();
-    fireEvent.click(screen.getByTitle("Commit changes"));
+    fireEvent.click(screen.getByTitle("Source control"));
 
     const panel = await screen.findByLabelText("Git commit panel");
     const readmeRow = await within(panel).findByText("README.md");
@@ -4528,7 +4842,7 @@ describe("Git commit sidebar", () => {
     render(<App />);
 
     expect(await treeButton("README.md")).toBeInTheDocument();
-    fireEvent.click(screen.getByTitle("Commit changes"));
+    fireEvent.click(screen.getByTitle("Source control"));
 
     const panel = await screen.findByLabelText("Git commit panel");
     const readmeRow = await within(panel).findByText("README.md");
@@ -4545,7 +4859,7 @@ describe("Git commit sidebar", () => {
     fireEvent.click(appRow.closest("button")!);
     await screen.findByLabelText("Diff src/App.tsx");
 
-    fireEvent.click(screen.getByTitle("Commit changes"));
+    fireEvent.click(screen.getByRole("button", { name: "Files" }));
 
     await waitFor(() => expect(tabButton("src/App.tsx (Working Tree)")).toBeUndefined());
     expect(tabButton("README.md (Working Tree)")).toBeTruthy();
@@ -4579,7 +4893,7 @@ describe("Git commit sidebar", () => {
     render(<App />);
 
     expect(await treeButton("README.md")).toBeInTheDocument();
-    fireEvent.click(screen.getByTitle("Commit changes"));
+    fireEvent.click(screen.getByTitle("Source control"));
 
     const panel = await screen.findByLabelText("Git commit panel");
     // Entering commit mode auto-expands ancestors of changed paths, so "src"
@@ -4595,7 +4909,7 @@ describe("Git commit sidebar", () => {
     expect(within(panel).queryByText("App.tsx")).not.toBeInTheDocument();
 
     // Leave commit mode — the manual collapse carries over to normal browsing.
-    fireEvent.click(screen.getByTitle("Commit changes"));
+    fireEvent.click(screen.getByRole("button", { name: "Files" }));
     const tree = await screen.findByLabelText("Workspace files");
     const browsingSrcRow = await within(tree).findByText("src");
     expect(browsingSrcRow.closest("button")).toHaveAttribute("aria-expanded", "false");
@@ -4606,7 +4920,7 @@ describe("Git commit sidebar", () => {
     render(<App />);
 
     expect(await treeButton("README.md")).toBeInTheDocument();
-    fireEvent.click(screen.getByTitle("Commit changes"));
+    fireEvent.click(screen.getByTitle("Source control"));
 
     const panel = await screen.findByLabelText("Git commit panel");
     const readmeRow = await within(panel).findByText("README.md");
@@ -4641,7 +4955,7 @@ describe("Git commit sidebar", () => {
     render(<App />);
 
     expect(await treeButton("README.md")).toBeInTheDocument();
-    fireEvent.click(screen.getByTitle("Commit changes"));
+    fireEvent.click(screen.getByTitle("Source control"));
 
     const panel = await screen.findByLabelText("Git commit panel");
     const readmeRow = await within(panel).findByText("README.md");
@@ -4677,7 +4991,7 @@ describe("Git commit sidebar", () => {
     render(<App />);
 
     expect(await treeButton("README.md")).toBeInTheDocument();
-    fireEvent.click(screen.getByTitle("Commit changes"));
+    fireEvent.click(screen.getByTitle("Source control"));
 
     const panel = await screen.findByLabelText("Git commit panel");
     const readmeRow = await within(panel).findByText("README.md");
@@ -4706,7 +5020,7 @@ describe("Git commit sidebar", () => {
     render(<App />);
 
     expect(await treeButton("README.md")).toBeInTheDocument();
-    fireEvent.click(screen.getByTitle("Commit changes"));
+    fireEvent.click(screen.getByTitle("Source control"));
 
     const panel = await screen.findByLabelText("Git commit panel");
     const message = within(panel).getByPlaceholderText("Commit message");
@@ -4734,7 +5048,7 @@ describe("Git commit sidebar", () => {
     render(<App />);
 
     expect(await treeButton("README.md")).toBeInTheDocument();
-    fireEvent.click(screen.getByTitle("Commit changes"));
+    fireEvent.click(screen.getByTitle("Source control"));
 
     const panel = await screen.findByLabelText("Git commit panel");
     const message = within(panel).getByPlaceholderText("Commit message");
@@ -4749,7 +5063,7 @@ describe("Git commit sidebar", () => {
     render(<App />);
 
     expect(await treeButton("README.md")).toBeInTheDocument();
-    fireEvent.click(screen.getByTitle("Commit changes"));
+    fireEvent.click(screen.getByTitle("Source control"));
 
     const panel = await screen.findByLabelText("Git commit panel");
     const message = within(panel).getByPlaceholderText("Commit message");
@@ -4788,7 +5102,7 @@ describe("Git commit sidebar", () => {
     render(<App />);
 
     expect(await treeButton("README.md")).toBeInTheDocument();
-    fireEvent.click(screen.getByTitle("Commit changes"));
+    fireEvent.click(screen.getByTitle("Source control"));
     const panel = await screen.findByLabelText("Git commit panel");
     await waitFor(() => expect(within(panel).getByText("1 / 1")).toBeInTheDocument());
 
@@ -4818,14 +5132,27 @@ async function findTab(path: string) {
 }
 
 function tabButton(path: string) {
+  // Tabs now label with the filename only; the full path lives in the title.
   return [...document.querySelectorAll<HTMLButtonElement>(".tab")].find((button) =>
-    button.textContent?.includes(path),
+    button.getAttribute("title")?.includes(path),
   );
 }
 
 async function openContentSearch() {
-  fireEvent.click(screen.getByTitle("Search contents"));
-  return screen.findByPlaceholderText("Search contents");
+  fireEvent.click(screen.getByRole("button", { name: "Search" }));
+  return screen.findByPlaceholderText("Search in files");
+}
+
+// The sidebar header's workspace dropdown and "…" overflow reuse the shared
+// context-menu machinery; these open the menu and return the named item.
+function openWorkspaceMenuItem(name: string) {
+  fireEvent.click(screen.getByRole("button", { name: "Workspace menu" }));
+  return screen.getByRole("menuitem", { name });
+}
+
+function openOverflowMenuItem(name: string) {
+  fireEvent.click(screen.getByRole("button", { name: "More file actions" }));
+  return screen.getByRole("menuitem", { name });
 }
 
 async function openCurrentFileFind() {

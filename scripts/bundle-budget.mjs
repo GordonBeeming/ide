@@ -11,7 +11,10 @@ const assetsDir = path.join(distDir, "assets");
 
 const budgets = {
   initialJsBytes: 600_000,
-  initialCssBytes: 80_000,
+  // Bumped for the shell redesign: the activity rail, the unified search panel,
+  // the 1e settings surface (switch controls + quiet nav), and the inline About
+  // mark add more chrome CSS than the retired sidebar-grid/search-tools rules freed.
+  initialCssBytes: 84_000,
   editorChunkBytes: 90_000,
 };
 
