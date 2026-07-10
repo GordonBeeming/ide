@@ -261,7 +261,11 @@ export function ContextMenu({
               .join(" ")}
             aria-disabled={entry.disabled || undefined}
             disabled={entry.disabled}
-            onMouseEnter={() => setActiveIndex(index)}
+            onMouseEnter={() => {
+              // Keyboard nav already skips disabled rows; hover must too, or
+              // aria-activedescendant can point at an item that can't activate.
+              if (!entry.disabled) setActiveIndex(index);
+            }}
             onClick={() => activate(entry)}
           >
             {Icon ? <Icon size={14} aria-hidden="true" /> : <span className="context-menu__item-icon-spacer" />}
