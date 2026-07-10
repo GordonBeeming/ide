@@ -688,6 +688,9 @@ export default function App() {
   const [gitCommitInFlight, setGitCommitInFlight] = useState(false);
   const [gitCommitError, setGitCommitError] = useState<string>();
   const [gitCommitSuccess, setGitCommitSuccess] = useState<string>();
+  // Why-nothing-happened hint for Cmd/Ctrl+Enter in the message box — the
+  // Commit button disables itself, but the shortcut has no visual state.
+  const [gitCommitHint, setGitCommitHint] = useState<string>();
   const [gitSyncInFlight, setGitSyncInFlight] = useState(false);
   const [gitSyncResult, setGitSyncResult] = useState<GitSyncResult>();
   const [gitSyncError, setGitSyncError] = useState<string>();
@@ -1652,6 +1655,12 @@ export default function App() {
     return () => window.clearTimeout(timeoutId);
   }, [gitCommitSuccess]);
 
+  // The commit hint answers "why did Cmd+Enter do nothing" — the moment the
+  // user changes the message or the file selection, the answer is stale.
+  useEffect(() => {
+    setGitCommitHint(undefined);
+  }, [gitCommitMessage, gitCommitSelectedPaths]);
+
   // Sync notices are scoped to a commit-panel session; clear them on the way out
   // so reopening the panel doesn't show a stale "Synced"/conflict line.
   useEffect(() => {
@@ -1736,8 +1745,17 @@ export default function App() {
   const handleGitCommit = useCallback(async () => {
     const trimmedMessage = gitCommitMessage.trim();
     const selectedPaths = changedFilePaths.filter((path) => gitCommitSelectedPaths.has(path));
-    if (!trimmedMessage || selectedPaths.length === 0 || gitCommitInFlight) return;
+    if (gitCommitInFlight) return;
+    if (selectedPaths.length === 0) {
+      setGitCommitHint("Select at least one file to commit.");
+      return;
+    }
+    if (!trimmedMessage) {
+      setGitCommitHint("Enter a commit message first.");
+      return;
+    }
 
+    setGitCommitHint(undefined);
     setGitCommitInFlight(true);
     setGitCommitError(undefined);
     setGitCommitSuccess(undefined);
@@ -5451,6 +5469,12 @@ export default function App() {
                   {gitCommitSuccess ? (
                     <div className="commit-panel__notice commit-panel__notice--success" role="status">
                       {gitCommitSuccess}
+                    </div>
+                  ) : null}
+                  {gitCommitHint ? (
+                    <div className="commit-panel__notice commit-panel__notice--warning" role="status">
+                      <TriangleAlert size={13} />
+                      <span>{gitCommitHint}</span>
                     </div>
                   ) : null}
                 </div>
