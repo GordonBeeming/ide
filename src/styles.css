@@ -976,6 +976,20 @@ button {
   color: var(--text);
 }
 
+.commit-panel__notice--warning {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid color-mix(in oklch, var(--warning) 42%, var(--border));
+  background: color-mix(in oklch, var(--warning) 8%, var(--surface));
+  color: var(--text);
+}
+
+.commit-panel__notice--warning svg {
+  flex-shrink: 0;
+  color: var(--warning);
+}
+
 /* Transient success toasts (sync result, completed merge) hold, then ease out
    over the last stretch of their ~5s life so removal doesn't just blink away.
    The JS timeout clears the element at 5s; this only animates the opacity. */
@@ -1108,19 +1122,6 @@ button {
   display: block;
   margin-bottom: 4px;
   font-weight: 600;
-}
-
-.commit-panel__sync-conflicts {
-  margin: 0;
-  padding-left: 18px;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.commit-panel__sync-conflicts li {
-  overflow-wrap: anywhere;
-  word-break: break-word;
 }
 
 /* Live merge-resolution block: a bordered call-out that replaces the normal

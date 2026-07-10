@@ -4687,6 +4687,45 @@ describe("Git commit sidebar", () => {
     expect(commitButton).toBeDisabled();
   });
 
+  it("explains why Cmd+Enter did nothing and clears the hint once the user acts", async () => {
+    render(<App />);
+
+    expect(await treeButton("README.md")).toBeInTheDocument();
+    fireEvent.click(screen.getByTitle("Source control"));
+
+    const panel = await screen.findByLabelText("Git commit panel");
+    await waitFor(() => expect(within(panel).getByText("2 / 2")).toBeInTheDocument());
+    const message = within(panel).getByPlaceholderText("Commit message");
+
+    fireEvent.click(within(panel).getByLabelText("Deselect all changes"));
+    fireEvent.change(message, { target: { value: "Update readme" } });
+    fireEvent.keyDown(message, { key: "Enter", metaKey: true });
+    expect(
+      await within(panel).findByText("Select at least one file to commit."),
+    ).toBeInTheDocument();
+
+    fireEvent.click(within(panel).getByLabelText("Select all changes"));
+    await waitFor(() =>
+      expect(
+        within(panel).queryByText("Select at least one file to commit."),
+      ).not.toBeInTheDocument(),
+    );
+
+    fireEvent.change(message, { target: { value: "  " } });
+    // Ctrl instead of Cmd here so both halves of metaKey || ctrlKey get covered.
+    fireEvent.keyDown(message, { key: "Enter", ctrlKey: true });
+    expect(
+      await within(panel).findByText("Enter a commit message first."),
+    ).toBeInTheDocument();
+
+    fireEvent.change(message, { target: { value: "Update readme" } });
+    await waitFor(() =>
+      expect(
+        within(panel).queryByText("Enter a commit message first."),
+      ).not.toBeInTheDocument(),
+    );
+  });
+
   it("commits only the selected paths and refreshes the status afterward", async () => {
     render(<App />);
 
