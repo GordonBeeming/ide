@@ -586,8 +586,9 @@ pub fn search_workspace_with_metadata(
                     .expect("byte offset was included in the target set")
             };
 
-            let line_text = line.trim_end().to_string();
-            let total_chars = line_text.chars().count();
+            // Borrow, don't copy: the full line can be hundreds of KB and only
+            // the preview window ever needs an owned String.
+            let line_text = line.trim_end();
 
             for (match_start, match_end) in ranges {
                 if matches.len() >= collection_limit {
@@ -597,7 +598,7 @@ pub fn search_workspace_with_metadata(
                 matches.push(SearchMatch {
                     path: relative_path.clone(),
                     line_number: index + 1,
-                    line_text: build_search_preview(&line_text, total_chars, match_start),
+                    line_text: build_search_preview(line_text, match_start),
                     match_start: utf16_offset_of(match_start),
                     match_end: utf16_offset_of(match_end),
                 });
@@ -940,8 +941,14 @@ fn utf16_offsets_for_byte_indices(value: &str, mut targets: Vec<usize>) -> Vec<(
 // arbitrary UTF-8. `match_start_byte` is a byte offset into `line_text` (case_insensitive_
 // match_byte_ranges finds matches on char boundaries, and line_text only trims trailing
 // whitespace off the same source line, so the offset lands on a valid boundary here too).
-fn build_search_preview(line_text: &str, total_chars: usize, match_start_byte: usize) -> String {
-    if total_chars <= SEARCH_PREVIEW_MAX_CHARS {
+fn build_search_preview(line_text: &str, match_start_byte: usize) -> String {
+    // Byte length at or under the cap means the char count is too — no scan needed.
+    if line_text.len() <= SEARCH_PREVIEW_MAX_CHARS {
+        return line_text.to_string();
+    }
+    // More bytes than the cap can still be fewer chars (multi-byte text); probing
+    // one char past the cap costs at most cap+1 chars, never the whole line.
+    if line_text.chars().nth(SEARCH_PREVIEW_MAX_CHARS).is_none() {
         return line_text.to_string();
     }
 
