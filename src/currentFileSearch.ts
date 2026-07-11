@@ -2,6 +2,31 @@ import type { SearchMatch } from "./tauri";
 
 const MAX_CURRENT_FILE_MATCHES = 200;
 
+// A single minified line can be hundreds of KB; shipping the whole line as
+// preview text per match (up to MAX_CURRENT_FILE_MATCHES times) freezes the
+// webview. Cap the preview to a window around the match instead. matchStart/
+// matchEnd stay as full-line offsets (EditorPane uses them to select in the
+// real document) — only the displayed text is windowed.
+const PREVIEW_MAX_CHARS = 500;
+const PREVIEW_CONTEXT_BEFORE_CHARS = 160;
+
+function previewWindow(line: string, matchStart: number): string {
+  if (line.length <= PREVIEW_MAX_CHARS) return line;
+
+  let windowStart = Math.max(0, matchStart - PREVIEW_CONTEXT_BEFORE_CHARS);
+  let windowEnd = windowStart + PREVIEW_MAX_CHARS;
+  if (windowEnd > line.length) {
+    windowEnd = line.length;
+    windowStart = Math.max(0, windowEnd - PREVIEW_MAX_CHARS);
+  }
+  // A match longer than the window is cut too — queries are at most a few
+  // hundred chars, so this only trims pathological cases.
+
+  const prefix = windowStart > 0 ? "…" : "";
+  const suffix = windowEnd < line.length ? "…" : "";
+  return prefix + line.slice(windowStart, windowEnd) + suffix;
+}
+
 export function currentFileMatches(
   path: string,
   contents: string,
@@ -25,7 +50,7 @@ export function currentFileMatches(
       matches.push({
         path,
         lineNumber: index + 1,
-        lineText: line,
+        lineText: previewWindow(line, matchStart),
         matchStart,
         matchEnd,
       });

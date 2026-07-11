@@ -90,6 +90,46 @@ describe("current file search", () => {
     expect(matches).toHaveLength(2);
   });
 
+  it("caps preview text on a huge minified line without touching match offsets", () => {
+    // ~600KB line, needle repeated so several hundred matches land deep in it.
+    const line = `x`.repeat(300_000) + "needle" + `y`.repeat(300_000) + "needle" + "z".repeat(1000);
+    const matches = currentFileMatches("app.min.js", line, "needle");
+
+    expect(matches.length).toBeGreaterThan(0);
+    for (const match of matches) {
+      expect(match.lineText.length).toBeLessThanOrEqual(502);
+      expect(match.lineText).toContain("needle");
+      expect(match.lineText.startsWith("…")).toBe(true);
+      // Full-line offsets are untouched, still index into `line` itself.
+      expect(line.slice(match.matchStart, match.matchEnd)).toBe("needle");
+    }
+  });
+
+  it("leaves short lines untouched (no ellipsis)", () => {
+    const shortLine = "const needle = 1;".padEnd(499, " ");
+    const matches = currentFileMatches("a.ts", shortLine, "needle");
+
+    expect(matches).toHaveLength(1);
+    expect(matches[0].lineText).toBe(shortLine);
+    expect(matches[0].lineText).not.toContain("…");
+  });
+
+  it("only ellipsizes the far end when the match sits at the very start or end of a long line", () => {
+    const longLine = "needle" + "z".repeat(600);
+    const startMatches = currentFileMatches("a.ts", longLine, "needle");
+    expect(startMatches).toHaveLength(1);
+    expect(startMatches[0].lineText.startsWith("…")).toBe(false);
+    expect(startMatches[0].lineText.endsWith("…")).toBe(true);
+    expect(startMatches[0].lineText.startsWith("needle")).toBe(true);
+
+    const endLine = "z".repeat(600) + "needle";
+    const endMatches = currentFileMatches("a.ts", endLine, "needle");
+    expect(endMatches).toHaveLength(1);
+    expect(endMatches[0].lineText.startsWith("…")).toBe(true);
+    expect(endMatches[0].lineText.endsWith("…")).toBe(false);
+    expect(endMatches[0].lineText.endsWith("needle")).toBe(true);
+  });
+
   it("cycles current-file match selection in both directions", () => {
     expect(nextCurrentFileMatchIndex(-1, 1, 3)).toBe(0);
     expect(nextCurrentFileMatchIndex(0, 1, 3)).toBe(1);
