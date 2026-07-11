@@ -85,6 +85,12 @@ pub enum WorkspaceError {
 }
 
 const MAX_SEARCH_QUERY_CHARS: usize = 128;
+// A minified file can put an entire multi-hundred-KB file on one line; without a cap,
+// each match on that line would serialize the whole line to the frontend and freeze
+// the webview rendering it. match_start/match_end (into the full line) stay untouched
+// so EditorPane can still select the real match in the document.
+const SEARCH_PREVIEW_MAX_CHARS: usize = 500;
+const SEARCH_PREVIEW_CONTEXT_BEFORE_CHARS: usize = 160;
 
 #[cfg(test)]
 fn scan_workspace(
@@ -555,11 +561,36 @@ pub fn search_workspace_with_metadata(
                 break;
             }
 
-            let line_text = line.trim_end().to_string();
+            let mut ranges = case_insensitive_match_byte_ranges(line, &normalized_query);
+            if ranges.is_empty() {
+                continue;
+            }
+            // Each range becomes exactly one SearchMatch and the loop below stops at
+            // collection_limit, so ranges past the remaining capacity would only feed
+            // offset bookkeeping for matches that never ship. Drop them up front —
+            // on a huge minified line a one-letter query can produce hundreds of
+            // thousands of ranges for a 200-result page.
+            ranges.truncate(collection_limit - matches.len());
 
-            for (match_start, match_end) in
-                case_insensitive_match_byte_ranges(line, &normalized_query)
-            {
+            // One scan of the line for all its matches, rather than one scan per
+            // match_start/match_end pair (which was O(matches * line_len)).
+            let targets: Vec<usize> = ranges
+                .iter()
+                .flat_map(|&(start, end)| [start, end])
+                .collect();
+            let utf16_offsets = utf16_offsets_for_byte_indices(line, targets);
+            let utf16_offset_of = |byte_index: usize| -> usize {
+                utf16_offsets
+                    .binary_search_by_key(&byte_index, |&(byte, _)| byte)
+                    .map(|found| utf16_offsets[found].1)
+                    .expect("byte offset was included in the target set")
+            };
+
+            // Borrow, don't copy: the full line can be hundreds of KB and only
+            // the preview window ever needs an owned String.
+            let line_text = line.trim_end();
+
+            for (match_start, match_end) in ranges {
                 if matches.len() >= collection_limit {
                     break 'line_matches;
                 }
@@ -567,9 +598,9 @@ pub fn search_workspace_with_metadata(
                 matches.push(SearchMatch {
                     path: relative_path.clone(),
                     line_number: index + 1,
-                    line_text: line_text.clone(),
-                    match_start: utf16_offset_for_byte_index(line, match_start),
-                    match_end: utf16_offset_for_byte_index(line, match_end),
+                    line_text: build_search_preview(line_text, match_start),
+                    match_start: utf16_offset_of(match_start),
+                    match_end: utf16_offset_of(match_end),
                 });
             }
         }
@@ -875,12 +906,80 @@ fn is_known_binary_path(path: &Path) -> bool {
     )
 }
 
-fn utf16_offset_for_byte_index(value: &str, byte_index: usize) -> usize {
-    value
+// Maps each requested byte offset in `value` to its UTF-16 offset, scanning `value`
+// once no matter how many offsets are requested or what order they're in (match ranges
+// on one line can overlap, e.g. querying "aa" against "aaaa", so callers can't assume
+// the requested byte offsets are monotonic).
+fn utf16_offsets_for_byte_indices(value: &str, mut targets: Vec<usize>) -> Vec<(usize, usize)> {
+    targets.sort_unstable();
+    targets.dedup();
+
+    let mut offsets = Vec::with_capacity(targets.len());
+    let mut target_iter = targets.into_iter().peekable();
+    let mut utf16_len = 0usize;
+
+    for (byte_index, character) in value.char_indices() {
+        while let Some(&target) = target_iter.peek() {
+            if target > byte_index {
+                break;
+            }
+            offsets.push((target, utf16_len));
+            target_iter.next();
+        }
+        utf16_len += character.len_utf16();
+    }
+    for target in target_iter {
+        offsets.push((target, utf16_len));
+    }
+
+    offsets
+}
+
+// Caps a match's preview to SEARCH_PREVIEW_MAX_CHARS around the match start, with up to
+// SEARCH_PREVIEW_CONTEXT_BEFORE_CHARS of leading context, so a match on a huge line
+// doesn't serialize the whole line. Windows on char boundaries since `line_text` is
+// arbitrary UTF-8. `match_start_byte` is a byte offset into `line_text` (case_insensitive_
+// match_byte_ranges finds matches on char boundaries, and line_text only trims trailing
+// whitespace off the same source line, so the offset lands on a valid boundary here too).
+fn build_search_preview(line_text: &str, match_start_byte: usize) -> String {
+    // Byte length at or under the cap means the char count is too — no scan needed.
+    if line_text.len() <= SEARCH_PREVIEW_MAX_CHARS {
+        return line_text.to_string();
+    }
+    // More bytes than the cap can still be fewer chars (multi-byte text); probing
+    // one char past the cap costs at most cap+1 chars, never the whole line.
+    if line_text.chars().nth(SEARCH_PREVIEW_MAX_CHARS).is_none() {
+        return line_text.to_string();
+    }
+
+    let match_start_byte = match_start_byte.min(line_text.len());
+
+    // Walk back up to the context-before allowance: the nth char boundary behind
+    // the match start, or the line start when there's less context than that.
+    let window_start_byte = line_text[..match_start_byte]
         .char_indices()
-        .take_while(|(index, _)| *index < byte_index)
-        .map(|(_, character)| character.len_utf16())
-        .sum()
+        .rev()
+        .nth(SEARCH_PREVIEW_CONTEXT_BEFORE_CHARS - 1)
+        .map(|(index, _)| index)
+        .unwrap_or(0);
+
+    // The window ends at the char boundary SEARCH_PREVIEW_MAX_CHARS chars in, or
+    // the line end when the remainder is shorter than the window.
+    let window_end_byte = line_text[window_start_byte..]
+        .char_indices()
+        .nth(SEARCH_PREVIEW_MAX_CHARS)
+        .map(|(index, _)| window_start_byte + index)
+        .unwrap_or(line_text.len());
+
+    let mut preview = String::with_capacity(window_end_byte - window_start_byte + 6);
+    if window_start_byte > 0 {
+        preview.push('\u{2026}');
+    }
+    preview.push_str(&line_text[window_start_byte..window_end_byte]);
+    if window_end_byte < line_text.len() {
+        preview.push('\u{2026}');
+    }
+    preview
 }
 
 fn case_insensitive_match_byte_ranges(line: &str, normalized_query: &str) -> Vec<(usize, usize)> {
@@ -2283,5 +2382,65 @@ mod tests {
         let result = search_workspace(dir.path(), &query, 10, 1_000_000);
 
         assert!(matches!(result, Err(WorkspaceError::SearchQueryTooLong)));
+    }
+
+    #[test]
+    fn search_workspace_caps_preview_length_on_huge_lines() {
+        let dir = tempdir().unwrap();
+        // Four 1000-char fillers around three matches means every match's 500-char
+        // preview window sits fully inside filler on both sides, so every preview
+        // gets truncated at both ends.
+        let filler_a = "a".repeat(1000);
+        let filler_b = "b".repeat(1000);
+        let filler_c = "c".repeat(1000);
+        let filler_d = "d".repeat(1000);
+        let line = format!("{filler_a}needle{filler_b}needle{filler_c}needle{filler_d}");
+        fs::write(dir.path().join("huge.txt"), &line).unwrap();
+
+        let results = search_workspace(dir.path(), "needle", 10, 10_000_000).unwrap();
+
+        assert_eq!(results.len(), 3);
+        for result in &results {
+            let char_count = result.line_text.chars().count();
+            assert!(char_count <= 502, "preview too long: {char_count} chars");
+            assert!(result.line_text.starts_with('\u{2026}'));
+            assert!(result.line_text.ends_with('\u{2026}'));
+            assert!(result.line_text.contains("needle"));
+        }
+    }
+
+    #[test]
+    fn search_workspace_keeps_full_line_utf16_offsets_on_huge_lines() {
+        let dir = tempdir().unwrap();
+        // 1000 astral emoji before the match: 4 bytes and 2 UTF-16 units each, so byte
+        // offsets, char offsets, and UTF-16 offsets for the match all diverge, and only
+        // the UTF-16 offset should end up on the wire.
+        let emoji_prefix = "😀".repeat(1000);
+        let filler_suffix = "x".repeat(2000);
+        let line = format!("{emoji_prefix}needle{filler_suffix}");
+        fs::write(dir.path().join("huge.txt"), &line).unwrap();
+
+        let results = search_workspace(dir.path(), "needle", 10, 10_000_000).unwrap();
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].match_start, 1000 * 2);
+        assert_eq!(results[0].match_end, 1000 * 2 + "needle".len());
+    }
+
+    #[test]
+    fn search_workspace_preview_windows_safely_around_multibyte_chars() {
+        let dir = tempdir().unwrap();
+        // 4-byte emoji before the match and 2-byte é after it, so both the leading
+        // (160-char) and trailing (500-char) window cuts land next to non-ASCII runs.
+        let emoji_prefix = "😀".repeat(300);
+        let accented_suffix = "é".repeat(600);
+        let line = format!("{emoji_prefix}needle{accented_suffix}");
+        fs::write(dir.path().join("multibyte.txt"), &line).unwrap();
+
+        let results = search_workspace(dir.path(), "needle", 10, 10_000_000).unwrap();
+
+        assert_eq!(results.len(), 1);
+        assert!(results[0].line_text.contains("needle"));
+        assert!(results[0].line_text.chars().count() <= 502);
     }
 }
