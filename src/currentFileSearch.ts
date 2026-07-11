@@ -7,8 +7,17 @@ const MAX_CURRENT_FILE_MATCHES = 200;
 // webview. Cap the preview to a window around the match instead. matchStart/
 // matchEnd stay as full-line offsets (EditorPane uses them to select in the
 // real document) — only the displayed text is windowed.
-const PREVIEW_MAX_CHARS = 500;
-const PREVIEW_CONTEXT_BEFORE_CHARS = 160;
+export const PREVIEW_MAX_CHARS = 500;
+export const PREVIEW_CONTEXT_BEFORE_CHARS = 160;
+
+// True when the code unit at `index` is a low surrogate — i.e. slicing here
+// would split an astral character (emoji etc.) and leave a lone surrogate that
+// renders as a replacement character in the preview.
+function splitsSurrogatePair(line: string, index: number): boolean {
+  if (index <= 0 || index >= line.length) return false;
+  const code = line.charCodeAt(index);
+  return code >= 0xdc00 && code <= 0xdfff;
+}
 
 function previewWindow(line: string, matchStart: number): string {
   if (line.length <= PREVIEW_MAX_CHARS) return line;
@@ -21,6 +30,12 @@ function previewWindow(line: string, matchStart: number): string {
   }
   // A match longer than the window is cut too — queries are at most a few
   // hundred chars, so this only trims pathological cases.
+
+  // Nudge boundaries off the middle of surrogate pairs: skip a leading lone
+  // low surrogate, and end before a half-included pair. Both shrink the window
+  // by one unit, so the length cap still holds.
+  if (splitsSurrogatePair(line, windowStart)) windowStart += 1;
+  if (splitsSurrogatePair(line, windowEnd)) windowEnd -= 1;
 
   const prefix = windowStart > 0 ? "…" : "";
   const suffix = windowEnd < line.length ? "…" : "";

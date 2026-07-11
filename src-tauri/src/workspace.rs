@@ -561,14 +561,23 @@ pub fn search_workspace_with_metadata(
                 break;
             }
 
-            let ranges = case_insensitive_match_byte_ranges(line, &normalized_query);
+            let mut ranges = case_insensitive_match_byte_ranges(line, &normalized_query);
             if ranges.is_empty() {
                 continue;
             }
+            // Each range becomes exactly one SearchMatch and the loop below stops at
+            // collection_limit, so ranges past the remaining capacity would only feed
+            // offset bookkeeping for matches that never ship. Drop them up front —
+            // on a huge minified line a one-letter query can produce hundreds of
+            // thousands of ranges for a 200-result page.
+            ranges.truncate(collection_limit - matches.len());
 
             // One scan of the line for all its matches, rather than one scan per
             // match_start/match_end pair (which was O(matches * line_len)).
-            let targets: Vec<usize> = ranges.iter().flat_map(|&(start, end)| [start, end]).collect();
+            let targets: Vec<usize> = ranges
+                .iter()
+                .flat_map(|&(start, end)| [start, end])
+                .collect();
             let utf16_offsets = utf16_offsets_for_byte_indices(line, targets);
             let utf16_offset_of = |byte_index: usize| -> usize {
                 utf16_offsets
@@ -938,30 +947,22 @@ fn build_search_preview(line_text: &str, total_chars: usize, match_start_byte: u
 
     let match_start_byte = match_start_byte.min(line_text.len());
 
-    let mut window_start_byte = match_start_byte;
-    let mut before_chars = 0;
-    while window_start_byte > 0 && before_chars < SEARCH_PREVIEW_CONTEXT_BEFORE_CHARS {
-        window_start_byte -= 1;
-        while !line_text.is_char_boundary(window_start_byte) {
-            window_start_byte -= 1;
-        }
-        before_chars += 1;
-    }
+    // Walk back up to the context-before allowance: the nth char boundary behind
+    // the match start, or the line start when there's less context than that.
+    let window_start_byte = line_text[..match_start_byte]
+        .char_indices()
+        .rev()
+        .nth(SEARCH_PREVIEW_CONTEXT_BEFORE_CHARS - 1)
+        .map(|(index, _)| index)
+        .unwrap_or(0);
 
-    let mut window_end_byte = window_start_byte;
-    let mut window_chars = 0;
-    while window_end_byte < line_text.len() && window_chars < SEARCH_PREVIEW_MAX_CHARS {
-        let char_len = line_text[window_end_byte..]
-            .chars()
-            .next()
-            .map(char::len_utf8)
-            .unwrap_or(0);
-        if char_len == 0 {
-            break;
-        }
-        window_end_byte += char_len;
-        window_chars += 1;
-    }
+    // The window ends at the char boundary SEARCH_PREVIEW_MAX_CHARS chars in, or
+    // the line end when the remainder is shorter than the window.
+    let window_end_byte = line_text[window_start_byte..]
+        .char_indices()
+        .nth(SEARCH_PREVIEW_MAX_CHARS)
+        .map(|(index, _)| window_start_byte + index)
+        .unwrap_or(line_text.len());
 
     let mut preview = String::with_capacity(window_end_byte - window_start_byte + 6);
     if window_start_byte > 0 {

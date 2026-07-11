@@ -3,6 +3,7 @@ import {
   currentFileMatches,
   currentFileResultWindow,
   nextCurrentFileMatchIndex,
+  PREVIEW_CONTEXT_BEFORE_CHARS,
 } from "./currentFileSearch";
 
 describe("current file search", () => {
@@ -91,7 +92,8 @@ describe("current file search", () => {
   });
 
   it("caps preview text on a huge minified line without touching match offsets", () => {
-    // ~600KB line, needle repeated so several hundred matches land deep in it.
+    // ~600KB line with two needle occurrences, both deep enough that every
+    // preview window sits fully inside filler on both sides.
     const line = `x`.repeat(300_000) + "needle" + `y`.repeat(300_000) + "needle" + "z".repeat(1000);
     const matches = currentFileMatches("app.min.js", line, "needle");
 
@@ -128,6 +130,29 @@ describe("current file search", () => {
     expect(endMatches[0].lineText.startsWith("…")).toBe(true);
     expect(endMatches[0].lineText.endsWith("…")).toBe(false);
     expect(endMatches[0].lineText.endsWith("needle")).toBe(true);
+  });
+
+  it("never splits a surrogate pair at a preview window edge", () => {
+    const loneSurrogate =
+      /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
+
+    // Window start lands mid-emoji: the emoji sits exactly where the 160-unit
+    // lookback boundary falls, one unit into the pair.
+    const startSplit =
+      "a".repeat(200) + "😀" + "b".repeat(PREVIEW_CONTEXT_BEFORE_CHARS - 1) + "needle" + "c".repeat(600);
+    // Window end lands mid-emoji: pad so the 500-unit window ends one unit
+    // into the pair.
+    const endPad = 500 - (PREVIEW_CONTEXT_BEFORE_CHARS + "needle".length) - 1;
+    const endSplit =
+      "a".repeat(400) + "needle" + "b".repeat(endPad) + "😀" + "c".repeat(600);
+
+    for (const line of [startSplit, endSplit]) {
+      const matches = currentFileMatches("emoji.txt", line, "needle");
+      expect(matches).toHaveLength(1);
+      expect(matches[0].lineText.length).toBeLessThanOrEqual(502);
+      expect(matches[0].lineText).toContain("needle");
+      expect(loneSurrogate.test(matches[0].lineText)).toBe(false);
+    }
   });
 
   it("cycles current-file match selection in both directions", () => {
