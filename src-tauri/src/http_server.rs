@@ -1429,7 +1429,11 @@ async fn workspaces(State(state): State<HttpServerState>) -> Json<Vec<WorkspaceS
 /// ponytail: one hidden webview per browsed repo — a fully windowless HTTP-only
 /// session is a follow-up if browse ever needs to scale past a handful open at once.
 async fn browse(app: tauri::AppHandle, state: HttpServerState, query: BrowseQuery) -> Response {
-    let target = match launch_target_for_path(PathBuf::from(query.path)) {
+    let path = PathBuf::from(query.path);
+    if !path.is_absolute() {
+        return ApiError::bad_request("path must be absolute".to_string()).into_response();
+    }
+    let target = match launch_target_for_path(path) {
         Ok(target) => target,
         Err(error) => return ApiError::bad_request(error.to_string()).into_response(),
     };
