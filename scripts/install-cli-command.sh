@@ -83,8 +83,63 @@ activate_running_app() {
   open -b "com.gordonbeeming.ide" >/dev/null 2>&1 || true
 }
 
+# Percent-encodes a path for the /browse?path= query string (spaces, etc). Pure bash
+# so browse doesn't need curl's --data-urlencode just to build a URL.
+url_encode() {
+  # LC_ALL=C forces byte-wise iteration regardless of the caller's locale, and the
+  # printf-based char-to-int conversion sign-extends bytes >= 0x80 (bash 3.2's builtin
+  # printf, still the default /bin/bash on macOS) — masking with & 0xFF undoes that so
+  # multi-byte UTF-8 paths percent-encode correctly.
+  local LC_ALL=C
+  local string="\$1"
+  local length="\${#string}" i char
+  for (( i = 0; i < length; i++ )); do
+    char="\${string:i:1}"
+    case "\$char" in
+      [a-zA-Z0-9.~_-]) printf '%s' "\$char" ;;
+      *) printf '%%%02X' "\$(( \$(printf '%d' "'\$char") & 0xFF ))" ;;
+    esac
+  done
+}
+
+resolve_absolute_path() {
+  local path="\$1"
+  if [ -d "\$path" ]; then
+    (cd "\$path" && pwd -P)
+  else
+    printf '%s/%s' "\$(cd "\$(dirname "\$path")" && pwd -P)" "\$(basename "\$path")"
+  fi
+}
+
 if [ "\$#" -eq 0 ] && running_app_reachable; then
   activate_running_app
+  exit 0
+fi
+
+if [ "\${1:-}" = "browse" ]; then
+  if [ "\$#" -lt 2 ] || [ ! -e "\$2" ]; then
+    echo "Usage: ide browse <path>" >&2
+    exit 1
+  fi
+  browse_path="\$(resolve_absolute_path "\$2")"
+  browse_url="http://127.0.0.1:17877/browse?path=\$(url_encode "\$browse_path")"
+
+  if ! running_app_reachable; then
+    # Cold start: boot the bundle headless (no visible window — see lib.rs's
+    # IDE_BROWSE_PATH handling) and wait for the HTTP server before hitting /browse.
+    IDE_BROWSE_PATH="\$browse_path" open "\$APP_BUNDLE" --args browse "\$browse_path" >/dev/null 2>&1
+    attempts=0
+    until running_app_reachable; do
+      attempts=\$((attempts + 1))
+      if [ "\$attempts" -ge 50 ]; then
+        echo "ide browse: timed out waiting for the app to start" >&2
+        exit 1
+      fi
+      sleep 0.2
+    done
+  fi
+
+  open "\$browse_url" >/dev/null 2>&1 &
   exit 0
 fi
 

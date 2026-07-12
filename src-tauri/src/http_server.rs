@@ -7,7 +7,7 @@ use std::{fmt, io};
 use axum::extract::{Query, State};
 use axum::http::{header, HeaderMap, HeaderValue, Request, StatusCode, Uri};
 use axum::middleware::{self, Next};
-use axum::response::{Html, IntoResponse, Response};
+use axum::response::{Html, IntoResponse, Redirect, Response};
 use axum::routing::{get, post};
 use axum::{Extension, Json, Router};
 use serde::{Deserialize, Serialize};
@@ -27,7 +27,8 @@ use crate::workspace::{
 };
 use crate::workspace_index::{advance_workspace_index, WorkspaceIndex, WorkspaceIndexAdvanceError};
 use crate::{
-    git_attribution, git_commit, git_sync, workspace_root_hash, AgentContext, WorkspaceSessionState,
+    git_attribution, git_commit, git_sync, launch_target_for_path, open_launch_target_window,
+    workspace_root_hash, AgentContext, LaunchTarget, WorkspaceSessionState,
 };
 
 #[derive(Clone)]
@@ -189,6 +190,12 @@ struct OpenPathRequest {
     path: String,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct BrowseQuery {
+    path: String,
+}
+
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 struct OpenWorkspaceEvent {
@@ -252,6 +259,7 @@ pub async fn start_http_server(config: HttpServerConfig) -> Result<HttpServerInf
     let resolve_state = state.clone();
     let open_path_app = app_handle.clone();
     let open_path_token = mcp_token.clone();
+    let browse_app = app_handle.clone();
     let app = Router::new()
         .route("/api/workspace-root", get(workspace_root))
         .route("/api/workspace-display", get(workspace_display))
@@ -320,6 +328,15 @@ pub async fn start_http_server(config: HttpServerConfig) -> Result<HttpServerInf
         .route("/api/lsp", get(lsp_servers))
         .route("/api/codex-mcp", get(codex_mcp_status))
         .route("/api/workspaces", get(workspaces))
+        .route(
+            "/browse",
+            get(
+                move |State(state): State<HttpServerState>, Query(query): Query<BrowseQuery>| {
+                    let app = browse_app.clone();
+                    async move { browse(app, state, query).await }
+                },
+            ),
+        )
         .route("/mcp", post(codex_mcp).options(cors_preflight))
         .route("/", get(index))
         .route("/{*path}", get(static_file).options(cors_preflight))
@@ -1399,6 +1416,60 @@ async fn workspace_summaries(
 
 async fn workspaces(State(state): State<HttpServerState>) -> Json<Vec<WorkspaceSummary>> {
     Json(workspace_summaries(&state.window_sessions).await)
+}
+
+/// `GET /browse?path=<abs>` — the landing point for `ide browse`. Ensures a (possibly
+/// hidden) session exists for `path`, then redirects into its scoped SPA, so a plain
+/// `open <url>` from bash is enough to land a browser tab on the right workspace
+/// without the launcher ever needing to reproduce `workspace_root_hash`. On a cold
+/// start `path` is usually already open as the hidden `main` session (see
+/// `is_browse_launch` in lib.rs), so this only creates a new window for a *second*
+/// browsed repo.
+///
+/// ponytail: one hidden webview per browsed repo — a fully windowless HTTP-only
+/// session is a follow-up if browse ever needs to scale past a handful open at once.
+async fn browse(app: tauri::AppHandle, state: HttpServerState, query: BrowseQuery) -> Response {
+    let path = PathBuf::from(query.path);
+    if !path.is_absolute() {
+        return ApiError::bad_request("path must be absolute".to_string()).into_response();
+    }
+    let target = match launch_target_for_path(path) {
+        Ok(target) => target,
+        Err(error) => return ApiError::bad_request(error.to_string()).into_response(),
+    };
+    let hash = workspace_root_hash(&target.workspace_root);
+
+    let already_open = resolve_workspace_by_hash(&state.window_sessions, &hash)
+        .await
+        .is_some();
+    if !already_open {
+        if let Err(error) = open_hidden_workspace_window(app, target).await {
+            return ApiError::internal(format!("failed to open background session: {error}"))
+                .into_response();
+        }
+    }
+
+    Redirect::to(&format!("/{hash}/")).into_response()
+}
+
+/// Builds the hidden background window for a browse session on the main thread —
+/// `WebviewWindowBuilder::build` requires it, and this handler runs on a tokio worker
+/// thread, unlike `open_launch_target_window`'s other two callers (the single-instance
+/// callback and the menu-event handler), which Tauri already runs on the main thread.
+async fn open_hidden_workspace_window(
+    app: tauri::AppHandle,
+    target: LaunchTarget,
+) -> Result<(), String> {
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    let main_thread_app = app.clone();
+    app.run_on_main_thread(move || {
+        let result = open_launch_target_window(&main_thread_app, target, false)
+            .map_err(|error| error.to_string());
+        let _ = tx.send(result);
+    })
+    .map_err(|error| error.to_string())?;
+    rx.await
+        .map_err(|_| "main-thread task ended without a result".to_string())?
 }
 
 async fn index(
