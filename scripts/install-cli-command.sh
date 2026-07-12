@@ -86,13 +86,18 @@ activate_running_app() {
 # Percent-encodes a path for the /browse?path= query string (spaces, etc). Pure bash
 # so browse doesn't need curl's --data-urlencode just to build a URL.
 url_encode() {
+  # LC_ALL=C forces byte-wise iteration regardless of the caller's locale, and the
+  # printf-based char-to-int conversion sign-extends bytes >= 0x80 (bash 3.2's builtin
+  # printf, still the default /bin/bash on macOS) — masking with & 0xFF undoes that so
+  # multi-byte UTF-8 paths percent-encode correctly.
+  local LC_ALL=C
   local string="\$1"
   local length="\${#string}" i char
   for (( i = 0; i < length; i++ )); do
     char="\${string:i:1}"
     case "\$char" in
       [a-zA-Z0-9.~_-]) printf '%s' "\$char" ;;
-      *) printf '%%%02X' "'\$char" ;;
+      *) printf '%%%02X' "\$(( \$(printf '%d' "'\$char") & 0xFF ))" ;;
     esac
   done
 }

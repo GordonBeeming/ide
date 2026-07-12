@@ -1795,11 +1795,14 @@ export default function App() {
       setOpenFiles((current) => {
         const kept = current.filter((file) => !file.diff);
         if (kept.length === current.length) return current;
-        setActivePath((currentActivePath) =>
-          currentActivePath && kept.some((file) => file.path === currentActivePath)
-            ? currentActivePath
-            : kept.at(-1)?.path,
-        );
+        // Deferred so this updater stays pure — no nested setState calls during render.
+        queueMicrotask(() => {
+          setActivePath((currentActivePath) =>
+            currentActivePath && kept.some((file) => file.path === currentActivePath)
+              ? currentActivePath
+              : kept.at(-1)?.path,
+          );
+        });
         return kept;
       });
       await refreshGitStatus();
