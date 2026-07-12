@@ -2883,11 +2883,13 @@ fn resolve_explicit_launch_target() -> Result<Option<LaunchTarget>, std::io::Err
         return launch_target_for_path(PathBuf::from(path)).map(Some);
     }
 
-    if let Some(path) = std::env::args_os()
-        .skip(1)
-        .map(PathBuf::from)
-        .find(|path| path.exists())
-    {
+    let mut args = std::env::args_os().skip(1).peekable();
+    // A leading "browse" token is the subcommand marker, not a path — skip it so a
+    // `./browse` directory in cwd can't be mistaken for the target (see is_browse_launch).
+    if args.peek().map(|arg| arg.as_os_str()) == Some(std::ffi::OsStr::new("browse")) {
+        args.next();
+    }
+    if let Some(path) = args.map(PathBuf::from).find(|path| path.exists()) {
         return launch_target_for_path(path).map(Some);
     }
 
@@ -2898,10 +2900,10 @@ fn resolve_explicit_launch_target() -> Result<Option<LaunchTarget>, std::io::Err
 /// leading `browse` argv token) — `run()` uses this to keep the auto-created `main`
 /// window hidden. The browsed path itself doesn't need extracting here:
 /// `resolve_explicit_launch_target`'s existing `IDE_OPEN_PATH`/argv scan already
-/// finds the same path (the token after `browse` is just the first argv entry that
-/// exists on disk) and roots `main`'s session in it, so hiding `main` is the only
-/// extra work a browse cold start needs. `http_server.rs`'s `/browse` route handles
-/// session creation for the warm (already-running) case.
+/// skips that same leading `browse` token and finds the path after it, rooting
+/// `main`'s session there — so hiding `main` is the only extra work a browse cold
+/// start needs. `http_server.rs`'s `/browse` route handles session creation for the
+/// warm (already-running) case.
 fn is_browse_launch() -> bool {
     std::env::var_os("IDE_BROWSE_PATH").is_some_and(|value| !value.is_empty())
         || std::env::args_os().nth(1).as_deref() == Some(std::ffi::OsStr::new("browse"))

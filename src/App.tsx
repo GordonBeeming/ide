@@ -1792,19 +1792,16 @@ export default function App() {
       // Every open diff tab (pinned or not) reflects the pre-commit working
       // tree, so it's stale the instant the commit lands — unlike the
       // leave-commit-mode cleanup above, a pin doesn't save it here.
-      setOpenFiles((current) => {
-        const kept = current.filter((file) => !file.diff);
-        if (kept.length === current.length) return current;
-        // Deferred so this updater stays pure — no nested setState calls during render.
-        queueMicrotask(() => {
-          setActivePath((currentActivePath) =>
-            currentActivePath && kept.some((file) => file.path === currentActivePath)
-              ? currentActivePath
-              : kept.at(-1)?.path,
-          );
-        });
-        return kept;
-      });
+      const openBeforeCleanup = openFilesRef.current;
+      const kept = openBeforeCleanup.filter((file) => !file.diff);
+      if (kept.length !== openBeforeCleanup.length) {
+        setOpenFiles(kept);
+        setActivePath((currentActivePath) =>
+          currentActivePath && kept.some((file) => file.path === currentActivePath)
+            ? currentActivePath
+            : kept.at(-1)?.path,
+        );
+      }
       await refreshGitStatus();
     } catch (reason) {
       setGitCommitError(`Unable to commit: ${String(reason)}`);
