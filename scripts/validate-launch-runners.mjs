@@ -106,6 +106,14 @@ try {
   assertIncludes(ideCommand, "activate_running_app()");
   assertIncludes(ideCommand, 'tell application id "com.gordonbeeming.ide" to activate');
   assertIncludes(ideCommand, 'if [ "$#" -eq 0 ] && running_app_reachable; then');
+  assertIncludes(ideCommand, 'url_encode()');
+  assertIncludes(ideCommand, 'resolve_absolute_path()');
+  assertIncludes(ideCommand, 'if [ "${1:-}" = "browse" ]; then');
+  assertIncludes(ideCommand, 'browse_url="http://127.0.0.1:17877/browse?path=$(url_encode "$browse_path")"');
+  assertIncludes(ideCommand, 'IDE_BROWSE_PATH="$browse_path" open "$APP_BUNDLE" --args browse "$browse_path"');
+  assertIncludes(ideCommand, 'until running_app_reachable; do');
+  assertIncludes(ideCommand, 'open "$browse_url" >/dev/null 2>&1 &');
+  assertOrdered(ideCommand, 'if [ "${1:-}" = "browse" ]; then', 'ARGS=()');
   assertIncludes(ideCommand, 'ARGS=()');
   assertIncludes(ideCommand, 'ARGS+=("$(cd "$arg" && pwd -P)")');
   assertIncludes(ideCommand, 'if [ "${#ARGS[@]}" -gt 0 ]; then');
@@ -114,7 +122,9 @@ try {
   assertIncludes(ideCommand, 'open "$APP_BUNDLE" --args "${ARGS[@]}" >/dev/null 2>&1 &');
   assertIncludes(ideCommand, 'open "$APP_BUNDLE" >/dev/null 2>&1 &');
   assertNotIncludes(ideCommand, "open -n");
-  assertOrdered(ideCommand, '"$APP_BINARY" "${ARGS[@]}"', 'open "$APP_BUNDLE" --args');
+  // Fully qualified so this doesn't collide with the earlier browse-branch
+  // `open "$APP_BUNDLE" --args browse ...` line, which shares the same prefix.
+  assertOrdered(ideCommand, '"$APP_BINARY" "${ARGS[@]}"', 'open "$APP_BUNDLE" --args "${ARGS[@]}"');
   assertSymlinkTarget(path.join(cliBinDir, "ide-dev"), runScriptPath, "ide-dev command");
 
   execFileSync("bash", [cliInstallScript], {

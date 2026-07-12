@@ -52,6 +52,8 @@ The build script runs `npm run tauri -- build --bundles app`, then installs comm
 
 The installer writes `ide` as a small macOS `open` launcher for the packaged app bundle and links `ide-dev` to `run.sh`. Use `ide .` when the packaged app should open or focus a workspace window without holding the terminal; use bare `ide` to focus a running app or open the last context; and use `ide-dev .` when the repository dev runner should manage Node dependencies, Vite, stale dev ports, and running-app handoff behavior. Set `IDE_CLI_APP_BUNDLE_PATH=/path/to/ide.app` when installing if the command should target a different packaged bundle.
 
+`ide browse <path>` opens a repo in the default browser instead of a native window. If no instance is running yet, it starts one in the background, HTTP server up but no window on screen, and gives the target repo its own hidden session. If an instance is already running, it reuses it the same way, so several repos can be browsed at once without any of them showing a window or stealing focus. Closing a visible ide window doesn't stop a background browse session; only quitting the app (⌘Q) does.
+
 Install the macOS Finder Quick Action:
 
 ```bash

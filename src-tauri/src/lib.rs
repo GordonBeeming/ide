@@ -1580,6 +1580,7 @@ fn resolve_frontend_dist(resource_dir: Option<PathBuf>, manifest_dist: PathBuf) 
 pub fn run() {
     let explicit_launch_target =
         resolve_explicit_launch_target().expect("failed to determine requested launch target");
+    let browse_launch_requested = is_browse_launch();
     let initial_launch_target = explicit_launch_target.clone().unwrap_or_else(|| {
         fallback_launch_target_from_process_dir()
             .expect("failed to determine current workspace directory")
@@ -1631,7 +1632,7 @@ pub fn run() {
         .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
             match explicit_launch_target_from_args(&args) {
                 Ok(Some(target)) => {
-                    if let Err(error) = open_launch_target_window(app, target) {
+                    if let Err(error) = open_launch_target_window(app, target, true) {
                         let _ = app.emit("app://error", error.to_string());
                     }
                 }
@@ -1748,6 +1749,14 @@ pub fn run() {
                 .map_err(|error| std::io::Error::other(error.to_string()))?;
             rebuild_app_menu(app.handle(), &http_state)
                 .map_err(|error| std::io::Error::other(error.to_string()))?;
+
+            if browse_launch_requested {
+                // main's session is already rooted at the browsed repo (see
+                // is_browse_launch's doc comment) — just keep it off-screen.
+                if let Some(main_window) = app.get_webview_window("main") {
+                    let _ = main_window.hide();
+                }
+            }
 
             let workspace_root = http_state.workspace_root.clone();
             let tree_scan_limit = http_state.tree_scan_limit.clone();
@@ -2864,9 +2873,9 @@ fn last_segment(path: &Path) -> Option<String> {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct LaunchTarget {
-    workspace_root: PathBuf,
-    initial_file: Option<String>,
+pub(crate) struct LaunchTarget {
+    pub(crate) workspace_root: PathBuf,
+    pub(crate) initial_file: Option<String>,
 }
 
 fn resolve_explicit_launch_target() -> Result<Option<LaunchTarget>, std::io::Error> {
@@ -2883,6 +2892,19 @@ fn resolve_explicit_launch_target() -> Result<Option<LaunchTarget>, std::io::Err
     }
 
     Ok(None)
+}
+
+/// Whether this cold start is `ide browse <path>` (`IDE_BROWSE_PATH` set, or a
+/// leading `browse` argv token) — `run()` uses this to keep the auto-created `main`
+/// window hidden. The browsed path itself doesn't need extracting here:
+/// `resolve_explicit_launch_target`'s existing `IDE_OPEN_PATH`/argv scan already
+/// finds the same path (the token after `browse` is just the first argv entry that
+/// exists on disk) and roots `main`'s session in it, so hiding `main` is the only
+/// extra work a browse cold start needs. `http_server.rs`'s `/browse` route handles
+/// session creation for the warm (already-running) case.
+fn is_browse_launch() -> bool {
+    std::env::var_os("IDE_BROWSE_PATH").is_some_and(|value| !value.is_empty())
+        || std::env::args_os().nth(1).as_deref() == Some(std::ffi::OsStr::new("browse"))
 }
 
 fn fallback_launch_target_from_process_dir() -> Result<LaunchTarget, std::io::Error> {
@@ -2933,7 +2955,7 @@ fn launch_target_for_saved_workspace(path: &str) -> Option<LaunchTarget> {
     })
 }
 
-fn launch_target_for_path(path: PathBuf) -> Result<LaunchTarget, std::io::Error> {
+pub(crate) fn launch_target_for_path(path: PathBuf) -> Result<LaunchTarget, std::io::Error> {
     let canonical = path.canonicalize()?;
     if canonical.is_dir() {
         return Ok(LaunchTarget {
@@ -3045,13 +3067,21 @@ pub(crate) fn workspace_root_hash(path: &Path) -> String {
     format!("{:x}", hasher.finish())
 }
 
-fn open_launch_target_window(
+/// `visible = false` is how `ide browse` gets a session without a screen presence:
+/// same label/session-registration/dedupe path as a normal window open, just built
+/// hidden and left unfocused. An existing window is only touched (focused) when the
+/// caller wants visibility — re-resolving an already-hidden browse session with
+/// `visible = false` is a no-op, so repeat browses don't steal focus or flash a window.
+pub(crate) fn open_launch_target_window(
     app: &tauri::AppHandle,
     target: LaunchTarget,
+    visible: bool,
 ) -> Result<(), tauri::Error> {
     let label = launch_target_window_label(&target);
     if let Some(window) = app.get_webview_window(&label) {
-        focus_window(&window);
+        if visible {
+            focus_window(&window);
+        }
         return Ok(());
     }
 
@@ -3065,6 +3095,7 @@ fn open_launch_target_window(
     .title("ide")
     .inner_size(1440.0, 960.0)
     .min_inner_size(960.0, 640.0)
+    .visible(visible)
     .build()
     {
         Ok(window) => window,
@@ -3073,7 +3104,9 @@ fn open_launch_target_window(
             return Err(error);
         }
     };
-    focus_window(&window);
+    if visible {
+        focus_window(&window);
+    }
     Ok(())
 }
 
@@ -3092,7 +3125,7 @@ fn open_launch_request_window(app: &tauri::AppHandle, request: OpenLaunchRequest
             initial_file: Some(path),
         },
     };
-    if let Err(error) = open_launch_target_window(app, target) {
+    if let Err(error) = open_launch_target_window(app, target, true) {
         let _ = app.emit("app://error", error.to_string());
     }
 }
