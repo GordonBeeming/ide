@@ -1441,7 +1441,18 @@ export default function App() {
             const validPaths = new Set(status.files.map((file) => file.path));
             if (!gitStatusInitializedRef.current) {
               gitStatusInitializedRef.current = true;
-              return validPaths;
+              // Re-entering commit mode: remember the prior selection instead of
+              // always selecting everything. Prune to paths still valid, then
+              // collapse to "select all" only when nothing survived (first-ever
+              // entry, or the user had deselected everything) or everything did
+              // (prior selection was already "all") — a genuine partial selection
+              // is preserved exactly.
+              const pruned = new Set<string>();
+              for (const path of current) {
+                if (validPaths.has(path)) pruned.add(path);
+              }
+              if (pruned.size === 0 || pruned.size === validPaths.size) return validPaths;
+              return pruned;
             }
             const next = new Set<string>();
             for (const path of current) {
@@ -1778,6 +1789,19 @@ export default function App() {
       const result = await commitGitChanges(trimmedMessage, selectedPaths);
       setGitCommitMessage("");
       setGitCommitSuccess(`Committed ${result.committedPaths.length} file(s) as ${result.shortSha}`);
+      // Every open diff tab (pinned or not) reflects the pre-commit working
+      // tree, so it's stale the instant the commit lands — unlike the
+      // leave-commit-mode cleanup above, a pin doesn't save it here.
+      setOpenFiles((current) => {
+        const kept = current.filter((file) => !file.diff);
+        if (kept.length === current.length) return current;
+        setActivePath((currentActivePath) =>
+          currentActivePath && kept.some((file) => file.path === currentActivePath)
+            ? currentActivePath
+            : kept.at(-1)?.path,
+        );
+        return kept;
+      });
       await refreshGitStatus();
     } catch (reason) {
       setGitCommitError(`Unable to commit: ${String(reason)}`);

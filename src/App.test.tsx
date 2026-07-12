@@ -4764,6 +4764,59 @@ describe("Git commit sidebar", () => {
     expect(within(panel).getByPlaceholderText("Commit message")).toHaveValue("");
   });
 
+  it("remembers a partial selection across leaving and re-entering commit mode", async () => {
+    render(<App />);
+
+    expect(await treeButton("README.md")).toBeInTheDocument();
+    fireEvent.click(screen.getByTitle("Source control"));
+
+    let panel = await screen.findByLabelText("Git commit panel");
+    await waitFor(() => expect(within(panel).getByText("2 / 2")).toBeInTheDocument());
+
+    fireEvent.click(within(panel).getByLabelText("Deselect src/App.tsx"));
+    await waitFor(() => expect(within(panel).getByText("1 / 2")).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole("button", { name: "Files" }));
+    await waitFor(() =>
+      expect(screen.queryByLabelText("Git commit panel")).not.toBeInTheDocument(),
+    );
+
+    // Re-entering re-fetches status; the file set is unchanged (persistent
+    // default mock), so the partial selection should survive as-is rather
+    // than reset to "all".
+    fireEvent.click(screen.getByTitle("Source control"));
+    panel = await screen.findByLabelText("Git commit panel");
+    await waitFor(() => expect(within(panel).getByText("1 / 2")).toBeInTheDocument());
+    expect(
+      (within(panel).getByLabelText("Select src/App.tsx") as HTMLInputElement).checked,
+    ).toBe(false);
+  });
+
+  it("collapses to select-all on re-entry when the remembered selection is empty", async () => {
+    render(<App />);
+
+    expect(await treeButton("README.md")).toBeInTheDocument();
+    fireEvent.click(screen.getByTitle("Source control"));
+
+    let panel = await screen.findByLabelText("Git commit panel");
+    await waitFor(() => expect(within(panel).getByText("2 / 2")).toBeInTheDocument());
+
+    fireEvent.click(within(panel).getByLabelText("Deselect all changes"));
+    await waitFor(() => expect(within(panel).getByText("0 / 2")).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole("button", { name: "Files" }));
+    await waitFor(() =>
+      expect(screen.queryByLabelText("Git commit panel")).not.toBeInTheDocument(),
+    );
+
+    // A remembered "nothing selected" is indistinguishable from a fresh
+    // first-ever entry, so re-entry falls back to selecting everything
+    // rather than reopening the panel with nothing checked.
+    fireEvent.click(screen.getByTitle("Source control"));
+    panel = await screen.findByLabelText("Git commit panel");
+    await waitFor(() => expect(within(panel).getByText("2 / 2")).toBeInTheDocument());
+  });
+
   it("commits when Cmd/Ctrl+Enter is pressed in the message textarea", async () => {
     render(<App />);
 
@@ -4902,6 +4955,39 @@ describe("Git commit sidebar", () => {
 
     await waitFor(() => expect(tabButton("src/App.tsx (Working Tree)")).toBeUndefined());
     expect(tabButton("README.md (Working Tree)")).toBeTruthy();
+  });
+
+  it("closes diff tabs after a successful commit, even pinned ones", async () => {
+    render(<App />);
+
+    expect(await treeButton("README.md")).toBeInTheDocument();
+    fireEvent.click(screen.getByTitle("Source control"));
+
+    const panel = await screen.findByLabelText("Git commit panel");
+    const readmeRow = await within(panel).findByText("README.md");
+    fireEvent.click(readmeRow.closest("button")!);
+    await screen.findByLabelText("Diff README.md");
+    // Pin it — a pin survives leaving commit mode, but a post-commit diff is
+    // stale regardless of pin state, so it must still close here.
+    await waitFor(() => expect(tabButton("README.md (Working Tree)")).toBeTruthy());
+    fireEvent.doubleClick(tabButton("README.md (Working Tree)")!);
+
+    fireEvent.change(within(panel).getByPlaceholderText("Commit message"), {
+      target: { value: "Update readme" },
+    });
+    tauriMocks.getGitStatus.mockResolvedValueOnce({
+      status: "available",
+      branch: "main",
+      headDetached: false,
+      headUnborn: false,
+      files: [{ path: "src/App.tsx", status: "modified", staged: true, unstaged: false }],
+    });
+    fireEvent.click(within(panel).getByRole("button", { name: /^Commit/ }));
+
+    await waitFor(() =>
+      expect(within(panel).getByText(/Committed \d+ file\(s\) as abc1234/)).toBeInTheDocument(),
+    );
+    expect(tabButton("README.md (Working Tree)")).toBeUndefined();
   });
 
   it("shows Git status badges and a folder dot in the main tree outside commit mode", async () => {
