@@ -1124,11 +1124,38 @@ async fn codex_mcp_status(
         .get(header::HOST)
         .and_then(|value| value.to_str().ok())
         .unwrap_or("127.0.0.1:17877");
+    let host = canonical_loopback_host(host);
 
     Json(CodexMcpStatus {
         endpoint: format!("http://{host}/mcp"),
         bearer_token: state.mcp_token.clone(),
     })
+}
+
+// `ide browse` opens the SPA on `localhost` so cmux's open() whitelist catches it, so a
+// request's Host header can legitimately read "localhost:PORT". The server only binds
+// IPv4 loopback, and every other endpoint this app hands out (launcher scripts, the
+// copyable browser endpoint) deliberately stays on 127.0.0.1 to avoid the ::1/proxy
+// pitfalls — so the MCP endpoint we report back is canonicalized the same way, keeping
+// whatever port the client actually connected on (it may not be the default 17877 if
+// that port was taken and the server fell back to an OS-assigned one).
+//
+// The Host header is client-controlled input, not a trusted value, so the port is
+// parsed rather than copied verbatim. Un-parsed, a header like
+// "localhost:17877@attacker.example" would round-trip into
+// "http://127.0.0.1:17877@attacker.example/mcp" — a URL parsers treat as pointing at
+// attacker.example (the userinfo before an `@` is ignored). The IPv6 hostname is
+// never propagated either way — only 127.0.0.1 ever goes out — but the port parse
+// still matters there: rsplit_once(':') mis-splits a bracketed "[::1]" (no port) and
+// the malformed suffix falls back to the default, while "[::1]:17877" splits cleanly
+// and its real port is kept.
+fn canonical_loopback_host(host: &str) -> String {
+    let port = host
+        .rsplit_once(':')
+        .and_then(|(_, port)| port.parse::<u16>().ok())
+        .filter(|port| *port != 0)
+        .unwrap_or(17877);
+    format!("127.0.0.1:{port}")
 }
 
 #[derive(Debug, Deserialize)]
@@ -2966,5 +2993,32 @@ mod tests {
 
         assert!(!body.contains("<script>"));
         assert!(body.contains("&lt;script&gt;"));
+    }
+
+    #[test]
+    fn canonical_loopback_host_replaces_hostname_keeps_port() {
+        assert_eq!(
+            canonical_loopback_host("localhost:17877"),
+            "127.0.0.1:17877"
+        );
+        assert_eq!(
+            canonical_loopback_host("127.0.0.1:17877"),
+            "127.0.0.1:17877"
+        );
+        // Falls back to the default port when the header has no port at all.
+        assert_eq!(canonical_loopback_host("localhost"), "127.0.0.1:17877");
+        // ...or when the port suffix doesn't parse as a valid non-zero u16.
+        assert_eq!(canonical_loopback_host("localhost:"), "127.0.0.1:17877");
+        assert_eq!(canonical_loopback_host("localhost:abc"), "127.0.0.1:17877");
+        assert_eq!(canonical_loopback_host("localhost:0"), "127.0.0.1:17877");
+        // A malicious Host header can't smuggle a userinfo/host through the port slot —
+        // the suffix has to parse as a port, so it falls back to the default.
+        assert_eq!(
+            canonical_loopback_host("localhost:17877@attacker.example"),
+            "127.0.0.1:17877"
+        );
+        // rsplit_once(':') would otherwise mis-split inside IPv6 brackets.
+        assert_eq!(canonical_loopback_host("[::1]:17877"), "127.0.0.1:17877");
+        assert_eq!(canonical_loopback_host("[::1]"), "127.0.0.1:17877");
     }
 }

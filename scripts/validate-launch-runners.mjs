@@ -109,7 +109,7 @@ try {
   assertIncludes(ideCommand, 'url_encode()');
   assertIncludes(ideCommand, 'resolve_absolute_path()');
   assertIncludes(ideCommand, 'if [ "${1:-}" = "browse" ]; then');
-  assertIncludes(ideCommand, 'browse_url="http://127.0.0.1:17877/browse?path=$(url_encode "$browse_path")"');
+  assertIncludes(ideCommand, 'browse_url="http://localhost:17877/browse?path=$(url_encode "$browse_path")"');
   assertIncludes(ideCommand, 'IDE_BROWSE_PATH="$browse_path" open "$APP_BUNDLE" --args browse "$browse_path"');
   assertIncludes(ideCommand, 'until running_app_reachable; do');
   assertIncludes(ideCommand, 'open "$browse_url" >/dev/null 2>&1 &');
