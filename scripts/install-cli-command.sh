@@ -72,7 +72,7 @@ if [ ! -x "\$APP_BINARY" ]; then
 fi
 
 running_app_reachable() {
-  curl -fsS --max-time 1 "http://localhost:17877/api/codex-mcp" >/dev/null 2>&1
+  curl -fsS --max-time 1 "http://127.0.0.1:17877/api/codex-mcp" >/dev/null 2>&1
 }
 
 activate_running_app() {

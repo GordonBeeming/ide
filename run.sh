@@ -30,7 +30,7 @@ json_escape() {
 
 handoff_to_running_app() {
   local target="$1"
-  local api_base="http://localhost:17877"
+  local api_base="http://127.0.0.1:17877"
   local status token escaped_target
   if ! status="$(curl -fsS --max-time 1 "$api_base/api/codex-mcp" 2>/dev/null)"; then
     return 1
@@ -56,7 +56,7 @@ handoff_to_running_app() {
 }
 
 running_app_reachable() {
-  curl -fsS --max-time 1 "http://localhost:17877/api/codex-mcp" >/dev/null 2>&1
+  curl -fsS --max-time 1 "http://127.0.0.1:17877/api/codex-mcp" >/dev/null 2>&1
 }
 
 # Plain `./run.sh` means "give me a dev instance running this working copy".
