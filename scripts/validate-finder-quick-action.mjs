@@ -38,7 +38,7 @@ try {
   }
 
   const runner = fs.readFileSync(runnerPath, "utf8");
-  assertIncludes(runner, 'API_BASE="http://127.0.0.1:17877"');
+  assertIncludes(runner, 'API_BASE="http://localhost:17877"');
   assertIncludes(runner, "bearerToken");
   assertIncludes(runner, 'Authorization: Bearer $token');
   assertIncludes(runner, "-X POST");

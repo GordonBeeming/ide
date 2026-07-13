@@ -18,7 +18,7 @@ const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "ide-launch-runners-"));
 try {
   const runScript = readExecutable(runScriptPath, "run.sh");
   assertIncludes(runScript, "handoff_to_running_app()");
-  assertIncludes(runScript, 'api_base="http://127.0.0.1:17877"');
+  assertIncludes(runScript, 'api_base="http://localhost:17877"');
   assertIncludes(runScript, "$api_base/api/codex-mcp");
   assertIncludes(runScript, "bearerToken");
   assertIncludes(runScript, 'Authorization: Bearer $token');
@@ -102,14 +102,14 @@ try {
   assertIncludes(ideCommand, 'APP_BINARY="$APP_BUNDLE/Contents/MacOS/ide"');
   assertIncludes(ideCommand, 'if [ ! -x "$APP_BINARY" ]; then');
   assertIncludes(ideCommand, "running_app_reachable()");
-  assertIncludes(ideCommand, 'curl -fsS --max-time 1 "http://127.0.0.1:17877/api/codex-mcp"');
+  assertIncludes(ideCommand, 'curl -fsS --max-time 1 "http://localhost:17877/api/codex-mcp"');
   assertIncludes(ideCommand, "activate_running_app()");
   assertIncludes(ideCommand, 'tell application id "com.gordonbeeming.ide" to activate');
   assertIncludes(ideCommand, 'if [ "$#" -eq 0 ] && running_app_reachable; then');
   assertIncludes(ideCommand, 'url_encode()');
   assertIncludes(ideCommand, 'resolve_absolute_path()');
   assertIncludes(ideCommand, 'if [ "${1:-}" = "browse" ]; then');
-  assertIncludes(ideCommand, 'browse_url="http://127.0.0.1:17877/browse?path=$(url_encode "$browse_path")"');
+  assertIncludes(ideCommand, 'browse_url="http://localhost:17877/browse?path=$(url_encode "$browse_path")"');
   assertIncludes(ideCommand, 'IDE_BROWSE_PATH="$browse_path" open "$APP_BUNDLE" --args browse "$browse_path"');
   assertIncludes(ideCommand, 'until running_app_reachable; do');
   assertIncludes(ideCommand, 'open "$browse_url" >/dev/null 2>&1 &');
@@ -160,7 +160,7 @@ try {
     "Finder runner",
   );
   assertIncludes(finderRunner, "handoff_to_running_app()");
-  assertIncludes(finderRunner, 'API_BASE="http://127.0.0.1:17877"');
+  assertIncludes(finderRunner, 'API_BASE="http://localhost:17877"');
   assertIncludes(finderRunner, "$API_BASE/api/codex-mcp");
   assertIncludes(finderRunner, "bearerToken");
   assertIncludes(finderRunner, 'Authorization: Bearer $token');
