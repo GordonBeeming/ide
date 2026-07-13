@@ -1139,8 +1139,20 @@ async fn codex_mcp_status(
 // pitfalls — so the MCP endpoint we report back is canonicalized the same way, keeping
 // whatever port the client actually connected on (it may not be the default 17877 if
 // that port was taken and the server fell back to an OS-assigned one).
+//
+// The Host header is client-controlled input, not a trusted value, so the port is
+// parsed rather than copied verbatim. Un-parsed, a header like
+// "localhost:17877@attacker.example" would round-trip into
+// "http://127.0.0.1:17877@attacker.example/mcp" — a URL parsers treat as pointing at
+// attacker.example (the userinfo before an `@` is ignored). Parsing as a non-zero u16
+// also rejects an IPv6 host like "[::1]" or "[::1]:17877", which rsplit_once(':')
+// mis-splits inside the brackets.
 fn canonical_loopback_host(host: &str) -> String {
-    let port = host.rsplit_once(':').map_or("17877", |(_, port)| port);
+    let port = host
+        .rsplit_once(':')
+        .and_then(|(_, port)| port.parse::<u16>().ok())
+        .filter(|port| *port != 0)
+        .unwrap_or(17877);
     format!("127.0.0.1:{port}")
 }
 
@@ -2991,7 +3003,20 @@ mod tests {
             canonical_loopback_host("127.0.0.1:17877"),
             "127.0.0.1:17877"
         );
-        // Falls back to the default port if the header is malformed (no colon).
+        // Falls back to the default port when the header has no port at all.
         assert_eq!(canonical_loopback_host("localhost"), "127.0.0.1:17877");
+        // ...or when the port suffix doesn't parse as a valid non-zero u16.
+        assert_eq!(canonical_loopback_host("localhost:"), "127.0.0.1:17877");
+        assert_eq!(canonical_loopback_host("localhost:abc"), "127.0.0.1:17877");
+        assert_eq!(canonical_loopback_host("localhost:0"), "127.0.0.1:17877");
+        // A malicious Host header can't smuggle a userinfo/host through the port slot —
+        // the suffix has to parse as a port, so it falls back to the default.
+        assert_eq!(
+            canonical_loopback_host("localhost:17877@attacker.example"),
+            "127.0.0.1:17877"
+        );
+        // rsplit_once(':') would otherwise mis-split inside IPv6 brackets.
+        assert_eq!(canonical_loopback_host("[::1]:17877"), "127.0.0.1:17877");
+        assert_eq!(canonical_loopback_host("[::1]"), "127.0.0.1:17877");
     }
 }

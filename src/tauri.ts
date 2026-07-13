@@ -1298,7 +1298,12 @@ export function getLspServers() {
 // endpoint the same way so a `localhost`-opened tab doesn't hand out an address
 // other tools can't reliably connect to.
 export function canonicalizeLoopbackOrigin(origin: string): string {
-  return origin.replace(/^(https?:\/\/)localhost(:|$)/, "$1127.0.0.1$2");
+  // A replacer callback instead of a "$1127.0.0.1$2" template — $1 directly
+  // followed by digits is the kind of replacement-string ambiguity worth avoiding.
+  return origin.replace(
+    /^(https?:\/\/)localhost(:|$)/,
+    (_match, scheme: string, suffix: string) => `${scheme}127.0.0.1${suffix}`,
+  );
 }
 
 export function getHttpEndpoint() {

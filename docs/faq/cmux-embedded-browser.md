@@ -43,14 +43,16 @@ The relevant settings live in `~/.config/cmux/cmux.json`, under the `browser` ke
 }
 ```
 
-For `ide browse` to land in the embedded browser you want:
+For `ide browse` to route into the embedded browser at all, you want:
 
 - `browser.interceptTerminalOpenCommandInCmuxBrowser`: `true`. This is the toggle that makes the
   `open` shim claim URLs.
 - `browser.hostsToOpenInEmbeddedBrowser`: must include `localhost`.
-- `browser.insecureHttpHostsAllowedInEmbeddedBrowser`: `ide browse` opens a plain `http://` URL
-  (not `https://`), so if this list is set and doesn't include `localhost`, that's worth checking
-  too.
+
+`browser.insecureHttpHostsAllowedInEmbeddedBrowser` is a separate setting — it only controls
+whether cmux warns on a plain `http://` open (which is what `ide browse` uses), not whether the
+URL routes into the embedded browser in the first place. It's worth adding `localhost` there too
+if you're seeing a warning, but it won't fix routing on its own.
 
 The same options live under Settings → Browser in the cmux UI, which is the friendlier way to set
 them. If you edit the JSON file by hand, reload it from the app (Settings → Browser, or the
