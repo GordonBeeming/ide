@@ -2111,8 +2111,7 @@ pub fn run() {
             {
                 if !*has_visible_windows {
                     if let Some(main_window) = app.get_webview_window("main") {
-                        let _ = main_window.show();
-                        let _ = main_window.set_focus();
+                        focus_window(&main_window);
                     }
                 }
             }
