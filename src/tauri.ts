@@ -1291,8 +1291,20 @@ export function getLspServers() {
   return callApi<LspServerStatus[]>("get_lsp_servers", "/api/lsp");
 }
 
+// `ide browse` intentionally opens the page on `localhost` so cmux's whitelist
+// routes it to the embedded browser, but the server only binds IPv4 loopback and
+// every other endpoint this app surfaces stays on `127.0.0.1` to dodge the ::1 /
+// proxy pitfalls the launcher scripts already avoid. Canonicalize the copyable
+// endpoint the same way so a `localhost`-opened tab doesn't hand out an address
+// other tools can't reliably connect to.
+export function canonicalizeLoopbackOrigin(origin: string): string {
+  return origin.replace(/^(https?:\/\/)localhost(:|$)/, "$1127.0.0.1$2");
+}
+
 export function getHttpEndpoint() {
-  if (!isNativeTauri()) return Promise.resolve(window.location.origin);
+  if (!isNativeTauri()) {
+    return Promise.resolve(canonicalizeLoopbackOrigin(window.location.origin));
+  }
   return invoke<string | undefined>("get_http_endpoint");
 }
 

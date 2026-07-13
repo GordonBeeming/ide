@@ -1124,11 +1124,24 @@ async fn codex_mcp_status(
         .get(header::HOST)
         .and_then(|value| value.to_str().ok())
         .unwrap_or("127.0.0.1:17877");
+    let host = canonical_loopback_host(host);
 
     Json(CodexMcpStatus {
         endpoint: format!("http://{host}/mcp"),
         bearer_token: state.mcp_token.clone(),
     })
+}
+
+// `ide browse` opens the SPA on `localhost` so cmux's open() whitelist catches it, so a
+// request's Host header can legitimately read "localhost:PORT". The server only binds
+// IPv4 loopback, and every other endpoint this app hands out (launcher scripts, the
+// copyable browser endpoint) deliberately stays on 127.0.0.1 to avoid the ::1/proxy
+// pitfalls — so the MCP endpoint we report back is canonicalized the same way, keeping
+// whatever port the client actually connected on (it may not be the default 17877 if
+// that port was taken and the server fell back to an OS-assigned one).
+fn canonical_loopback_host(host: &str) -> String {
+    let port = host.rsplit_once(':').map_or("17877", |(_, port)| port);
+    format!("127.0.0.1:{port}")
 }
 
 #[derive(Debug, Deserialize)]
@@ -2966,5 +2979,13 @@ mod tests {
 
         assert!(!body.contains("<script>"));
         assert!(body.contains("&lt;script&gt;"));
+    }
+
+    #[test]
+    fn canonical_loopback_host_replaces_hostname_keeps_port() {
+        assert_eq!(canonical_loopback_host("localhost:17877"), "127.0.0.1:17877");
+        assert_eq!(canonical_loopback_host("127.0.0.1:17877"), "127.0.0.1:17877");
+        // Falls back to the default port if the header is malformed (no colon).
+        assert_eq!(canonical_loopback_host("localhost"), "127.0.0.1:17877");
     }
 }

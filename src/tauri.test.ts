@@ -189,6 +189,19 @@ describe("hosted Tauri API transport", () => {
     expect(apiBaseForLocation({ port: "17877" })).toBe("");
   });
 
+  it("canonicalizes a localhost-opened origin back to 127.0.0.1 for copyable endpoints", async () => {
+    const { canonicalizeLoopbackOrigin } = await import("./tauri");
+
+    // `ide browse` opens the page on localhost for cmux's whitelist; anything the
+    // user copies out of the app should still land on 127.0.0.1.
+    expect(canonicalizeLoopbackOrigin("http://localhost:17877")).toBe(
+      "http://127.0.0.1:17877",
+    );
+    expect(canonicalizeLoopbackOrigin("http://127.0.0.1:17877")).toBe(
+      "http://127.0.0.1:17877",
+    );
+  });
+
   it("derives the workspace path prefix from the hosted URL", async () => {
     const { workspacePathPrefix } = await import("./tauri");
 
