@@ -499,18 +499,15 @@ fn github_remote_template(remote_name: &str, remote_url: &str) -> Option<RemoteT
 fn tracking_remote_name(repo: &gix::Repository) -> Option<String> {
     let head = repo.head().ok()?;
     let ref_name = head.referent_name()?;
-    let tracking = repo
-        .branch_remote_tracking_ref_name(ref_name, gix::remote::Direction::Fetch)?
-        .ok()?;
-    // The tracking ref is `refs/remotes/<remote>/<branch>`; the remote name is the first
-    // path segment after that prefix.
-    tracking
+    // Read `branch.<name>.remote` directly rather than parsing the tracking ref path —
+    // a remote name containing a slash (e.g. `team/fork`) makes `refs/remotes/<remote>/<branch>`
+    // ambiguous to split. gix itself treats any slashed name as a `Name::Url` (it can't tell a
+    // slashed remote name from a URL either), so read the raw string rather than branching on
+    // the Symbol/Url distinction — the caller matches it against known remote names either way.
+    repo.branch_remote_name(ref_name.shorten(), gix::remote::Direction::Fetch)?
         .as_bstr()
         .to_str()
-        .ok()?
-        .strip_prefix("refs/remotes/")?
-        .split('/')
-        .next()
+        .ok()
         .map(str::to_string)
 }
 
@@ -677,6 +674,32 @@ mod tests {
                 Some("nope")
             ),
             vec![template("chat-bot")]
+        );
+    }
+
+    #[test]
+    fn tracking_remote_name_handles_a_slash_in_the_remote_name() {
+        let dir = tempdir().unwrap();
+        init_repo(dir.path());
+        fs::write(dir.path().join("README.md"), "first\n").unwrap();
+        commit_all(dir.path(), "Add readme", "1700000000 +0000");
+        run_git(
+            dir.path(),
+            ["remote", "add", "team/fork", "git@github.com:acme/fork.git"],
+        );
+        run_git(dir.path(), ["config", "branch.main.remote", "team/fork"]);
+        run_git(
+            dir.path(),
+            ["config", "branch.main.merge", "refs/heads/main"],
+        );
+
+        let repo = gix::discover(dir.path()).unwrap();
+
+        assert_eq!(
+            tracking_remote_name(&repo).as_deref(),
+            Some("team/fork"),
+            "a remote name containing a slash must resolve via branch.<name>.remote, \
+             not by splitting the refs/remotes/<remote>/<branch> tracking path"
         );
     }
 
