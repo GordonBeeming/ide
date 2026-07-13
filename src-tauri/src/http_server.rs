@@ -2983,8 +2983,14 @@ mod tests {
 
     #[test]
     fn canonical_loopback_host_replaces_hostname_keeps_port() {
-        assert_eq!(canonical_loopback_host("localhost:17877"), "127.0.0.1:17877");
-        assert_eq!(canonical_loopback_host("127.0.0.1:17877"), "127.0.0.1:17877");
+        assert_eq!(
+            canonical_loopback_host("localhost:17877"),
+            "127.0.0.1:17877"
+        );
+        assert_eq!(
+            canonical_loopback_host("127.0.0.1:17877"),
+            "127.0.0.1:17877"
+        );
         // Falls back to the default port if the header is malformed (no colon).
         assert_eq!(canonical_loopback_host("localhost"), "127.0.0.1:17877");
     }
