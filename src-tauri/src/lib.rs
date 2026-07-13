@@ -2100,6 +2100,23 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building application")
         .run(|app, event| {
+            // A browse launch hides the `main` window and opens no visible window, so a
+            // dock-icon click reactivates an app with nothing to focus. Re-show + focus
+            // `main` (only hidden, never destroyed) so the dock icon can always summon it.
+            #[cfg(target_os = "macos")]
+            if let tauri::RunEvent::Reopen {
+                has_visible_windows,
+                ..
+            } = &event
+            {
+                if !*has_visible_windows {
+                    if let Some(main_window) = app.get_webview_window("main") {
+                        let _ = main_window.show();
+                        let _ = main_window.set_focus();
+                    }
+                }
+            }
+
             #[cfg(any(target_os = "macos", target_os = "ios", target_os = "android"))]
             if let tauri::RunEvent::Opened { urls } = event {
                 let requests = open_launch_requests_for_urls(urls);
