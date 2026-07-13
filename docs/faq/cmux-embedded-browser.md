@@ -24,34 +24,37 @@ system browser.
 
 Only the browser-facing URL uses `localhost`. The internal calls (health-check probes, the MCP
 endpoint) stay on `127.0.0.1`, which keeps them off IPv6 `::1` (the server binds IPv4 loopback
-only) and away from any `http_proxy`. See the loopback-bind note in
+only) and avoids a DNS/hosts-file lookup for a name that isn't in `/etc/hosts` on every machine.
+That alone doesn't guarantee bypassing an HTTP proxy — a tool that honors `http_proxy` still
+needs `127.0.0.1` in its `NO_PROXY`/`--noproxy` list for that. See the loopback-bind note in
 [`../security.md`](../security.md).
 
 ## cmux config to check
 
-The relevant settings live in the `com.cmuxterm.app` defaults domain. Read the current values:
+The relevant settings live in `~/.config/cmux/cmux.json`, under the `browser` key:
 
-```bash
-for key in browserDisabledOverride \
-           browserInterceptTerminalOpenCommandInCmuxBrowser \
-           browserOpenTerminalLinksInCmuxBrowser \
-           browserHostWhitelist; do
-  printf '%s = %s\n' "$key" "$(defaults read com.cmuxterm.app "$key" 2>/dev/null || echo '<unset>')"
-done
+```jsonc
+{
+  "browser": {
+    "hostsToOpenInEmbeddedBrowser": ["localhost", "127.0.0.1"],
+    "insecureHttpHostsAllowedInEmbeddedBrowser": ["localhost", "127.0.0.1"],
+    "interceptTerminalOpenCommandInCmuxBrowser": true
+  }
+}
 ```
 
 For `ide browse` to land in the embedded browser you want:
 
-- `browserDisabledOverride`: `0` / false. `1` disables the embedded browser entirely.
-- `browserInterceptTerminalOpenCommandInCmuxBrowser`: `1` / true. This is the toggle that makes
-  the `open` shim claim URLs.
-- `browserOpenTerminalLinksInCmuxBrowser`: `1` / true.
-- `browserHostWhitelist`: must include `localhost`. It's a newline-separated list, and
-  `localhost` is in cmux's default set, so this usually only bites if you've trimmed the list.
+- `browser.interceptTerminalOpenCommandInCmuxBrowser`: `true`. This is the toggle that makes the
+  `open` shim claim URLs.
+- `browser.hostsToOpenInEmbeddedBrowser`: must include `localhost`.
+- `browser.insecureHttpHostsAllowedInEmbeddedBrowser`: `ide browse` opens a plain `http://` URL
+  (not `https://`), so if this list is set and doesn't include `localhost`, that's worth checking
+  too.
 
 The same options live under Settings → Browser in the cmux UI, which is the friendlier way to set
-them. If you'd rather script it, `defaults write com.cmuxterm.app <key> <value>` works, and
-`localhost` can be added to the whitelist there too.
+them. If you edit the JSON file by hand, reload it from the app (Settings → Browser, or the
+`cmd+shift+,` shortcut) rather than restarting cmux.
 
 ## Verify
 
