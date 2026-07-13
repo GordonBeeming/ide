@@ -103,7 +103,10 @@ pub(crate) async fn attribution_for_file(workspace_root: &Path, relative: &str) 
         Ok(commit) => commit,
         Err(_) => return unsupported(relative, "File has no local commit history"),
     };
-    let remote_templates = remote_templates(&repo);
+    let remote_templates = pick_primary_template(
+        remote_templates(&repo),
+        tracking_remote_name(&repo).as_deref(),
+    );
 
     let blame = match repo.blame_file(
         repo_relative_bstr.as_bstr(),
@@ -488,6 +491,54 @@ fn github_remote_template(remote_name: &str, remote_url: &str) -> Option<RemoteT
     })
 }
 
+// A repo can have several GitHub remotes — a fork's `origin` plus an unrelated second
+// remote, say. A commit only lives on the remote it was pushed to, so emitting one
+// generic "Open in GitHub" per remote produces duplicate buttons, some linking a repo
+// that doesn't contain the commit. Resolve the branch's upstream remote so the panel can
+// surface a single, correct action.
+fn tracking_remote_name(repo: &gix::Repository) -> Option<String> {
+    let head = repo.head().ok()?;
+    let ref_name = head.referent_name()?;
+    let tracking = repo
+        .branch_remote_tracking_ref_name(ref_name, gix::remote::Direction::Fetch)?
+        .ok()?;
+    // The tracking ref is `refs/remotes/<remote>/<branch>`; the remote name is the first
+    // path segment after that prefix.
+    tracking
+        .as_bstr()
+        .to_str()
+        .ok()?
+        .strip_prefix("refs/remotes/")?
+        .split('/')
+        .next()
+        .map(str::to_string)
+}
+
+// Reduce the GitHub remotes to the single one whose commit link is meaningful: the
+// branch's upstream, then `origin`, then the first as a last resort. A single remote is
+// returned untouched.
+fn pick_primary_template(
+    mut templates: Vec<RemoteTemplate>,
+    tracking_remote: Option<&str>,
+) -> Vec<RemoteTemplate> {
+    if templates.len() <= 1 {
+        return templates;
+    }
+    let index = tracking_remote
+        .and_then(|name| {
+            templates
+                .iter()
+                .position(|template| template.remote_name == name)
+        })
+        .or_else(|| {
+            templates
+                .iter()
+                .position(|template| template.remote_name == "origin")
+        })
+        .unwrap_or(0);
+    vec![templates.swap_remove(index)]
+}
+
 fn lossless_string(value: &BStr) -> String {
     value.to_str_lossy().trim().to_string()
 }
@@ -588,6 +639,45 @@ mod tests {
             ],
         );
         assert!(github_remote_template("origin", "git@gitlab.com:org/repo.git").is_none());
+    }
+
+    #[test]
+    fn pick_primary_template_prefers_tracking_then_origin() {
+        let template = |name: &str| RemoteTemplate {
+            provider: "GitHub".to_string(),
+            remote_name: name.to_string(),
+            base_url: format!("https://github.com/acme/{name}"),
+        };
+
+        // A single remote is returned untouched.
+        assert_eq!(
+            pick_primary_template(vec![template("origin")], None),
+            vec![template("origin")]
+        );
+
+        // The branch's upstream wins when present.
+        assert_eq!(
+            pick_primary_template(
+                vec![template("origin"), template("chat-bot")],
+                Some("chat-bot")
+            ),
+            vec![template("chat-bot")]
+        );
+
+        // No/unknown upstream falls back to origin.
+        assert_eq!(
+            pick_primary_template(vec![template("chat-bot"), template("origin")], None),
+            vec![template("origin")]
+        );
+
+        // No upstream and no origin falls back to the first remote.
+        assert_eq!(
+            pick_primary_template(
+                vec![template("chat-bot"), template("upstream")],
+                Some("nope")
+            ),
+            vec![template("chat-bot")]
+        );
     }
 
     #[tokio::test]
