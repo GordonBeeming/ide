@@ -72,7 +72,7 @@ if [ ! -x "\$APP_BINARY" ]; then
 fi
 
 running_app_reachable() {
-  curl -fsS --max-time 1 "http://127.0.0.1:17877/api/codex-mcp" >/dev/null 2>&1
+  curl -fsS --max-time 1 "http://localhost:17877/api/codex-mcp" >/dev/null 2>&1
 }
 
 activate_running_app() {
@@ -122,7 +122,7 @@ if [ "\${1:-}" = "browse" ]; then
     exit 1
   fi
   browse_path="\$(resolve_absolute_path "\$2")"
-  browse_url="http://127.0.0.1:17877/browse?path=\$(url_encode "\$browse_path")"
+  browse_url="http://localhost:17877/browse?path=\$(url_encode "\$browse_path")"
 
   if ! running_app_reachable; then
     # Cold start: boot the bundle headless (no visible window — see lib.rs's

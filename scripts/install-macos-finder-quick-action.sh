@@ -24,7 +24,7 @@ set -euo pipefail
 TARGET="\${1:-}"
 ROOT_DIR="$ROOT_DIR"
 FRONTEND_URL="http://127.0.0.1:14717"
-API_BASE="http://127.0.0.1:17877"
+API_BASE="http://localhost:17877"
 
 export PATH="\$HOME/.local/bin:\$HOME/Library/pnpm:\$HOME/.cargo/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:\${PATH:-}"
 if ! command -v npm >/dev/null 2>&1 && command -v fnm >/dev/null 2>&1; then

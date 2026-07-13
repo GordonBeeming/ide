@@ -1123,7 +1123,7 @@ async fn codex_mcp_status(
     let host = headers
         .get(header::HOST)
         .and_then(|value| value.to_str().ok())
-        .unwrap_or("127.0.0.1:17877");
+        .unwrap_or("localhost:17877");
 
     Json(CodexMcpStatus {
         endpoint: format!("http://{host}/mcp"),
