@@ -1144,9 +1144,11 @@ async fn codex_mcp_status(
 // parsed rather than copied verbatim. Un-parsed, a header like
 // "localhost:17877@attacker.example" would round-trip into
 // "http://127.0.0.1:17877@attacker.example/mcp" — a URL parsers treat as pointing at
-// attacker.example (the userinfo before an `@` is ignored). Parsing as a non-zero u16
-// also rejects an IPv6 host like "[::1]" or "[::1]:17877", which rsplit_once(':')
-// mis-splits inside the brackets.
+// attacker.example (the userinfo before an `@` is ignored). The IPv6 hostname is
+// never propagated either way — only 127.0.0.1 ever goes out — but the port parse
+// still matters there: rsplit_once(':') mis-splits a bracketed "[::1]" (no port) and
+// the malformed suffix falls back to the default, while "[::1]:17877" splits cleanly
+// and its real port is kept.
 fn canonical_loopback_host(host: &str) -> String {
     let port = host
         .rsplit_once(':')
