@@ -32,7 +32,7 @@ This isn't a VS Code rebuild. It's a focused editor shell: open a folder, read a
 
   ```toml
   [mcp_servers.ide]
-  url = "http://localhost:17877/mcp"
+  url = "http://127.0.0.1:17877/mcp"
   http_headers = { Authorization = "Bearer paste-token-from-ide" }
   ```
 
