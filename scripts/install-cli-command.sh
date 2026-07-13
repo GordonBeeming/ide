@@ -139,7 +139,11 @@ if [ "\${1:-}" = "browse" ]; then
     done
   fi
 
-  open "\$browse_url" >/dev/null 2>&1 &
+  # Foreground, not backgrounded: under cmux the \`open\` shim hands the URL to a
+  # \`cmux browser open\` child, and if this wrapper exits first the child is orphaned,
+  # loses its pane/session context, and the shim falls back to the system browser.
+  # \`open\` returns as soon as it dispatches the URL, so foregrounding costs nothing.
+  open "\$browse_url" >/dev/null 2>&1
   exit 0
 fi
 
