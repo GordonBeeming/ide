@@ -113,6 +113,7 @@ try {
   assertIncludes(ideCommand, 'IDE_BROWSE_PATH="$browse_path" open "$APP_BUNDLE" --args browse "$browse_path"');
   assertIncludes(ideCommand, 'until running_app_reachable; do');
   assertIncludes(ideCommand, 'open "$browse_url" >/dev/null 2>&1');
+  assertNotIncludes(ideCommand, 'open "$browse_url" >/dev/null 2>&1 &');
   assertOrdered(ideCommand, 'if [ "${1:-}" = "browse" ]; then', 'ARGS=()');
   assertIncludes(ideCommand, 'ARGS=()');
   assertIncludes(ideCommand, 'ARGS+=("$(cd "$arg" && pwd -P)")');
