@@ -73,8 +73,10 @@ jobs:
     needs: build-and-test
     if: github.event_name == 'release'
     runs-on: macos-14
-    timeout-minutes: 60
+    timeout-minutes: 90
     environment: prod
+    env:
+      APPLE_SIGNING_IDENTITY: "Developer ID Application: Gordon Beeming (89DBN36T4T)"
     permissions:
       contents: write
 
@@ -163,8 +165,6 @@ jobs:
           rm certificate.p12
 
       - name: Build signed app bundle
-        env:
-          APPLE_SIGNING_IDENTITY: "Developer ID Application: Gordon Beeming (89DBN36T4T)"
         run: npm run tauri -- build --bundles app
 
       - name: Sign application
@@ -173,7 +173,7 @@ jobs:
           codesign --deep --force \
             --options runtime \
             --timestamp \
-            --sign "Developer ID Application: Gordon Beeming (89DBN36T4T)" \
+            --sign "${APPLE_SIGNING_IDENTITY}" \
             "${APP_BUNDLE}"
           codesign --verify --deep --strict --verbose=2 "${APP_BUNDLE}"
 
@@ -209,6 +209,41 @@ jobs:
             -ov \
             -format UDZO \
             "dist/release/ide-${VERSION}-aarch64.dmg"
+
+      - name: Sign, notarize, and validate DMG
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          DMG_PATH="dist/release/ide-${VERSION}-aarch64.dmg"
+
+          test -n "${APPLE_ID}" || { echo "APPLE_ID is not set in the prod environment." >&2; exit 1; }
+          test -n "${APPLE_TEAM_ID}" || { echo "APPLE_TEAM_ID is not set in the prod environment." >&2; exit 1; }
+          test -n "${APPLE_APP_PASSWORD}" || { echo "APPLE_APP_PASSWORD is not set in the prod environment." >&2; exit 1; }
+
+          codesign --force \
+            --timestamp \
+            --identifier "com.gordonbeeming.ide.dmg" \
+            --sign "${APPLE_SIGNING_IDENTITY}" \
+            "${DMG_PATH}"
+          codesign --verify --strict --verbose=2 "${DMG_PATH}"
+
+          xcrun notarytool submit "${DMG_PATH}" \
+            --apple-id "${APPLE_ID}" \
+            --team-id "${APPLE_TEAM_ID}" \
+            --password "${APPLE_APP_PASSWORD}" \
+            --wait
+          xcrun stapler staple "${DMG_PATH}"
+          xcrun stapler validate "${DMG_PATH}"
+          codesign --verify --strict --verbose=2 "${DMG_PATH}"
+          hdiutil verify "${DMG_PATH}"
+          spctl --assess \
+            --type open \
+            --context context:primary-signature \
+            --verbose=2 \
+            "${DMG_PATH}"
 
       - name: Upload release asset
         env:
