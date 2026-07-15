@@ -219,6 +219,10 @@ jobs:
           VERSION="${GITHUB_REF_NAME#v}"
           DMG_PATH="dist/release/ide-${VERSION}-aarch64.dmg"
 
+          test -n "${APPLE_ID}" || { echo "APPLE_ID is not set in the prod environment." >&2; exit 1; }
+          test -n "${APPLE_TEAM_ID}" || { echo "APPLE_TEAM_ID is not set in the prod environment." >&2; exit 1; }
+          test -n "${APPLE_APP_PASSWORD}" || { echo "APPLE_APP_PASSWORD is not set in the prod environment." >&2; exit 1; }
+
           codesign --force \
             --timestamp \
             --identifier "com.gordonbeeming.ide.dmg" \
