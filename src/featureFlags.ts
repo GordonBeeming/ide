@@ -8,7 +8,7 @@
 // and from KNOWN_FEATURE_FLAGS in src-tauri/src/lib.rs prunes any stale override
 // the next time settings load.
 
-export type FeatureFlagId = "contextMenus";
+export type FeatureFlagId = "contextMenus" | "markdownPreview";
 
 // "preview" flags surface in Settings → Preview Features for opt-in/opt-out.
 // "internal" flags are gated in code only and never rendered as a user toggle.
@@ -40,6 +40,17 @@ export const FEATURE_FLAGS: Record<FeatureFlagId, FeatureFlagDefinition> = {
     lifecycle: "preview",
     graduationCriteria:
       "Menus cover every surface without missing actions or keyboard-nav bugs. Once stable, remove this flag and make the behavior always-on.",
+  },
+  markdownPreview: {
+    id: "markdownPreview",
+    label: "Markdown preview",
+    description:
+      "Show a live, sanitized preview beside Markdown files while keeping CodeMirror fully editable.",
+    defaultEnabled: false,
+    visibility: "preview",
+    lifecycle: "preview",
+    graduationCriteria:
+      "Supported Markdown renders correctly in light and dark themes, unsafe HTML stays blocked, large documents remain responsive, and the split works on each packaged platform.",
   },
 };
 

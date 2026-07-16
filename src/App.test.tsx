@@ -1220,7 +1220,7 @@ describe("App shell interactions", () => {
     }
   });
 
-  it("shows the remaining preview feature flag and persists a toggle", async () => {
+  it("shows preview feature flags and persists a toggle", async () => {
     (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
     render(<App />);
 
@@ -1246,6 +1246,86 @@ describe("App shell interactions", () => {
         expect.anything(),
       ),
     );
+  });
+
+  it("keeps Markdown preview UI absent until the preview flag is enabled", async () => {
+    render(<App />);
+
+    fireEvent.click(await treeButton("README.md"));
+    await screen.findByLabelText("Editor README.md");
+
+    expect(screen.queryByRole("button", { name: "Show Markdown preview" }))
+      .not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Preview README.md" }))
+      .not.toBeInTheDocument();
+  });
+
+  it("shows a Markdown-only live preview that follows edits and reloads", async () => {
+    let readme = "# Initial";
+    tauriMocks.readFile.mockImplementation(async (path: string) => {
+      if (path === "README.md") return readme;
+      if (path === "src/App.tsx") return "export function App() {}";
+      return "";
+    });
+    tauriMocks.getUiState.mockResolvedValue({
+      view: {
+        showDotfiles: false,
+        showGeneratedInternal: false,
+        showDiagnosticsPanel: false,
+        featureFlags: { markdownPreview: true },
+      },
+      workspace: { expandedFolders: [], openFiles: [] },
+    });
+    tauriMocks.listFiles.mockResolvedValue([
+      ...files,
+      {
+        path: "notes.markdown",
+        name: "notes.markdown",
+        isDir: false,
+        depth: 0,
+        size: 10,
+        modifiedMs: 303,
+      },
+    ]);
+    render(<App />);
+
+    fireEvent.click(await treeButton("README.md"));
+    await screen.findByLabelText("Editor README.md");
+    const showPreview = await screen.findByRole("button", {
+      name: "Show Markdown preview",
+    });
+    fireEvent.click(showPreview);
+
+    const preview = await screen.findByRole("region", { name: "Preview README.md" });
+    expect(within(preview).getByRole("heading", { name: "Initial" })).toBeInTheDocument();
+
+    readme = "# Reloaded";
+    fireEvent.click(screen.getByTitle("Reload from disk"));
+    await waitFor(() =>
+      expect(within(preview).getByRole("heading", { name: "Reloaded" }))
+        .toBeInTheDocument(),
+    );
+
+    fireEvent.change(screen.getByLabelText("Editor README.md"), {
+      target: { value: "## Unsaved" },
+    });
+    await waitFor(() =>
+      expect(within(preview).getByRole("heading", { name: "Unsaved" }))
+        .toBeInTheDocument(),
+    );
+
+    fireEvent.click(await treeButton("src"));
+    fireEvent.click(await treeButton("App.tsx"));
+    await screen.findByLabelText("Editor src/App.tsx");
+    expect(screen.queryByRole("button", { name: /Markdown preview/ }))
+      .not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: /Preview/ })).not.toBeInTheDocument();
+
+    fireEvent.click(await treeButton("notes.markdown"));
+    expect(await screen.findByRole("button", { name: "Hide Markdown preview" }))
+      .toBeInTheDocument();
+    expect(await screen.findByRole("region", { name: "Preview notes.markdown" }))
+      .toBeInTheDocument();
   });
 
   it("shows the Git category and persists a setting toggle", async () => {
