@@ -2572,8 +2572,7 @@ export default function App() {
   ]);
 
   useEffect(() => {
-    if (!uiStateLoaded || !workspaceUiRestored) return;
-    if (singleFileMode) return;
+    if (!uiStateLoaded || (!singleFileMode && !workspaceUiRestored)) return;
     if (skipNextUiStatePersistRef.current) {
       skipNextUiStatePersistRef.current = false;
       return;
@@ -2610,17 +2609,21 @@ export default function App() {
           autoFetchSeconds,
           featureFlags,
         },
-        {
-          expandedFolders: [...expandedFolders],
-          // Diff tabs are synthetic (`diff://…`) and must not survive a
-          // relaunch — persist only the real open-file paths.
-          openFiles: openFiles.filter((file) => !file.diff).map((file) => file.path),
-          activeFile: activeFile?.diff ? undefined : activePath,
-          selectedPath,
-          sidebarWidth,
-          commitMessageHeight,
-          trustExternalSymlinks: trustExternalWorkspace,
-        },
+        singleFileMode
+          ? persistedWorkspaceRef.current
+          : {
+              expandedFolders: [...expandedFolders],
+              // Diff tabs are synthetic (`diff://…`) and must not survive a
+              // relaunch — persist only the real open-file paths.
+              openFiles: openFiles
+                .filter((file) => !file.diff)
+                .map((file) => file.path),
+              activeFile: activeFile?.diff ? undefined : activePath,
+              selectedPath,
+              sidebarWidth,
+              commitMessageHeight,
+              trustExternalSymlinks: trustExternalWorkspace,
+            },
       ).catch((reason) => {
         setError(`Unable to save UI state: ${String(reason)}`);
       });

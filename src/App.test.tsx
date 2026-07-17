@@ -1381,6 +1381,42 @@ describe("App shell interactions", () => {
     );
   });
 
+  it("persists preview theme choices without replacing saved workspace state in single-file mode", async () => {
+    tauriMocks.getInitialFile.mockResolvedValueOnce("README.md");
+    const savedWorkspace = {
+      expandedFolders: ["src"],
+      openFiles: ["src/App.tsx"],
+      activeFile: "src/App.tsx",
+      selectedPath: "src/App.tsx",
+    };
+    tauriMocks.getUiState.mockResolvedValue({
+      view: {
+        showDotfiles: false,
+        showGeneratedInternal: false,
+        themePreference: "dark",
+        markdownPreviewThemePreference: "auto",
+        featureFlags: { markdownPreview: true },
+      },
+      workspace: savedWorkspace,
+    });
+    render(<App />);
+
+    expect(await screen.findByLabelText("Editor README.md")).toBeInTheDocument();
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Show Markdown preview" }),
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Use light Markdown preview theme" }),
+    );
+
+    await waitFor(() =>
+      expect(tauriMocks.updateUiState).toHaveBeenLastCalledWith(
+        expect.objectContaining({ markdownPreviewThemePreference: "light" }),
+        savedWorkspace,
+      ),
+    );
+  });
+
   it("shows the Git category and persists a setting toggle", async () => {
     (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
     render(<App />);
