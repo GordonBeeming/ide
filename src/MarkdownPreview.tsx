@@ -49,7 +49,10 @@ export default function MarkdownPreview({
   const [html, setHtml] = useState("");
 
   useEffect(() => {
-    if (!visible) return;
+    if (!visible) {
+      setHtml("");
+      return;
+    }
     let cancelled = false;
     const timer = window.setTimeout(() => {
       void import("./markdownRenderer")

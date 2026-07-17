@@ -149,6 +149,37 @@ describe("MarkdownPreview", () => {
     }
   });
 
+  it("does not flash previously rendered contents when the preview is shown again", async () => {
+    vi.useFakeTimers();
+    try {
+      const { rerender } = render(
+        <MarkdownPreview contents="# Before" path="README.md">
+          <textarea aria-label="Editor" />
+        </MarkdownPreview>,
+      );
+      await advancePreview();
+      expect(screen.getByRole("heading", { name: "Before" })).toBeInTheDocument();
+
+      rerender(
+        <MarkdownPreview contents="# After" path="README.md" visible={false}>
+          <textarea aria-label="Editor" />
+        </MarkdownPreview>,
+      );
+      rerender(
+        <MarkdownPreview contents="# After" path="README.md">
+          <textarea aria-label="Editor" />
+        </MarkdownPreview>,
+      );
+
+      expect(screen.queryByRole("heading", { name: "Before" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("heading", { name: "After" })).not.toBeInTheDocument();
+      await advancePreview();
+      expect(screen.getByRole("heading", { name: "After" })).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("sanitizes unsafe Markdown and embedded HTML", async () => {
     render(
       <MarkdownPreview
