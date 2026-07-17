@@ -14,6 +14,7 @@ import {
 } from "react";
 import { listen } from "@tauri-apps/api/event";
 import {
+  BookOpen,
   Check,
   ChevronDown,
   ChevronRight,
@@ -201,6 +202,7 @@ import {
 } from "./editorCommands";
 import { cursorStatus, type EditorCursor } from "./editorCursor";
 import { ContextMenu, menuSeparator, useContextMenu, type MenuEntry } from "./contextMenu";
+import MarkdownPreview from "./MarkdownPreview";
 
 const EditorPane = lazy(() => import("./EditorPane"));
 const DiffPane = lazy(() => import("./DiffPane"));
@@ -531,6 +533,10 @@ function emptyEditorStateForSelection(
   };
 }
 
+function isMarkdownPath(path: string) {
+  return /\.(?:md|markdown)$/i.test(path);
+}
+
 export default function App() {
   const [workspaceRoot, setWorkspaceRoot] = useState("");
   const [workspaceLoading, setWorkspaceLoading] = useState(true);
@@ -649,6 +655,7 @@ export default function App() {
   const [diffViewMode, setDiffViewMode] = useState<DiffViewMode>(defaultDiffViewMode);
   const [autoFetchSeconds, setAutoFetchSeconds] = useState(defaultAutoFetchSeconds);
   const [featureFlags, setFeatureFlags] = useState<FeatureFlagOverrides>({});
+  const [markdownPreviewVisible, setMarkdownPreviewVisible] = useState(false);
   const [prefersDark, setPrefersDark] = useState(systemPrefersDark);
   const [themePreference, setThemePreference] =
     useState<ThemePreference>(defaultThemePreference);
@@ -756,6 +763,11 @@ export default function App() {
   const activeSelection = selection?.filePath === activePath ? selection : undefined;
   const cursorPosition = cursorStatus(activePath, cursor, revealTarget);
   const contextMenusEnabled = isFeatureEnabled("contextMenus", featureFlags);
+  const markdownPreviewEnabled = isFeatureEnabled("markdownPreview", featureFlags);
+  const activeFileSupportsMarkdownPreview = Boolean(
+    activeFile && !activeFile.diff && isMarkdownPath(activeFile.path),
+  );
+  const markdownPreviewAvailable = markdownPreviewEnabled && activeFileSupportsMarkdownPreview;
   // An explicit light/dark preference pins the theme; "system" defers to the OS
   // signal. This single value drives the document theme, the shell marker, and
   // the editor/diff panes so every surface resolves the theme the same way.
@@ -5161,6 +5173,41 @@ export default function App() {
     "--editor-font-size": `${editorFontSize}px`,
     "--sidebar-width": `${sidebarWidth}px`,
   } as CSSProperties;
+  const activeEditor = activeFile && !activeFile.diff ? (
+    <Suspense fallback={<div className="empty-state editor-loading-state">Loading editor</div>}>
+      <EditorPane
+        contents={activeFile.contents}
+        dateTimeFormat={dateTimeFormat}
+        editorCommand={editorCommand}
+        gitAttribution={activeGitAttribution}
+        isDirty={activeFile.dirty}
+        path={activeFile.path}
+        prefersDark={effectiveDark}
+        codeFont={codeFont}
+        recentRelativeThreshold={recentRelativeThreshold}
+        revealLine={
+          revealTarget?.path === activeFile.path ? revealTarget.lineNumber : undefined
+        }
+        revealMatchStart={
+          revealTarget?.path === activeFile.path ? revealTarget.matchStart : undefined
+        }
+        revealMatchEnd={
+          revealTarget?.path === activeFile.path ? revealTarget.matchEnd : undefined
+        }
+        focusOnReveal={
+          revealTarget?.path === activeFile.path
+            ? !revealTarget.preserveFocus
+            : undefined
+        }
+        onChange={updateContents}
+        onCursor={setCursor}
+        onError={setError}
+        onGitCommitClick={setGitCommitPopover}
+        onNotice={setStatus}
+        onSelection={setSelection}
+      />
+    </Suspense>
+  ) : null;
 
   return (
     <main
@@ -5926,6 +5973,27 @@ export default function App() {
                 <Search size={17} />
               </button>
             )}
+            {markdownPreviewEnabled && activeFileSupportsMarkdownPreview ? (
+              <button
+                className="icon-button icon-button--topbar"
+                type="button"
+                title={
+                  markdownPreviewVisible ? "Hide Markdown preview" : "Show Markdown preview"
+                }
+                aria-label={
+                  markdownPreviewVisible ? "Hide Markdown preview" : "Show Markdown preview"
+                }
+                aria-pressed={markdownPreviewVisible}
+                style={
+                  markdownPreviewVisible
+                    ? { background: "var(--accent-soft)", color: "var(--text)" }
+                    : undefined
+                }
+                onClick={() => setMarkdownPreviewVisible((visible) => !visible)}
+              >
+                <BookOpen size={17} />
+              </button>
+            ) : null}
             <span className="topbar__sep" aria-hidden="true" />
             <button
               className="icon-button icon-button--topbar"
@@ -6012,39 +6080,17 @@ export default function App() {
               />
             </Suspense>
           ) : activeFile ? (
-            <Suspense fallback={<div className="empty-state editor-loading-state">Loading editor</div>}>
-              <EditorPane
+            markdownPreviewAvailable ? (
+              <MarkdownPreview
+                key={activeFile.path}
+                dark={effectiveDark}
                 contents={activeFile.contents}
-                dateTimeFormat={dateTimeFormat}
-                editorCommand={editorCommand}
-                gitAttribution={activeGitAttribution}
-                isDirty={activeFile.dirty}
                 path={activeFile.path}
-                prefersDark={effectiveDark}
-                codeFont={codeFont}
-                recentRelativeThreshold={recentRelativeThreshold}
-                revealLine={
-                  revealTarget?.path === activeFile.path ? revealTarget.lineNumber : undefined
-                }
-                revealMatchStart={
-                  revealTarget?.path === activeFile.path ? revealTarget.matchStart : undefined
-                }
-                revealMatchEnd={
-                  revealTarget?.path === activeFile.path ? revealTarget.matchEnd : undefined
-                }
-                focusOnReveal={
-                  revealTarget?.path === activeFile.path
-                    ? !revealTarget.preserveFocus
-                    : undefined
-                }
-                onChange={updateContents}
-                onCursor={setCursor}
-                onError={setError}
-                onGitCommitClick={setGitCommitPopover}
-                onNotice={setStatus}
-                onSelection={setSelection}
-              />
-            </Suspense>
+                visible={markdownPreviewVisible}
+              >
+                {activeEditor}
+              </MarkdownPreview>
+            ) : activeEditor
           ) : (
             <div className="empty-state editor-empty-state">
               <FileCog size={30} />

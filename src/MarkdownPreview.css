@@ -1,0 +1,70 @@
+.markdown-preview-split__handle:hover,
+.markdown-preview-split__handle:focus-visible {
+  background: var(--accent-soft);
+  outline: 2px solid var(--ring);
+  outline-offset: -2px;
+}
+
+.markdown-preview:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: -2px;
+}
+
+.markdown-preview a {
+  color: var(--accent);
+}
+
+.markdown-preview code,
+.markdown-preview pre {
+  background: var(--code-bg);
+  font-family: var(--font-mono);
+}
+
+.markdown-preview pre {
+  overflow: auto;
+  padding: 14px;
+}
+
+.markdown-preview blockquote {
+  padding-left: 14px;
+  border-left: 3px solid var(--border-strong);
+  color: var(--text-muted);
+}
+
+.markdown-preview table {
+  display: block;
+  overflow: auto;
+  border-collapse: collapse;
+}
+
+.markdown-preview th,
+.markdown-preview td {
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  text-align: left;
+}
+
+.markdown-preview img {
+  max-width: 100%;
+}
+
+.markdown-preview [data-mermaid-diagram] {
+  margin: 20px 0;
+  overflow: auto;
+}
+
+.markdown-preview [data-mermaid-diagram] svg {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 0 auto;
+}
+
+.markdown-preview [data-mermaid-error="true"]::before {
+  display: block;
+  margin-bottom: 8px;
+  color: var(--danger);
+  content: "Mermaid diagram could not be rendered";
+  font-family: var(--font-sans);
+  font-weight: 600;
+}

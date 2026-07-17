@@ -257,7 +257,7 @@ impl Default for PersistedViewSettings {
 // Flag ids the app currently knows about. Persisted overrides for any id not in
 // this list are pruned on load, so retiring a flag is just removing it here (and
 // from the frontend registry). Keep in sync with src/featureFlags.ts.
-const KNOWN_FEATURE_FLAGS: &[&str] = &["contextMenus"];
+const KNOWN_FEATURE_FLAGS: &[&str] = &["contextMenus", "markdownPreview"];
 
 fn default_show_gitignored_files() -> bool {
     false
@@ -3758,6 +3758,7 @@ mod tests {
 
         let mut flags = BTreeMap::new();
         flags.insert("contextMenus".to_string(), true);
+        flags.insert("markdownPreview".to_string(), true);
         flags.insert("retiredFlag".to_string(), true);
 
         let sanitized = sanitize_view_settings(PersistedViewSettings {
@@ -3766,6 +3767,7 @@ mod tests {
         });
 
         assert_eq!(sanitized.feature_flags.get("contextMenus"), Some(&true));
+        assert_eq!(sanitized.feature_flags.get("markdownPreview"), Some(&true));
         assert!(!sanitized.feature_flags.contains_key("retiredFlag"));
 
         *state.ui_state.write().unwrap() = AppUiState {
@@ -3776,6 +3778,10 @@ mod tests {
 
         let loaded = load_ui_state(&ui_state_path).unwrap();
         assert_eq!(loaded.view.feature_flags.get("contextMenus"), Some(&true));
+        assert_eq!(
+            loaded.view.feature_flags.get("markdownPreview"),
+            Some(&true)
+        );
         assert!(!loaded.view.feature_flags.contains_key("retiredFlag"));
     }
 
