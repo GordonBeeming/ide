@@ -1411,13 +1411,20 @@ fn update_view_settings(
     state: State<'_, AppState>,
     view: PersistedViewSettings,
 ) -> Result<(), CommandError> {
-    let view = apply_view_runtime_settings(&state, view)?;
-    state
+    update_view_settings_state(&state, view)
+}
+
+fn update_view_settings_state(
+    state: &AppState,
+    view: PersistedViewSettings,
+) -> Result<(), CommandError> {
+    let view = apply_view_runtime_settings(state, view)?;
+    let mut ui_state = state
         .ui_state
         .write()
-        .map_err(|_| CommandError::UiState("ui state lock poisoned".to_string()))?
-        .view = view;
-    persist_ui_state(&state)
+        .map_err(|_| CommandError::UiState("ui state lock poisoned".to_string()))?;
+    ui_state.view = view;
+    persist_ui_state_value(state, &ui_state)
 }
 
 #[tauri::command]
@@ -1451,8 +1458,7 @@ async fn update_ui_state(
         .retain(|workspace| workspace.workspace_root != workspace_root);
     ui_state.workspaces.insert(0, persisted);
     ui_state.workspaces.truncate(24);
-    drop(ui_state);
-    persist_ui_state(&state)
+    persist_ui_state_value(&state, &ui_state)
 }
 
 #[tauri::command]
@@ -2671,19 +2677,23 @@ fn is_safe_relative_path(value: &str) -> bool {
             .all(|component| matches!(component, std::path::Component::Normal(_)))
 }
 
+#[cfg(test)]
 fn persist_ui_state(state: &AppState) -> Result<(), CommandError> {
+    let ui_state = state
+        .ui_state
+        .read()
+        .map_err(|_| CommandError::UiState("ui state lock poisoned".to_string()))?;
+    persist_ui_state_value(state, &ui_state)
+}
+
+fn persist_ui_state_value(state: &AppState, ui_state: &AppUiState) -> Result<(), CommandError> {
     let path = state
         .ui_state_store_path
         .read()
         .map_err(|_| CommandError::UiState("ui state store lock poisoned".to_string()))?
         .clone()
         .ok_or_else(|| CommandError::UiState("ui state store path is unavailable".to_string()))?;
-    let state = state
-        .ui_state
-        .read()
-        .map_err(|_| CommandError::UiState("ui state lock poisoned".to_string()))?
-        .clone();
-    let contents = serde_json::to_string_pretty(&state)
+    let contents = serde_json::to_string_pretty(ui_state)
         .map_err(|error| CommandError::UiState(error.to_string()))?;
     std::fs::write(path, contents).map_err(|error| CommandError::UiState(error.to_string()))
 }
@@ -3665,9 +3675,7 @@ mod tests {
             ..PersistedViewSettings::default()
         };
 
-        let view = apply_view_runtime_settings(&state, view).unwrap();
-        state.ui_state.write().unwrap().view = view;
-        persist_ui_state(&state).unwrap();
+        update_view_settings_state(&state, view).unwrap();
 
         let loaded = load_ui_state(&ui_state_path).unwrap();
         assert_eq!(loaded.view.markdown_preview_theme_preference, "light");
@@ -3680,6 +3688,40 @@ mod tests {
             Some("src/App.tsx")
         );
         assert!(loaded.workspaces[0].trust_external_symlinks);
+    }
+
+    #[test]
+    fn concurrent_view_settings_updates_persist_latest_state() {
+        let dir = tempdir().unwrap();
+        let ui_state_path = dir.path().join("ui-state.json");
+        let state = Arc::new(test_state(dir.path().join("recents.json")));
+        *state.ui_state_store_path.write().unwrap() = Some(ui_state_path.clone());
+
+        for _ in 0..32 {
+            let barrier = Arc::new(std::sync::Barrier::new(3));
+            std::thread::scope(|scope| {
+                for preference in ["light", "dark"] {
+                    let state = Arc::clone(&state);
+                    let barrier = Arc::clone(&barrier);
+                    scope.spawn(move || {
+                        let view = PersistedViewSettings {
+                            markdown_preview_theme_preference: preference.to_string(),
+                            ..PersistedViewSettings::default()
+                        };
+                        barrier.wait();
+                        update_view_settings_state(&state, view).unwrap();
+                    });
+                }
+                barrier.wait();
+            });
+
+            let persisted = load_ui_state(&ui_state_path).unwrap();
+            let current = state.ui_state.read().unwrap();
+            assert_eq!(
+                persisted.view.markdown_preview_theme_preference,
+                current.view.markdown_preview_theme_preference
+            );
+        }
     }
 
     #[test]
