@@ -82,6 +82,7 @@ const tauriMocks = vi.hoisted(() => ({
   getWorkspaceIndexStats: vi.fn(),
   advanceWorkspaceIndex: vi.fn(),
   updateUiState: vi.fn(),
+  updateViewSettings: vi.fn(),
   updateAgentContext: vi.fn(),
   getLspServers: vi.fn(),
   getHttpEndpoint: vi.fn(),
@@ -156,6 +157,7 @@ vi.mock("./tauri", async () => {
     getWorkspaceIndexStats: tauriMocks.getWorkspaceIndexStats,
     advanceWorkspaceIndex: tauriMocks.advanceWorkspaceIndex,
     updateUiState: tauriMocks.updateUiState,
+    updateViewSettings: tauriMocks.updateViewSettings,
     updateAgentContext: tauriMocks.updateAgentContext,
     getLspServers: tauriMocks.getLspServers,
     getHttpEndpoint: tauriMocks.getHttpEndpoint,
@@ -388,6 +390,7 @@ describe("App shell interactions", () => {
       pendingFolders: 0,
     });
     tauriMocks.updateUiState.mockResolvedValue(undefined);
+    tauriMocks.updateViewSettings.mockResolvedValue(undefined);
     tauriMocks.fetchGit.mockResolvedValue(undefined);
     tauriMocks.updateAgentContext.mockResolvedValue(undefined);
     tauriMocks.getLspServers.mockResolvedValue([]);
@@ -1225,7 +1228,7 @@ describe("App shell interactions", () => {
     render(<App />);
 
     expect(await treeButton("README.md")).toBeInTheDocument();
-    await openSettingsDialog();
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
     selectSettingsTab("Preview Features");
 
     const toggle = await screen.findByLabelText("Context menus");
@@ -1329,6 +1332,92 @@ describe("App shell interactions", () => {
     expect(await screen.findByRole("region", { name: "Preview notes.markdown" }))
       .toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Unsaved" })).not.toBeInTheDocument();
+  });
+
+  it("resolves auto preview theme inline and persists direct light/dark choices", async () => {
+    tauriMocks.getUiState.mockResolvedValue({
+      view: {
+        showDotfiles: false,
+        showGeneratedInternal: false,
+        themePreference: "dark",
+        markdownPreviewThemePreference: "auto",
+        featureFlags: { markdownPreview: true },
+      },
+      workspace: { expandedFolders: [], openFiles: [] },
+    });
+    render(<App />);
+
+    fireEvent.click(await treeButton("README.md"));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Show Markdown preview" }),
+    );
+
+    const preview = await screen.findByRole("region", { name: "Preview README.md" });
+    expect(preview).toHaveAttribute("data-preview-theme", "dark");
+    expect(
+      screen.getByRole("button", { name: "Use dark Markdown preview theme" }),
+    ).toHaveAttribute("aria-pressed", "true");
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Use light Markdown preview theme" }),
+    );
+    expect(preview).toHaveAttribute("data-preview-theme", "light");
+    await waitFor(() =>
+      expect(tauriMocks.updateUiState).toHaveBeenLastCalledWith(
+        expect.objectContaining({ markdownPreviewThemePreference: "light" }),
+        expect.anything(),
+      ),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    selectSettingsTab("Preview Features");
+    const setting = await screen.findByRole("combobox", {
+      name: "Markdown preview theme",
+    });
+    expect(setting).toHaveValue("light");
+    fireEvent.change(setting, { target: { value: "auto" } });
+    await waitFor(() =>
+      expect(tauriMocks.updateUiState).toHaveBeenLastCalledWith(
+        expect.objectContaining({ markdownPreviewThemePreference: "auto" }),
+        expect.anything(),
+      ),
+    );
+  });
+
+  it("persists preview theme choices without writing workspace state in single-file mode", async () => {
+    tauriMocks.getInitialFile.mockResolvedValueOnce("README.md");
+    const savedWorkspace = {
+      expandedFolders: ["src"],
+      openFiles: ["src/App.tsx"],
+      activeFile: "src/App.tsx",
+      selectedPath: "src/App.tsx",
+    };
+    tauriMocks.getUiState.mockResolvedValue({
+      view: {
+        showDotfiles: false,
+        showGeneratedInternal: false,
+        themePreference: "dark",
+        markdownPreviewThemePreference: "auto",
+        featureFlags: { markdownPreview: true },
+      },
+      workspace: savedWorkspace,
+    });
+    render(<App />);
+
+    expect(await screen.findByLabelText("Editor README.md")).toBeInTheDocument();
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Show Markdown preview" }),
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Use light Markdown preview theme" }),
+    );
+
+    await waitFor(() =>
+      expect(tauriMocks.updateViewSettings).toHaveBeenLastCalledWith(
+        expect.objectContaining({ markdownPreviewThemePreference: "light" }),
+      ),
+    );
+    expect(tauriMocks.updateUiState).not.toHaveBeenCalled();
   });
 
   it("shows the Git category and persists a setting toggle", async () => {

@@ -206,6 +206,8 @@ struct PersistedViewSettings {
     diff_view_mode: String,
     #[serde(default = "default_theme_preference")]
     theme_preference: String,
+    #[serde(default = "default_markdown_preview_theme_preference")]
+    markdown_preview_theme_preference: String,
     // Font stack for the editor + diff panes only; UI chrome always uses Space Grotesk.
     #[serde(default = "default_code_font")]
     code_font: String,
@@ -247,6 +249,7 @@ impl Default for PersistedViewSettings {
             recent_relative_threshold: default_recent_relative_threshold(),
             diff_view_mode: default_diff_view_mode(),
             theme_preference: default_theme_preference(),
+            markdown_preview_theme_preference: default_markdown_preview_theme_preference(),
             code_font: default_code_font(),
             auto_fetch_seconds: default_auto_fetch_seconds(),
             feature_flags: BTreeMap::new(),
@@ -327,6 +330,7 @@ const DEFAULT_DIFF_VIEW_MODE: &str = "inline";
 const KNOWN_DIFF_VIEW_MODES: &[&str] = &["inline", "sideBySide"];
 const DEFAULT_THEME_PREFERENCE: &str = "system";
 const KNOWN_THEME_PREFERENCES: &[&str] = &["system", "light", "dark"];
+const KNOWN_MARKDOWN_PREVIEW_THEME_PREFERENCES: &[&str] = &["auto", "light", "dark"];
 const DEFAULT_CODE_FONT: &str = "ibm-plex-mono";
 const KNOWN_CODE_FONTS: &[&str] = &["ibm-plex-mono", "system-mono"];
 
@@ -410,6 +414,10 @@ fn default_theme_preference() -> String {
     DEFAULT_THEME_PREFERENCE.to_string()
 }
 
+fn default_markdown_preview_theme_preference() -> String {
+    "auto".to_string()
+}
+
 fn default_code_font() -> String {
     DEFAULT_CODE_FONT.to_string()
 }
@@ -470,6 +478,11 @@ fn sanitize_view_settings(mut settings: PersistedViewSettings) -> PersistedViewS
     }
     if !KNOWN_THEME_PREFERENCES.contains(&settings.theme_preference.as_str()) {
         settings.theme_preference = default_theme_preference();
+    }
+    if !KNOWN_MARKDOWN_PREVIEW_THEME_PREFERENCES
+        .contains(&settings.markdown_preview_theme_preference.as_str())
+    {
+        settings.markdown_preview_theme_preference = default_markdown_preview_theme_preference();
     }
     if !KNOWN_CODE_FONTS.contains(&settings.code_font.as_str()) {
         settings.code_font = default_code_font();
@@ -1361,19 +1374,10 @@ fn settings_locations_for_state(state: &AppState) -> Result<SettingsLocations, C
     })
 }
 
-#[tauri::command]
-async fn update_ui_state(
-    window: tauri::Window,
-    state: State<'_, AppState>,
+fn apply_view_runtime_settings(
+    state: &AppState,
     view: PersistedViewSettings,
-    workspace: WorkspaceUiStatePayload,
-) -> Result<(), CommandError> {
-    let workspace_root = workspace_root_string_for_window(&state, &window).await;
-    let mut workspace = sanitize_workspace_ui_state(workspace);
-    let mut ui_state = state
-        .ui_state
-        .write()
-        .map_err(|_| CommandError::UiState("ui state lock poisoned".to_string()))?;
+) -> Result<PersistedViewSettings, CommandError> {
     let view = sanitize_view_settings(view);
     *state
         .tree_scan_limit
@@ -1399,7 +1403,45 @@ async fn update_ui_state(
         .write()
         .map_err(|_| CommandError::UiState("background index batch lock poisoned".to_string()))? =
         view.background_index_batch_entries;
-    ui_state.view = view;
+    Ok(view)
+}
+
+#[tauri::command]
+fn update_view_settings(
+    state: State<'_, AppState>,
+    view: PersistedViewSettings,
+) -> Result<(), CommandError> {
+    update_view_settings_state(&state, view)
+}
+
+fn update_view_settings_state(
+    state: &AppState,
+    view: PersistedViewSettings,
+) -> Result<(), CommandError> {
+    let (_persist_guard, path) = lock_ui_state_store(state)?;
+    let view = apply_view_runtime_settings(state, view)?;
+    let ui_state = {
+        let mut ui_state = state
+            .ui_state
+            .write()
+            .map_err(|_| CommandError::UiState("ui state lock poisoned".to_string()))?;
+        ui_state.view = view;
+        ui_state.clone()
+    };
+    persist_ui_state_value(&path, &ui_state)
+}
+
+#[tauri::command]
+async fn update_ui_state(
+    window: tauri::Window,
+    state: State<'_, AppState>,
+    view: PersistedViewSettings,
+    workspace: WorkspaceUiStatePayload,
+) -> Result<(), CommandError> {
+    let workspace_root = workspace_root_string_for_window(&state, &window).await;
+    let mut workspace = sanitize_workspace_ui_state(workspace);
+    let (_persist_guard, path) = lock_ui_state_store(&state)?;
+    let view = apply_view_runtime_settings(&state, view)?;
     let persisted = PersistedWorkspaceUiState {
         workspace_root: workspace_root.clone(),
         expanded_folders: std::mem::take(&mut workspace.expanded_folders),
@@ -1411,13 +1453,20 @@ async fn update_ui_state(
         trust_external_symlinks: workspace.trust_external_symlinks,
         updated_at: now_ms(),
     };
-    ui_state
-        .workspaces
-        .retain(|workspace| workspace.workspace_root != workspace_root);
-    ui_state.workspaces.insert(0, persisted);
-    ui_state.workspaces.truncate(24);
-    drop(ui_state);
-    persist_ui_state(&state)
+    let ui_state = {
+        let mut ui_state = state
+            .ui_state
+            .write()
+            .map_err(|_| CommandError::UiState("ui state lock poisoned".to_string()))?;
+        ui_state.view = view;
+        ui_state
+            .workspaces
+            .retain(|workspace| workspace.workspace_root != workspace_root);
+        ui_state.workspaces.insert(0, persisted);
+        ui_state.workspaces.truncate(24);
+        ui_state.clone()
+    };
+    persist_ui_state_value(&path, &ui_state)
 }
 
 #[tauri::command]
@@ -2087,6 +2136,7 @@ pub fn run() {
             get_workspace_display_context,
             get_workspace_index_stats,
             advance_workspace_index,
+            update_view_settings,
             update_ui_state,
             update_agent_context,
             get_agent_context,
@@ -2635,19 +2685,32 @@ fn is_safe_relative_path(value: &str) -> bool {
             .all(|component| matches!(component, std::path::Component::Normal(_)))
 }
 
+#[cfg(test)]
 fn persist_ui_state(state: &AppState) -> Result<(), CommandError> {
-    let path = state
-        .ui_state_store_path
-        .read()
-        .map_err(|_| CommandError::UiState("ui state store lock poisoned".to_string()))?
-        .clone()
-        .ok_or_else(|| CommandError::UiState("ui state store path is unavailable".to_string()))?;
-    let state = state
+    let (_persist_guard, path) = lock_ui_state_store(state)?;
+    let ui_state = state
         .ui_state
         .read()
         .map_err(|_| CommandError::UiState("ui state lock poisoned".to_string()))?
         .clone();
-    let contents = serde_json::to_string_pretty(&state)
+    persist_ui_state_value(&path, &ui_state)
+}
+
+fn lock_ui_state_store(
+    state: &AppState,
+) -> Result<(std::sync::RwLockWriteGuard<'_, Option<PathBuf>>, PathBuf), CommandError> {
+    let guard = state
+        .ui_state_store_path
+        .write()
+        .map_err(|_| CommandError::UiState("ui state store lock poisoned".to_string()))?;
+    let path = guard
+        .clone()
+        .ok_or_else(|| CommandError::UiState("ui state store path is unavailable".to_string()))?;
+    Ok((guard, path))
+}
+
+fn persist_ui_state_value(path: &Path, ui_state: &AppUiState) -> Result<(), CommandError> {
+    let contents = serde_json::to_string_pretty(ui_state)
         .map_err(|error| CommandError::UiState(error.to_string()))?;
     std::fs::write(path, contents).map_err(|error| CommandError::UiState(error.to_string()))
 }
@@ -3605,6 +3668,80 @@ mod tests {
     }
 
     #[test]
+    fn view_settings_updates_preserve_workspace_state() {
+        let dir = tempdir().unwrap();
+        let ui_state_path = dir.path().join("ui-state.json");
+        let state = test_state(dir.path().join("recents.json"));
+        *state.ui_state_store_path.write().unwrap() = Some(ui_state_path.clone());
+        *state.ui_state.write().unwrap() = AppUiState {
+            view: PersistedViewSettings::default(),
+            workspaces: vec![PersistedWorkspaceUiState {
+                workspace_root: "/workspace".to_string(),
+                expanded_folders: vec!["src".to_string()],
+                open_files: vec!["src/App.tsx".to_string()],
+                active_file: Some("src/App.tsx".to_string()),
+                selected_path: Some("src/App.tsx".to_string()),
+                sidebar_width: Some(320),
+                commit_message_height: Some(120),
+                trust_external_symlinks: true,
+                updated_at: 123,
+            }],
+        };
+        let view = PersistedViewSettings {
+            markdown_preview_theme_preference: "light".to_string(),
+            ..PersistedViewSettings::default()
+        };
+
+        update_view_settings_state(&state, view).unwrap();
+
+        let loaded = load_ui_state(&ui_state_path).unwrap();
+        assert_eq!(loaded.view.markdown_preview_theme_preference, "light");
+        assert_eq!(loaded.workspaces.len(), 1);
+        assert_eq!(loaded.workspaces[0].workspace_root, "/workspace");
+        assert_eq!(loaded.workspaces[0].expanded_folders, vec!["src"]);
+        assert_eq!(loaded.workspaces[0].open_files, vec!["src/App.tsx"]);
+        assert_eq!(
+            loaded.workspaces[0].active_file.as_deref(),
+            Some("src/App.tsx")
+        );
+        assert!(loaded.workspaces[0].trust_external_symlinks);
+    }
+
+    #[test]
+    fn concurrent_view_settings_updates_persist_latest_state() {
+        let dir = tempdir().unwrap();
+        let ui_state_path = dir.path().join("ui-state.json");
+        let state = Arc::new(test_state(dir.path().join("recents.json")));
+        *state.ui_state_store_path.write().unwrap() = Some(ui_state_path.clone());
+
+        for _ in 0..32 {
+            let barrier = Arc::new(std::sync::Barrier::new(3));
+            std::thread::scope(|scope| {
+                for preference in ["light", "dark"] {
+                    let state = Arc::clone(&state);
+                    let barrier = Arc::clone(&barrier);
+                    scope.spawn(move || {
+                        let view = PersistedViewSettings {
+                            markdown_preview_theme_preference: preference.to_string(),
+                            ..PersistedViewSettings::default()
+                        };
+                        barrier.wait();
+                        update_view_settings_state(&state, view).unwrap();
+                    });
+                }
+                barrier.wait();
+            });
+
+            let persisted = load_ui_state(&ui_state_path).unwrap();
+            let current = state.ui_state.read().unwrap();
+            assert_eq!(
+                persisted.view.markdown_preview_theme_preference,
+                current.view.markdown_preview_theme_preference
+            );
+        }
+    }
+
+    #[test]
     fn ui_state_is_sanitized_deduplicated_and_persisted() {
         let dir = tempdir().unwrap();
         let recents_path = dir.path().join("recents.json");
@@ -3670,6 +3807,7 @@ mod tests {
                 recent_relative_threshold: "twoDays".to_string(),
                 diff_view_mode: "sideBySide".to_string(),
                 theme_preference: "dark".to_string(),
+                markdown_preview_theme_preference: "light".to_string(),
                 code_font: "system-mono".to_string(),
                 auto_fetch_seconds: 120,
                 feature_flags: BTreeMap::new(),
@@ -3707,6 +3845,7 @@ mod tests {
         assert_eq!(loaded.view.recent_relative_threshold, "twoDays");
         assert_eq!(loaded.view.diff_view_mode, "sideBySide");
         assert_eq!(loaded.view.theme_preference, "dark");
+        assert_eq!(loaded.view.markdown_preview_theme_preference, "light");
         assert_eq!(loaded.view.code_font, "system-mono");
         assert_eq!(loaded.view.auto_fetch_seconds, 120);
         assert_eq!(loaded.workspaces.len(), 1);
@@ -3800,6 +3939,26 @@ mod tests {
             ..PersistedViewSettings::default()
         });
         assert_eq!(sanitized.code_font, "system-mono");
+    }
+
+    #[test]
+    fn markdown_preview_theme_defaults_and_rejects_unknown_values() {
+        assert_eq!(
+            PersistedViewSettings::default().markdown_preview_theme_preference,
+            "auto"
+        );
+
+        let sanitized = sanitize_view_settings(PersistedViewSettings {
+            markdown_preview_theme_preference: "sepia".to_string(),
+            ..PersistedViewSettings::default()
+        });
+        assert_eq!(sanitized.markdown_preview_theme_preference, "auto");
+
+        let sanitized = sanitize_view_settings(PersistedViewSettings {
+            markdown_preview_theme_preference: "dark".to_string(),
+            ..PersistedViewSettings::default()
+        });
+        assert_eq!(sanitized.markdown_preview_theme_preference, "dark");
     }
 
     #[test]

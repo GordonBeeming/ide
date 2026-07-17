@@ -12,6 +12,18 @@ async function advancePreview() {
 }
 
 describe("MarkdownPreview", () => {
+  it("allows rendered document text to be selected", () => {
+    const { container } = render(
+      <MarkdownPreview contents="# Select me" path="README.md">
+        <textarea aria-label="Editor" />
+      </MarkdownPreview>,
+    );
+
+    const content = container.querySelector(".markdown-preview__content");
+    expect(content).not.toBeNull();
+    expect(content).toHaveStyle({ WebkitUserSelect: "text", userSelect: "text" });
+  });
+
   it("renders live Markdown while preserving the preview scroll position", async () => {
     vi.useFakeTimers();
     try {
@@ -59,6 +71,46 @@ describe("MarkdownPreview", () => {
     );
 
     expect(screen.getByLabelText("Editor")).toBe(editor);
+  });
+
+  it("shows the resolved theme and switches directly to the other theme", () => {
+    const onDarkChange = vi.fn();
+    const { rerender } = render(
+      <MarkdownPreview
+        contents="# Preview"
+        dark
+        onDarkChange={onDarkChange}
+        path="README.md"
+      >
+        <textarea aria-label="Editor" />
+      </MarkdownPreview>,
+    );
+
+    const preview = screen.getByRole("region", { name: "Preview README.md" });
+    const light = screen.getByRole("button", {
+      name: "Use light Markdown preview theme",
+    });
+    const dark = screen.getByRole("button", {
+      name: "Use dark Markdown preview theme",
+    });
+    expect(preview).toHaveAttribute("data-preview-theme", "dark");
+    expect(dark).toHaveAttribute("aria-pressed", "true");
+
+    fireEvent.click(light);
+    expect(onDarkChange).toHaveBeenCalledWith(false);
+
+    rerender(
+      <MarkdownPreview
+        contents="# Preview"
+        dark={false}
+        onDarkChange={onDarkChange}
+        path="README.md"
+      >
+        <textarea aria-label="Editor" />
+      </MarkdownPreview>,
+    );
+    expect(preview).toHaveAttribute("data-preview-theme", "light");
+    expect(light).toHaveAttribute("aria-pressed", "true");
   });
 
   it("opens only absolute HTTP(S) links outside the app for primary and auxiliary clicks", async () => {
@@ -216,6 +268,35 @@ describe("MarkdownPreview", () => {
     expect(separator).toHaveAttribute("aria-valuenow", "50");
     fireEvent.keyDown(separator, { key: "ArrowRight" });
     expect(separator).toHaveAttribute("aria-valuenow", "55");
+  });
+
+  it("preserves imperatively rendered diagrams while resizing the split", async () => {
+    vi.useFakeTimers();
+    try {
+      const { container } = render(
+        <MarkdownPreview contents="# Diagram" path="README.md">
+          <textarea aria-label="Editor" />
+        </MarkdownPreview>,
+      );
+      await advancePreview();
+
+      const content = container.querySelector<HTMLElement>(".markdown-preview__content");
+      expect(content).not.toBeNull();
+      content!.innerHTML =
+        '<div data-mermaid-diagram><svg aria-label="Rendered Mermaid diagram"></svg></div>';
+      const renderedDiagram = screen.getByLabelText("Rendered Mermaid diagram");
+
+      fireEvent.keyDown(
+        screen.getByRole("separator", {
+          name: "Resize Markdown editor and preview",
+        }),
+        { key: "ArrowRight" },
+      );
+
+      expect(screen.getByLabelText("Rendered Mermaid diagram")).toBe(renderedDiagram);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("falls back to sanitized source when Markdown parsing fails", () => {

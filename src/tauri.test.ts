@@ -340,7 +340,8 @@ describe("hosted Tauri API transport", () => {
   it("returns default UI state and does not persist it from hosted browser mode", async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
-    const { getSettingsLocations, getUiState, updateUiState } = await import("./tauri");
+    const { getSettingsLocations, getUiState, updateUiState, updateViewSettings } =
+      await import("./tauri");
 
     await expect(getUiState()).resolves.toEqual({
       view: {
@@ -367,6 +368,7 @@ describe("hosted Tauri API transport", () => {
         recentRelativeThreshold: "oneWeek",
         diffViewMode: "inline",
         themePreference: "system",
+        markdownPreviewThemePreference: "auto",
         codeFont: "ibm-plex-mono",
         autoFetchSeconds: 60,
         featureFlags: {},
@@ -400,6 +402,11 @@ describe("hosted Tauri API transport", () => {
         selectedPath: "README.md",
       },
     );
+    await updateViewSettings({
+      showDotfiles: true,
+      showGeneratedInternal: true,
+      markdownPreviewThemePreference: "light",
+    });
 
     expect(fetchMock).not.toHaveBeenCalled();
   });
@@ -870,7 +877,7 @@ describe("hosted Tauri API transport", () => {
         selectedPath: "src/App.tsx",
       },
     });
-    const { getUiState, updateUiState } = await import("./tauri");
+    const { getUiState, updateUiState, updateViewSettings } = await import("./tauri");
 
     await expect(getUiState()).resolves.toMatchObject({
       view: {
@@ -892,6 +899,11 @@ describe("hosted Tauri API transport", () => {
         selectedPath: "src/App.tsx",
       },
     );
+    await updateViewSettings({
+      showDotfiles: true,
+      showGeneratedInternal: false,
+      markdownPreviewThemePreference: "light",
+    });
 
     expect(invoke).toHaveBeenCalledWith("get_ui_state");
     expect(invoke).toHaveBeenCalledWith("update_ui_state", {
@@ -904,6 +916,13 @@ describe("hosted Tauri API transport", () => {
         openFiles: ["src/App.tsx"],
         activeFile: "src/App.tsx",
         selectedPath: "src/App.tsx",
+      },
+    });
+    expect(invoke).toHaveBeenCalledWith("update_view_settings", {
+      view: {
+        showDotfiles: true,
+        showGeneratedInternal: false,
+        markdownPreviewThemePreference: "light",
       },
     });
   });
@@ -1471,6 +1490,18 @@ describe("Theme preference sanitization", () => {
     expect(sanitizeThemePreference("solarized")).toBe("system");
     expect(sanitizeThemePreference(undefined)).toBe("system");
     expect(sanitizeThemePreference(null)).toBe("system");
+  });
+});
+
+describe("Markdown preview theme preference sanitization", () => {
+  it("keeps known values and falls back to auto for anything else", async () => {
+    const { sanitizeMarkdownPreviewThemePreference } = await import("./tauri");
+
+    expect(sanitizeMarkdownPreviewThemePreference("auto")).toBe("auto");
+    expect(sanitizeMarkdownPreviewThemePreference("light")).toBe("light");
+    expect(sanitizeMarkdownPreviewThemePreference("dark")).toBe("dark");
+    expect(sanitizeMarkdownPreviewThemePreference("sepia")).toBe("auto");
+    expect(sanitizeMarkdownPreviewThemePreference(undefined)).toBe("auto");
   });
 });
 

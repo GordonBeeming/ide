@@ -249,6 +249,18 @@ export function sanitizeThemePreference(value: unknown): ThemePreference {
     : defaultThemePreference;
 }
 
+export type MarkdownPreviewThemePreference = "auto" | "light" | "dark";
+
+export const defaultMarkdownPreviewThemePreference: MarkdownPreviewThemePreference = "auto";
+
+export function sanitizeMarkdownPreviewThemePreference(
+  value: unknown,
+): MarkdownPreviewThemePreference {
+  return value === "auto" || value === "light" || value === "dark"
+    ? value
+    : defaultMarkdownPreviewThemePreference;
+}
+
 // Font stack for the editor + diff panes only; UI chrome always uses Space Grotesk.
 export type CodeFont = "ibm-plex-mono" | "system-mono";
 
@@ -282,6 +294,7 @@ export interface PersistedViewSettings {
   recentRelativeThreshold?: RecentRelativeThresholdId;
   diffViewMode?: DiffViewMode;
   themePreference?: ThemePreference;
+  markdownPreviewThemePreference?: MarkdownPreviewThemePreference;
   codeFont?: CodeFont;
   // Seconds between background auto-fetches; 0 disables it. Clamped on the backend.
   autoFetchSeconds?: number;
@@ -358,6 +371,7 @@ const defaultUiSnapshot: PersistedUiSnapshot = {
     recentRelativeThreshold: defaultRecentRelativeThreshold,
     diffViewMode: defaultDiffViewMode,
     themePreference: defaultThemePreference,
+    markdownPreviewThemePreference: defaultMarkdownPreviewThemePreference,
     codeFont: defaultCodeFont,
     autoFetchSeconds: 60,
     featureFlags: {},
@@ -521,6 +535,11 @@ export function updateUiState(
 ) {
   if (!isNativeTauri()) return Promise.resolve();
   return invoke<void>("update_ui_state", { view, workspace });
+}
+
+export function updateViewSettings(view: PersistedViewSettings) {
+  if (!isNativeTauri()) return Promise.resolve();
+  return invoke<void>("update_view_settings", { view });
 }
 
 export function listFiles(
