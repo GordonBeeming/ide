@@ -52,9 +52,14 @@ export default function MarkdownPreview({
     if (!visible) return;
     let cancelled = false;
     const timer = window.setTimeout(() => {
-      void import("./markdownRenderer").then(({ renderMarkdown }) => {
-        if (!cancelled) setHtml(renderMarkdown(contents));
-      });
+      void import("./markdownRenderer")
+        .then(({ renderMarkdown }) => {
+          if (!cancelled) setHtml(renderMarkdown(contents));
+        })
+        .catch((error: unknown) => {
+          console.error("Failed to load Markdown renderer:", error);
+          if (!cancelled) setHtml("<p>Markdown preview unavailable.</p>");
+        });
     }, previewDelayMs);
     return () => {
       cancelled = true;
@@ -64,7 +69,7 @@ export default function MarkdownPreview({
 
   useLayoutEffect(() => {
     if (preview.current) preview.current.scrollTop = previewScrollTop.current;
-  }, [html]);
+  }, [html, visible]);
 
   const beginResize = useCallback(
     (event: ReactPointerEvent<HTMLElement>) => {
