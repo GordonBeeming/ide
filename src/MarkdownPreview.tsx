@@ -19,6 +19,7 @@ const splitRatioStep = 5;
 interface MarkdownPreviewProps {
   children: ReactNode;
   contents: string;
+  dark?: boolean;
   path: string;
   visible?: boolean;
 }
@@ -32,6 +33,7 @@ function clampSplitRatio(value: number) {
 export default function MarkdownPreview({
   children,
   contents,
+  dark = false,
   path,
   visible = true,
 }: MarkdownPreviewProps) {
@@ -73,6 +75,26 @@ export default function MarkdownPreview({
   useLayoutEffect(() => {
     if (preview.current) preview.current.scrollTop = previewScrollTop.current;
   }, [html, visible]);
+
+  useEffect(() => {
+    if (!visible || !preview.current) return;
+    const diagrams = Array.from(
+      preview.current.querySelectorAll<HTMLElement>("[data-mermaid-diagram]"),
+    );
+    if (diagrams.length === 0) return;
+
+    let cancelled = false;
+    void import("./mermaidRenderer")
+      .then(async ({ renderMermaidDiagrams }) => {
+        if (!cancelled) await renderMermaidDiagrams(diagrams, dark);
+      })
+      .catch((error: unknown) => {
+        console.error("Failed to load Mermaid renderer:", error);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [dark, html, visible]);
 
   const beginResize = useCallback(
     (event: ReactPointerEvent<HTMLElement>) => {
@@ -175,6 +197,7 @@ export default function MarkdownPreview({
             role="region"
             tabIndex={0}
             aria-label={`Preview ${path}`}
+            onAuxClick={handlePreviewClick}
             onClick={handlePreviewClick}
             onScroll={(event) => {
               previewScrollTop.current = event.currentTarget.scrollTop;

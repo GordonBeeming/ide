@@ -47,3 +47,24 @@
 .markdown-preview img {
   max-width: 100%;
 }
+
+.markdown-preview [data-mermaid-diagram] {
+  margin: 20px 0;
+  overflow: auto;
+}
+
+.markdown-preview [data-mermaid-diagram] svg {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 0 auto;
+}
+
+.markdown-preview [data-mermaid-error="true"]::before {
+  display: block;
+  margin-bottom: 8px;
+  color: var(--danger);
+  content: "Mermaid diagram could not be rendered";
+  font-family: var(--font-sans);
+  font-weight: 600;
+}

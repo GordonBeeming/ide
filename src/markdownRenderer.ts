@@ -7,6 +7,23 @@ const sanitizeOptions = {
   FORBID_TAGS: ["style"],
 };
 
+function escapeHtml(value: string) {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;");
+}
+
+marked.use({
+  renderer: {
+    code({ text, lang }) {
+      if ((lang ?? "").trim().toLowerCase() !== "mermaid") return false;
+      return `<div data-mermaid-diagram><pre>${escapeHtml(text)}</pre></div>`;
+    },
+  },
+});
+
 export function renderMarkdown(contents: string) {
   try {
     return DOMPurify.sanitize(

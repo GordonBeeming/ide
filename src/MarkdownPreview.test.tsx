@@ -61,7 +61,7 @@ describe("MarkdownPreview", () => {
     expect(screen.getByLabelText("Editor")).toBe(editor);
   });
 
-  it("opens only absolute HTTP(S) links outside the app", async () => {
+  it("opens only absolute HTTP(S) links outside the app for primary and auxiliary clicks", async () => {
     const open = vi.spyOn(window, "open").mockImplementation(() => null);
     try {
       render(
@@ -78,9 +78,11 @@ describe("MarkdownPreview", () => {
 
       fireEvent.click(external);
       fireEvent.click(relative);
+      fireEvent(external, new MouseEvent("auxclick", { bubbles: true, button: 1 }));
+      fireEvent(relative, new MouseEvent("auxclick", { bubbles: true, button: 1 }));
 
       expect(open).toHaveBeenCalledWith("https://example.com", "_blank", "noopener,noreferrer");
-      expect(open).toHaveBeenCalledTimes(1);
+      expect(open).toHaveBeenCalledTimes(2);
     } finally {
       open.mockRestore();
     }
@@ -229,5 +231,13 @@ describe("MarkdownPreview", () => {
       parse.mockRestore();
       error.mockRestore();
     }
+  });
+
+  it("marks Mermaid fences for deferred diagram rendering", () => {
+    const html = renderMarkdown("```mermaid\nflowchart LR\n  A[One] --> B[Two]\n```");
+
+    expect(html).toContain("data-mermaid-diagram");
+    expect(html).toContain("flowchart LR");
+    expect(html).not.toContain('class="language-mermaid"');
   });
 });

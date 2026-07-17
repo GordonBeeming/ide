@@ -6083,6 +6083,7 @@ export default function App() {
             markdownPreviewAvailable ? (
               <MarkdownPreview
                 key={activeFile.path}
+                dark={effectiveDark}
                 contents={activeFile.contents}
                 path={activeFile.path}
                 visible={markdownPreviewVisible}
