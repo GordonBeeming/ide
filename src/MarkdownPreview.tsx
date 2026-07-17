@@ -34,6 +34,7 @@ const MarkdownContent = memo(function MarkdownContent({ html }: { html: string }
     <div
       className="markdown-preview__content"
       dangerouslySetInnerHTML={{ __html: html }}
+      style={{ WebkitUserSelect: "text", userSelect: "text" }}
     />
   );
 });

@@ -12,6 +12,18 @@ async function advancePreview() {
 }
 
 describe("MarkdownPreview", () => {
+  it("allows rendered document text to be selected", () => {
+    const { container } = render(
+      <MarkdownPreview contents="# Select me" path="README.md">
+        <textarea aria-label="Editor" />
+      </MarkdownPreview>,
+    );
+
+    const content = container.querySelector(".markdown-preview__content");
+    expect(content).not.toBeNull();
+    expect(content).toHaveStyle({ WebkitUserSelect: "text", userSelect: "text" });
+  });
+
   it("renders live Markdown while preserving the preview scroll position", async () => {
     vi.useFakeTimers();
     try {
