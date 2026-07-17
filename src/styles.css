@@ -265,7 +265,15 @@ button {
   overflow: hidden;
   background: var(--bg);
   color-scheme: inherit;
+  user-select: none;
   zoom: var(--app-zoom, 1);
+}
+
+input,
+textarea,
+.cm-content,
+[contenteditable="true"] {
+  user-select: text;
 }
 
 .app-shell--sidebar-collapsed {
@@ -2286,18 +2294,6 @@ button {
   padding: 12px 10px;
   color: var(--text-muted);
   font-size: 13px;
-}
-
-/* Right-click now opens our own menus instead of the browser's, so the chrome
-   these menus target stops behaving like selectable web-page text. Dialogs are
-   deliberately NOT in this list — their body text (paths, error messages) must
-   stay copyable. Editor content and text inputs are never inside these
-   containers, so their native selection is untouched. Scoped behind the flag
-   so it's a no-op when contextMenus is off. */
-[data-context-menus="true"] .sidebar,
-[data-context-menus="true"] .tab-strip,
-[data-context-menus="true"] .statusbar {
-  user-select: none;
 }
 
 .context-menu {

@@ -1,6 +1,3 @@
-import DOMPurify from "dompurify";
-import { marked } from "marked";
-import "./MarkdownPreview.css";
 import {
   type CSSProperties,
   type KeyboardEvent as ReactKeyboardEvent,
@@ -28,10 +25,6 @@ interface MarkdownPreviewProps {
 
 const previewDelayMs = 100;
 
-function renderMarkdown(contents: string) {
-  return DOMPurify.sanitize(marked.parse(contents, { async: false }));
-}
-
 function clampSplitRatio(value: number) {
   return Math.min(maxSplitRatio, Math.max(minSplitRatio, value));
 }
@@ -53,12 +46,20 @@ export default function MarkdownPreview({
     (value: number) => setSplitRatioState(clampSplitRatio(value)),
     [],
   );
-  const [html, setHtml] = useState(() => (visible ? renderMarkdown(contents) : ""));
+  const [html, setHtml] = useState("");
 
   useEffect(() => {
     if (!visible) return;
-    const timer = window.setTimeout(() => setHtml(renderMarkdown(contents)), previewDelayMs);
-    return () => window.clearTimeout(timer);
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      void import("./markdownRenderer").then(({ renderMarkdown }) => {
+        if (!cancelled) setHtml(renderMarkdown(contents));
+      });
+    }, previewDelayMs);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
   }, [contents, visible]);
 
   useLayoutEffect(() => {
@@ -122,14 +123,24 @@ export default function MarkdownPreview({
 
   return (
     <div
-      className={[
-        "markdown-preview-split",
-        visible ? "" : "markdown-preview-split--hidden",
-      ].join(" ")}
+      className="markdown-preview-split"
       ref={host}
-      style={{ "--markdown-editor-width": `${visible ? splitRatio : 100}%` } as CSSProperties}
+      style={{
+        display: "grid",
+        gridRow: 2,
+        gridTemplateColumns: visible
+          ? `minmax(0, ${splitRatio}%) 7px minmax(0, 1fr)`
+          : "minmax(0, 1fr)",
+        minHeight: 0,
+        overflow: "hidden",
+      } as CSSProperties}
     >
-      <div className="markdown-preview-split__editor">{children}</div>
+      <div
+        className="markdown-preview-split__editor"
+        style={{ minWidth: 0, minHeight: 0, overflow: "hidden" }}
+      >
+        {children}
+      </div>
       {visible ? (
         <>
           <div
@@ -143,6 +154,12 @@ export default function MarkdownPreview({
             aria-valuenow={splitRatio}
             onKeyDown={handleResizeKeyDown}
             onPointerDown={beginResize}
+            style={{
+              border: 0,
+              borderInline: "1px solid var(--border)",
+              background: "var(--surface)",
+              cursor: "col-resize",
+            }}
           />
           <section
             className="markdown-preview"
@@ -153,6 +170,17 @@ export default function MarkdownPreview({
             onClick={handlePreviewClick}
             onScroll={(event) => {
               previewScrollTop.current = event.currentTarget.scrollTop;
+            }}
+            style={{
+              minWidth: 0,
+              minHeight: 0,
+              overflow: "auto",
+              padding: "24px clamp(18px, 4vw, 42px) 48px",
+              background: "var(--editor-bg)",
+              color: "var(--text)",
+              fontFamily: "var(--font-sans)",
+              fontSize: 15,
+              lineHeight: 1.65,
             }}
             dangerouslySetInnerHTML={{ __html: html }}
           />

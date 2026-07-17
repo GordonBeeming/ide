@@ -1,51 +1,8 @@
-.icon-button--topbar[aria-pressed="true"] {
-  background: var(--accent-soft);
-  color: var(--text);
-}
-
-.markdown-preview-split {
-  --markdown-editor-width: 50%;
-  display: grid;
-  grid-row: 2;
-  grid-template-columns: minmax(0, var(--markdown-editor-width)) 7px minmax(0, 1fr);
-  min-height: 0;
-  overflow: hidden;
-}
-
-.markdown-preview-split--hidden {
-  grid-template-columns: minmax(0, 1fr);
-}
-
-.markdown-preview-split__editor {
-  min-width: 0;
-  min-height: 0;
-  overflow: hidden;
-}
-
-.markdown-preview-split__handle {
-  border: 0;
-  border-inline: 1px solid var(--border);
-  background: var(--surface);
-  cursor: col-resize;
-}
-
 .markdown-preview-split__handle:hover,
 .markdown-preview-split__handle:focus-visible {
   background: var(--accent-soft);
   outline: 2px solid var(--ring);
   outline-offset: -2px;
-}
-
-.markdown-preview {
-  min-width: 0;
-  min-height: 0;
-  overflow: auto;
-  padding: 24px clamp(18px, 4vw, 42px) 48px;
-  background: var(--editor-bg);
-  color: var(--text);
-  font-family: var(--font-sans);
-  font-size: 15px;
-  line-height: 1.65;
 }
 
 .markdown-preview:focus-visible {

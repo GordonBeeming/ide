@@ -202,10 +202,10 @@ import {
 } from "./editorCommands";
 import { cursorStatus, type EditorCursor } from "./editorCursor";
 import { ContextMenu, menuSeparator, useContextMenu, type MenuEntry } from "./contextMenu";
+import MarkdownPreview from "./MarkdownPreview";
 
 const EditorPane = lazy(() => import("./EditorPane"));
 const DiffPane = lazy(() => import("./DiffPane"));
-const MarkdownPreview = lazy(() => import("./MarkdownPreview"));
 
 const fallbackAppInfo: AppInfo = {
   name: "ide",
@@ -5984,6 +5984,11 @@ export default function App() {
                   markdownPreviewVisible ? "Hide Markdown preview" : "Show Markdown preview"
                 }
                 aria-pressed={markdownPreviewVisible}
+                style={
+                  markdownPreviewVisible
+                    ? { background: "var(--accent-soft)", color: "var(--text)" }
+                    : undefined
+                }
                 onClick={() => setMarkdownPreviewVisible((visible) => !visible)}
               >
                 <BookOpen size={17} />
@@ -6076,15 +6081,14 @@ export default function App() {
             </Suspense>
           ) : activeFile ? (
             markdownPreviewAvailable ? (
-              <Suspense fallback={activeEditor}>
-                <MarkdownPreview
-                  contents={activeFile.contents}
-                  path={activeFile.path}
-                  visible={markdownPreviewVisible}
-                >
-                  {activeEditor}
-                </MarkdownPreview>
-              </Suspense>
+              <MarkdownPreview
+                key={activeFile.path}
+                contents={activeFile.contents}
+                path={activeFile.path}
+                visible={markdownPreviewVisible}
+              >
+                {activeEditor}
+              </MarkdownPreview>
             ) : activeEditor
           ) : (
             <div className="empty-state editor-empty-state">

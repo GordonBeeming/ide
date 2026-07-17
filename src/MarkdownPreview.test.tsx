@@ -1,10 +1,18 @@
 import "@testing-library/jest-dom/vitest";
 import { act, fireEvent, render, screen } from "@testing-library/react";
+import { marked } from "marked";
 import { describe, expect, it, vi } from "vitest";
 import MarkdownPreview from "./MarkdownPreview";
+import { renderMarkdown } from "./markdownRenderer";
+
+async function advancePreview() {
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(100);
+  });
+}
 
 describe("MarkdownPreview", () => {
-  it("renders live Markdown while preserving the preview scroll position", () => {
+  it("renders live Markdown while preserving the preview scroll position", async () => {
     vi.useFakeTimers();
     try {
       const { rerender } = render(
@@ -21,7 +29,7 @@ describe("MarkdownPreview", () => {
           <textarea aria-label="Editor" />
         </MarkdownPreview>,
       );
-      act(() => vi.advanceTimersByTime(100));
+      await advancePreview();
 
       expect(screen.getByRole("heading", { name: "After" })).toBeInTheDocument();
       expect(screen.queryByRole("heading", { name: "Before" })).not.toBeInTheDocument();
@@ -53,7 +61,7 @@ describe("MarkdownPreview", () => {
     expect(screen.getByLabelText("Editor")).toBe(editor);
   });
 
-  it("opens only absolute HTTP(S) links outside the app", () => {
+  it("opens only absolute HTTP(S) links outside the app", async () => {
     const open = vi.spyOn(window, "open").mockImplementation(() => null);
     try {
       render(
@@ -65,6 +73,7 @@ describe("MarkdownPreview", () => {
         </MarkdownPreview>,
       );
       const preview = screen.getByRole("region", { name: "Preview README.md" });
+      await screen.findByRole("link", { name: "external" });
       const [external, relative] = Array.from(preview.querySelectorAll("a"));
 
       fireEvent.click(external);
@@ -77,7 +86,7 @@ describe("MarkdownPreview", () => {
     }
   });
 
-  it("collapses rapid edits into the final preview", () => {
+  it("collapses rapid edits into the final preview", async () => {
     vi.useFakeTimers();
     try {
       const { rerender } = render(
@@ -96,9 +105,9 @@ describe("MarkdownPreview", () => {
         </MarkdownPreview>,
       );
 
-      expect(screen.getByRole("heading", { name: "First" })).toBeInTheDocument();
+      expect(screen.queryByRole("heading", { name: "First" })).not.toBeInTheDocument();
       expect(screen.queryByRole("heading", { name: "Final" })).not.toBeInTheDocument();
-      act(() => vi.advanceTimersByTime(100));
+      await advancePreview();
       expect(screen.getByRole("heading", { name: "Final" })).toBeInTheDocument();
       expect(screen.queryByRole("heading", { name: "Second" })).not.toBeInTheDocument();
     } finally {
@@ -106,7 +115,7 @@ describe("MarkdownPreview", () => {
     }
   });
 
-  it("defers hidden edits until the current contents are shown", () => {
+  it("defers hidden edits until the current contents are shown", async () => {
     vi.useFakeTimers();
     try {
       const { rerender } = render(
@@ -133,14 +142,14 @@ describe("MarkdownPreview", () => {
 
       expect(screen.queryByRole("heading", { name: "Initial" })).not.toBeInTheDocument();
       expect(screen.queryByRole("heading", { name: "Intermediate" })).not.toBeInTheDocument();
-      act(() => vi.advanceTimersByTime(100));
+      await advancePreview();
       expect(screen.getByRole("heading", { name: "Final" })).toBeInTheDocument();
     } finally {
       vi.useRealTimers();
     }
   });
 
-  it("sanitizes unsafe Markdown and embedded HTML", () => {
+  it("sanitizes unsafe Markdown and embedded HTML", async () => {
     render(
       <MarkdownPreview
         contents={'<script>alert(1)</script>\n<img src="x" onerror="alert(2)">\n[bad](javascript:alert(3))'}
@@ -151,6 +160,7 @@ describe("MarkdownPreview", () => {
     );
 
     const preview = screen.getByRole("region", { name: "Preview unsafe.md" });
+    await screen.findByRole("img");
     expect(preview.querySelector("script")).toBeNull();
     expect(preview.querySelector("img")).not.toHaveAttribute("onerror");
     expect(preview.querySelector("a[href]")).toBeNull();
@@ -169,5 +179,20 @@ describe("MarkdownPreview", () => {
     expect(separator).toHaveAttribute("aria-valuenow", "50");
     fireEvent.keyDown(separator, { key: "ArrowRight" });
     expect(separator).toHaveAttribute("aria-valuenow", "55");
+  });
+
+  it("falls back to sanitized source when Markdown parsing fails", () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const parse = vi.spyOn(marked, "parse").mockImplementationOnce(() => {
+      throw new Error("parser failed");
+    });
+    try {
+      expect(renderMarkdown('<strong>Fallback</strong><script>alert(1)</script>'))
+        .toBe("<strong>Fallback</strong>");
+      expect(error).toHaveBeenCalledWith("Failed to render Markdown:", expect.any(Error));
+    } finally {
+      parse.mockRestore();
+      error.mockRestore();
+    }
   });
 });

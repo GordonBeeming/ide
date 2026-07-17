@@ -1290,14 +1290,16 @@ describe("App shell interactions", () => {
     render(<App />);
 
     fireEvent.click(await treeButton("README.md"));
-    await screen.findByLabelText("Editor README.md");
+    const editor = await screen.findByLabelText("Editor README.md");
     const showPreview = await screen.findByRole("button", {
       name: "Show Markdown preview",
     });
     fireEvent.click(showPreview);
 
     const preview = await screen.findByRole("region", { name: "Preview README.md" });
-    expect(within(preview).getByRole("heading", { name: "Initial" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Editor README.md")).toBe(editor);
+    expect(await within(preview).findByRole("heading", { name: "Initial" }))
+      .toBeInTheDocument();
 
     readme = "# Reloaded";
     fireEvent.click(screen.getByTitle("Reload from disk"));
@@ -1326,6 +1328,7 @@ describe("App shell interactions", () => {
       .toBeInTheDocument();
     expect(await screen.findByRole("region", { name: "Preview notes.markdown" }))
       .toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Unsaved" })).not.toBeInTheDocument();
   });
 
   it("shows the Git category and persists a setting toggle", async () => {
