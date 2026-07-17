@@ -3581,6 +3581,12 @@ describe("App shell interactions", () => {
     fireEvent.click(await treeButton("README.md"));
     expect(await screen.findByLabelText("Editor README.md")).toHaveValue("readme");
 
+    // Let any focus-driven check from opening the tab release its in-flight guard
+    // before this test deliberately triggers the next activation check.
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 0));
+    });
+
     tauriMocks.statFile.mockImplementation(async (path: string) => {
       const entry = files.find((candidate) => candidate.path === path);
       if (!entry) throw new Error(`missing ${path}`);
