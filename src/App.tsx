@@ -143,6 +143,7 @@ import {
   revealInFileManager,
   sanitizeCodeFont,
   sanitizeDiffViewMode,
+  sanitizeMarkdownPreviewThemePreference,
   sanitizeThemePreference,
   searchIndexedFiles,
   searchFiles,
@@ -158,9 +159,11 @@ import {
   writeFile,
   defaultCodeFont,
   defaultDiffViewMode,
+  defaultMarkdownPreviewThemePreference,
   defaultThemePreference,
   type CodeFont,
   type DiffViewMode,
+  type MarkdownPreviewThemePreference,
   type ThemePreference,
   type OpenLaunchRequest,
   type PersistedUiSnapshot,
@@ -656,6 +659,8 @@ export default function App() {
   const [autoFetchSeconds, setAutoFetchSeconds] = useState(defaultAutoFetchSeconds);
   const [featureFlags, setFeatureFlags] = useState<FeatureFlagOverrides>({});
   const [markdownPreviewVisible, setMarkdownPreviewVisible] = useState(false);
+  const [markdownPreviewThemePreference, setMarkdownPreviewThemePreference] =
+    useState<MarkdownPreviewThemePreference>(defaultMarkdownPreviewThemePreference);
   const [prefersDark, setPrefersDark] = useState(systemPrefersDark);
   const [themePreference, setThemePreference] =
     useState<ThemePreference>(defaultThemePreference);
@@ -773,6 +778,10 @@ export default function App() {
   // the editor/diff panes so every surface resolves the theme the same way.
   const effectiveDark =
     themePreference === "system" ? prefersDark : themePreference === "dark";
+  const markdownPreviewDark =
+    markdownPreviewThemePreference === "auto"
+      ? effectiveDark
+      : markdownPreviewThemePreference === "dark";
   // Live merge state, read straight off the polled Git status so the conflict UI
   // updates on its own as the user resolves files (rather than freezing on the
   // one-shot sync result). Defaults tolerate an older status shape / test mock.
@@ -1238,6 +1247,11 @@ export default function App() {
     );
     setDiffViewMode(sanitizeDiffViewMode(snapshot.view.diffViewMode));
     setThemePreference(sanitizeThemePreference(snapshot.view.themePreference));
+    setMarkdownPreviewThemePreference(
+      sanitizeMarkdownPreviewThemePreference(
+        snapshot.view.markdownPreviewThemePreference,
+      ),
+    );
     setCodeFont(sanitizeCodeFont(snapshot.view.codeFont));
     setAutoFetchSeconds(sanitizeAutoFetchSeconds(snapshot.view.autoFetchSeconds));
     setFeatureFlags(sanitizeFeatureFlagOverrides(snapshot.view.featureFlags));
@@ -2591,6 +2605,7 @@ export default function App() {
           recentRelativeThreshold,
           diffViewMode,
           themePreference,
+          markdownPreviewThemePreference,
           codeFont,
           autoFetchSeconds,
           featureFlags,
@@ -2643,6 +2658,7 @@ export default function App() {
     recentRelativeThreshold,
     diffViewMode,
     themePreference,
+    markdownPreviewThemePreference,
     codeFont,
     autoFetchSeconds,
     featureFlags,
@@ -6083,8 +6099,12 @@ export default function App() {
             markdownPreviewAvailable ? (
               <MarkdownPreview
                 key={activeFile.path}
-                dark={effectiveDark}
+                dark={markdownPreviewDark}
                 contents={activeFile.contents}
+                onDarkChange={(dark) => {
+                  setMarkdownPreviewThemePreference(dark ? "dark" : "light");
+                  setStatus(`Markdown preview set to ${dark ? "dark" : "light"}`);
+                }}
                 path={activeFile.path}
                 visible={markdownPreviewVisible}
               >
@@ -7136,6 +7156,28 @@ export default function App() {
                           </label>
                         );
                       })}
+                      <label className="dialog-field">
+                        <span>Markdown preview theme</span>
+                        <select
+                          aria-label="Markdown preview theme"
+                          value={markdownPreviewThemePreference}
+                          onChange={(event) => {
+                            const next = sanitizeMarkdownPreviewThemePreference(
+                              event.target.value,
+                            );
+                            setMarkdownPreviewThemePreference(next);
+                            setStatus(
+                              next === "auto"
+                                ? "Markdown preview follows the app theme"
+                                : `Markdown preview set to ${next}`,
+                            );
+                          }}
+                        >
+                          <option value="auto">Auto</option>
+                          <option value="light">Light</option>
+                          <option value="dark">Dark</option>
+                        </select>
+                      </label>
                     </section>
                   ) : null}
 

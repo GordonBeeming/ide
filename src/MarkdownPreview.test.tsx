@@ -61,6 +61,46 @@ describe("MarkdownPreview", () => {
     expect(screen.getByLabelText("Editor")).toBe(editor);
   });
 
+  it("shows the resolved theme and switches directly to the other theme", () => {
+    const onDarkChange = vi.fn();
+    const { rerender } = render(
+      <MarkdownPreview
+        contents="# Preview"
+        dark
+        onDarkChange={onDarkChange}
+        path="README.md"
+      >
+        <textarea aria-label="Editor" />
+      </MarkdownPreview>,
+    );
+
+    const preview = screen.getByRole("region", { name: "Preview README.md" });
+    const light = screen.getByRole("button", {
+      name: "Use light Markdown preview theme",
+    });
+    const dark = screen.getByRole("button", {
+      name: "Use dark Markdown preview theme",
+    });
+    expect(preview).toHaveAttribute("data-preview-theme", "dark");
+    expect(dark).toHaveAttribute("aria-pressed", "true");
+
+    fireEvent.click(light);
+    expect(onDarkChange).toHaveBeenCalledWith(false);
+
+    rerender(
+      <MarkdownPreview
+        contents="# Preview"
+        dark={false}
+        onDarkChange={onDarkChange}
+        path="README.md"
+      >
+        <textarea aria-label="Editor" />
+      </MarkdownPreview>,
+    );
+    expect(preview).toHaveAttribute("data-preview-theme", "light");
+    expect(light).toHaveAttribute("aria-pressed", "true");
+  });
+
   it("opens only absolute HTTP(S) links outside the app for primary and auxiliary clicks", async () => {
     const open = vi.spyOn(window, "open").mockImplementation(() => null);
     try {

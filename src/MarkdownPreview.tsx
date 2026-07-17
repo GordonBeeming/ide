@@ -10,6 +10,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { Moon, Sun } from "lucide-react";
 
 const defaultSplitRatio = 50;
 const minSplitRatio = 25;
@@ -20,6 +21,7 @@ interface MarkdownPreviewProps {
   children: ReactNode;
   contents: string;
   dark?: boolean;
+  onDarkChange?: (dark: boolean) => void;
   path: string;
   visible?: boolean;
 }
@@ -34,6 +36,7 @@ export default function MarkdownPreview({
   children,
   contents,
   dark = false,
+  onDarkChange,
   path,
   visible = true,
 }: MarkdownPreviewProps) {
@@ -193,6 +196,7 @@ export default function MarkdownPreview({
           />
           <section
             className="markdown-preview"
+            data-preview-theme={dark ? "dark" : "light"}
             ref={preview}
             role="region"
             tabIndex={0}
@@ -213,8 +217,36 @@ export default function MarkdownPreview({
               fontSize: 15,
               lineHeight: 1.65,
             }}
-            dangerouslySetInnerHTML={{ __html: html }}
-          />
+          >
+            {onDarkChange ? (
+              <div
+                className="markdown-preview__theme-toggle"
+                role="group"
+                aria-label="Markdown preview theme"
+              >
+                <button
+                  type="button"
+                  aria-label="Use light Markdown preview theme"
+                  aria-pressed={!dark}
+                  onClick={() => onDarkChange(false)}
+                >
+                  <Sun size={15} aria-hidden="true" />
+                </button>
+                <button
+                  type="button"
+                  aria-label="Use dark Markdown preview theme"
+                  aria-pressed={dark}
+                  onClick={() => onDarkChange(true)}
+                >
+                  <Moon size={15} aria-hidden="true" />
+                </button>
+              </div>
+            ) : null}
+            <div
+              className="markdown-preview__content"
+              dangerouslySetInnerHTML={{ __html: html }}
+            />
+          </section>
         </>
       ) : null}
     </div>

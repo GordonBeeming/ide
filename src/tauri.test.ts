@@ -367,6 +367,7 @@ describe("hosted Tauri API transport", () => {
         recentRelativeThreshold: "oneWeek",
         diffViewMode: "inline",
         themePreference: "system",
+        markdownPreviewThemePreference: "auto",
         codeFont: "ibm-plex-mono",
         autoFetchSeconds: 60,
         featureFlags: {},
@@ -1471,6 +1472,18 @@ describe("Theme preference sanitization", () => {
     expect(sanitizeThemePreference("solarized")).toBe("system");
     expect(sanitizeThemePreference(undefined)).toBe("system");
     expect(sanitizeThemePreference(null)).toBe("system");
+  });
+});
+
+describe("Markdown preview theme preference sanitization", () => {
+  it("keeps known values and falls back to auto for anything else", async () => {
+    const { sanitizeMarkdownPreviewThemePreference } = await import("./tauri");
+
+    expect(sanitizeMarkdownPreviewThemePreference("auto")).toBe("auto");
+    expect(sanitizeMarkdownPreviewThemePreference("light")).toBe("light");
+    expect(sanitizeMarkdownPreviewThemePreference("dark")).toBe("dark");
+    expect(sanitizeMarkdownPreviewThemePreference("sepia")).toBe("auto");
+    expect(sanitizeMarkdownPreviewThemePreference(undefined)).toBe("auto");
   });
 });
 

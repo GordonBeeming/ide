@@ -206,6 +206,8 @@ struct PersistedViewSettings {
     diff_view_mode: String,
     #[serde(default = "default_theme_preference")]
     theme_preference: String,
+    #[serde(default = "default_markdown_preview_theme_preference")]
+    markdown_preview_theme_preference: String,
     // Font stack for the editor + diff panes only; UI chrome always uses Space Grotesk.
     #[serde(default = "default_code_font")]
     code_font: String,
@@ -247,6 +249,7 @@ impl Default for PersistedViewSettings {
             recent_relative_threshold: default_recent_relative_threshold(),
             diff_view_mode: default_diff_view_mode(),
             theme_preference: default_theme_preference(),
+            markdown_preview_theme_preference: default_markdown_preview_theme_preference(),
             code_font: default_code_font(),
             auto_fetch_seconds: default_auto_fetch_seconds(),
             feature_flags: BTreeMap::new(),
@@ -410,6 +413,10 @@ fn default_theme_preference() -> String {
     DEFAULT_THEME_PREFERENCE.to_string()
 }
 
+fn default_markdown_preview_theme_preference() -> String {
+    "auto".to_string()
+}
+
 fn default_code_font() -> String {
     DEFAULT_CODE_FONT.to_string()
 }
@@ -470,6 +477,9 @@ fn sanitize_view_settings(mut settings: PersistedViewSettings) -> PersistedViewS
     }
     if !KNOWN_THEME_PREFERENCES.contains(&settings.theme_preference.as_str()) {
         settings.theme_preference = default_theme_preference();
+    }
+    if !["auto", "light", "dark"].contains(&settings.markdown_preview_theme_preference.as_str()) {
+        settings.markdown_preview_theme_preference = default_markdown_preview_theme_preference();
     }
     if !KNOWN_CODE_FONTS.contains(&settings.code_font.as_str()) {
         settings.code_font = default_code_font();
@@ -3670,6 +3680,7 @@ mod tests {
                 recent_relative_threshold: "twoDays".to_string(),
                 diff_view_mode: "sideBySide".to_string(),
                 theme_preference: "dark".to_string(),
+                markdown_preview_theme_preference: "light".to_string(),
                 code_font: "system-mono".to_string(),
                 auto_fetch_seconds: 120,
                 feature_flags: BTreeMap::new(),
@@ -3707,6 +3718,7 @@ mod tests {
         assert_eq!(loaded.view.recent_relative_threshold, "twoDays");
         assert_eq!(loaded.view.diff_view_mode, "sideBySide");
         assert_eq!(loaded.view.theme_preference, "dark");
+        assert_eq!(loaded.view.markdown_preview_theme_preference, "light");
         assert_eq!(loaded.view.code_font, "system-mono");
         assert_eq!(loaded.view.auto_fetch_seconds, 120);
         assert_eq!(loaded.workspaces.len(), 1);
@@ -3800,6 +3812,26 @@ mod tests {
             ..PersistedViewSettings::default()
         });
         assert_eq!(sanitized.code_font, "system-mono");
+    }
+
+    #[test]
+    fn markdown_preview_theme_defaults_and_rejects_unknown_values() {
+        assert_eq!(
+            PersistedViewSettings::default().markdown_preview_theme_preference,
+            "auto"
+        );
+
+        let sanitized = sanitize_view_settings(PersistedViewSettings {
+            markdown_preview_theme_preference: "sepia".to_string(),
+            ..PersistedViewSettings::default()
+        });
+        assert_eq!(sanitized.markdown_preview_theme_preference, "auto");
+
+        let sanitized = sanitize_view_settings(PersistedViewSettings {
+            markdown_preview_theme_preference: "dark".to_string(),
+            ..PersistedViewSettings::default()
+        });
+        assert_eq!(sanitized.markdown_preview_theme_preference, "dark");
     }
 
     #[test]

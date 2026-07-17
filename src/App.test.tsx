@@ -1225,7 +1225,7 @@ describe("App shell interactions", () => {
     render(<App />);
 
     expect(await treeButton("README.md")).toBeInTheDocument();
-    await openSettingsDialog();
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
     selectSettingsTab("Preview Features");
 
     const toggle = await screen.findByLabelText("Context menus");
@@ -1329,6 +1329,56 @@ describe("App shell interactions", () => {
     expect(await screen.findByRole("region", { name: "Preview notes.markdown" }))
       .toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Unsaved" })).not.toBeInTheDocument();
+  });
+
+  it("resolves auto preview theme inline and persists direct light/dark choices", async () => {
+    tauriMocks.getUiState.mockResolvedValue({
+      view: {
+        showDotfiles: false,
+        showGeneratedInternal: false,
+        themePreference: "dark",
+        markdownPreviewThemePreference: "auto",
+        featureFlags: { markdownPreview: true },
+      },
+      workspace: { expandedFolders: [], openFiles: [] },
+    });
+    render(<App />);
+
+    fireEvent.click(await treeButton("README.md"));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Show Markdown preview" }),
+    );
+
+    const preview = await screen.findByRole("region", { name: "Preview README.md" });
+    expect(preview).toHaveAttribute("data-preview-theme", "dark");
+    expect(
+      screen.getByRole("button", { name: "Use dark Markdown preview theme" }),
+    ).toHaveAttribute("aria-pressed", "true");
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Use light Markdown preview theme" }),
+    );
+    expect(preview).toHaveAttribute("data-preview-theme", "light");
+    await waitFor(() =>
+      expect(tauriMocks.updateUiState).toHaveBeenLastCalledWith(
+        expect.objectContaining({ markdownPreviewThemePreference: "light" }),
+        expect.anything(),
+      ),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    selectSettingsTab("Preview Features");
+    const setting = await screen.findByRole("combobox", {
+      name: "Markdown preview theme",
+    });
+    expect(setting).toHaveValue("light");
+    fireEvent.change(setting, { target: { value: "auto" } });
+    await waitFor(() =>
+      expect(tauriMocks.updateUiState).toHaveBeenLastCalledWith(
+        expect.objectContaining({ markdownPreviewThemePreference: "auto" }),
+        expect.anything(),
+      ),
+    );
   });
 
   it("shows the Git category and persists a setting toggle", async () => {
