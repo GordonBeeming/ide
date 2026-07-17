@@ -1,4 +1,5 @@
 import {
+  memo,
   type CSSProperties,
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
@@ -27,6 +28,15 @@ interface MarkdownPreviewProps {
 }
 
 const previewDelayMs = 100;
+
+const MarkdownContent = memo(function MarkdownContent({ html }: { html: string }) {
+  return (
+    <div
+      className="markdown-preview__content"
+      dangerouslySetInnerHTML={{ __html: html }}
+    />
+  );
+});
 
 function clampSplitRatio(value: number) {
   return Math.min(maxSplitRatio, Math.max(minSplitRatio, value));
@@ -242,10 +252,7 @@ export default function MarkdownPreview({
                 </button>
               </div>
             ) : null}
-            <div
-              className="markdown-preview__content"
-              dangerouslySetInnerHTML={{ __html: html }}
-            />
+            <MarkdownContent html={html} />
           </section>
         </>
       ) : null}

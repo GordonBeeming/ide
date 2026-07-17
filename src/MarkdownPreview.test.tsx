@@ -258,6 +258,35 @@ describe("MarkdownPreview", () => {
     expect(separator).toHaveAttribute("aria-valuenow", "55");
   });
 
+  it("preserves imperatively rendered diagrams while resizing the split", async () => {
+    vi.useFakeTimers();
+    try {
+      const { container } = render(
+        <MarkdownPreview contents="# Diagram" path="README.md">
+          <textarea aria-label="Editor" />
+        </MarkdownPreview>,
+      );
+      await advancePreview();
+
+      const content = container.querySelector<HTMLElement>(".markdown-preview__content");
+      expect(content).not.toBeNull();
+      content!.innerHTML =
+        '<div data-mermaid-diagram><svg aria-label="Rendered Mermaid diagram"></svg></div>';
+      const renderedDiagram = screen.getByLabelText("Rendered Mermaid diagram");
+
+      fireEvent.keyDown(
+        screen.getByRole("separator", {
+          name: "Resize Markdown editor and preview",
+        }),
+        { key: "ArrowRight" },
+      );
+
+      expect(screen.getByLabelText("Rendered Mermaid diagram")).toBe(renderedDiagram);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("falls back to sanitized source when Markdown parsing fails", () => {
     const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const parse = vi.spyOn(marked, "parse").mockImplementationOnce(() => {

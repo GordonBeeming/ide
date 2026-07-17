@@ -330,6 +330,7 @@ const DEFAULT_DIFF_VIEW_MODE: &str = "inline";
 const KNOWN_DIFF_VIEW_MODES: &[&str] = &["inline", "sideBySide"];
 const DEFAULT_THEME_PREFERENCE: &str = "system";
 const KNOWN_THEME_PREFERENCES: &[&str] = &["system", "light", "dark"];
+const KNOWN_MARKDOWN_PREVIEW_THEME_PREFERENCES: &[&str] = &["auto", "light", "dark"];
 const DEFAULT_CODE_FONT: &str = "ibm-plex-mono";
 const KNOWN_CODE_FONTS: &[&str] = &["ibm-plex-mono", "system-mono"];
 
@@ -478,7 +479,9 @@ fn sanitize_view_settings(mut settings: PersistedViewSettings) -> PersistedViewS
     if !KNOWN_THEME_PREFERENCES.contains(&settings.theme_preference.as_str()) {
         settings.theme_preference = default_theme_preference();
     }
-    if !["auto", "light", "dark"].contains(&settings.markdown_preview_theme_preference.as_str()) {
+    if !KNOWN_MARKDOWN_PREVIEW_THEME_PREFERENCES
+        .contains(&settings.markdown_preview_theme_preference.as_str())
+    {
         settings.markdown_preview_theme_preference = default_markdown_preview_theme_preference();
     }
     if !KNOWN_CODE_FONTS.contains(&settings.code_font.as_str()) {

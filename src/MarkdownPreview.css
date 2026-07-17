@@ -18,14 +18,14 @@
 .markdown-preview[data-preview-theme="dark"] {
   color-scheme: dark;
   --bg: var(--slate-950);
-  --surface: #111a2e;
+  --surface: color-mix(in srgb, var(--slate-900) 75%, var(--slate-850));
   --surface-2: var(--slate-850);
-  --border: #1e293b;
-  --border-strong: #263250;
-  --text: #e8eef6;
+  --border: color-mix(in srgb, var(--slate-850) 92%, var(--slate-400));
+  --border-strong: color-mix(in srgb, var(--slate-850) 86%, var(--slate-400));
+  --text: color-mix(in srgb, var(--slate-50) 85%, var(--slate-400));
   --text-muted: var(--slate-400);
   --accent: var(--current-400);
-  --accent-soft: #0c3444;
+  --accent-soft: color-mix(in srgb, var(--current-900) 60%, var(--slate-950));
   --code-bg: var(--slate-850);
   --danger: var(--rose-500);
   --ring: var(--current-400);
