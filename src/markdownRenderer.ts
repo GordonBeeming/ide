@@ -3,7 +3,7 @@ import { marked } from "marked";
 import "./MarkdownPreview.css";
 
 const sanitizeOptions = {
-  FORBID_ATTR: ["style"],
+  FORBID_ATTR: ["class", "id", "style"],
   FORBID_TAGS: ["style"],
 };
 

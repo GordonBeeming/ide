@@ -183,7 +183,7 @@ describe("MarkdownPreview", () => {
   it("sanitizes unsafe Markdown and embedded HTML", async () => {
     render(
       <MarkdownPreview
-        contents={'<style>.app-shell { display: none }</style>\n<script>alert(1)</script>\n<img src="x" style="position: fixed" onerror="alert(2)">\n[bad](javascript:alert(3))'}
+        contents={'<style>.app-shell { display: none }</style>\n<script>alert(1)</script>\n<img id="spoof" class="dialog-backdrop" src="x" style="position: fixed" onerror="alert(2)">\n[bad](javascript:alert(3))'}
         path="unsafe.md"
       >
         <textarea aria-label="Editor" />
@@ -194,6 +194,8 @@ describe("MarkdownPreview", () => {
     await screen.findByRole("img");
     expect(preview.querySelector("style")).toBeNull();
     expect(preview.querySelector("script")).toBeNull();
+    expect(preview.querySelector("img")).not.toHaveAttribute("class");
+    expect(preview.querySelector("img")).not.toHaveAttribute("id");
     expect(preview.querySelector("img")).not.toHaveAttribute("style");
     expect(preview.querySelector("img")).not.toHaveAttribute("onerror");
     expect(preview.querySelector("a[href]")).toBeNull();
