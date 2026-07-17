@@ -1409,12 +1409,13 @@ describe("App shell interactions", () => {
       screen.getByRole("button", { name: "Use light Markdown preview theme" }),
     );
 
-    await waitFor(() =>
-      expect(tauriMocks.updateUiState).toHaveBeenLastCalledWith(
+    await waitFor(() => {
+      const lastCall = tauriMocks.updateUiState.mock.lastCall;
+      expect(lastCall?.[0]).toEqual(
         expect.objectContaining({ markdownPreviewThemePreference: "light" }),
-        savedWorkspace,
-      ),
-    );
+      );
+      expect(lastCall?.[1]).toBe(savedWorkspace);
+    });
   });
 
   it("shows the Git category and persists a setting toggle", async () => {
