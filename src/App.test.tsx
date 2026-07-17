@@ -82,6 +82,7 @@ const tauriMocks = vi.hoisted(() => ({
   getWorkspaceIndexStats: vi.fn(),
   advanceWorkspaceIndex: vi.fn(),
   updateUiState: vi.fn(),
+  updateViewSettings: vi.fn(),
   updateAgentContext: vi.fn(),
   getLspServers: vi.fn(),
   getHttpEndpoint: vi.fn(),
@@ -156,6 +157,7 @@ vi.mock("./tauri", async () => {
     getWorkspaceIndexStats: tauriMocks.getWorkspaceIndexStats,
     advanceWorkspaceIndex: tauriMocks.advanceWorkspaceIndex,
     updateUiState: tauriMocks.updateUiState,
+    updateViewSettings: tauriMocks.updateViewSettings,
     updateAgentContext: tauriMocks.updateAgentContext,
     getLspServers: tauriMocks.getLspServers,
     getHttpEndpoint: tauriMocks.getHttpEndpoint,
@@ -388,6 +390,7 @@ describe("App shell interactions", () => {
       pendingFolders: 0,
     });
     tauriMocks.updateUiState.mockResolvedValue(undefined);
+    tauriMocks.updateViewSettings.mockResolvedValue(undefined);
     tauriMocks.fetchGit.mockResolvedValue(undefined);
     tauriMocks.updateAgentContext.mockResolvedValue(undefined);
     tauriMocks.getLspServers.mockResolvedValue([]);
@@ -1381,7 +1384,7 @@ describe("App shell interactions", () => {
     );
   });
 
-  it("persists preview theme choices without replacing saved workspace state in single-file mode", async () => {
+  it("persists preview theme choices without writing workspace state in single-file mode", async () => {
     tauriMocks.getInitialFile.mockResolvedValueOnce("README.md");
     const savedWorkspace = {
       expandedFolders: ["src"],
@@ -1409,13 +1412,12 @@ describe("App shell interactions", () => {
       screen.getByRole("button", { name: "Use light Markdown preview theme" }),
     );
 
-    await waitFor(() => {
-      const lastCall = tauriMocks.updateUiState.mock.lastCall;
-      expect(lastCall?.[0]).toEqual(
+    await waitFor(() =>
+      expect(tauriMocks.updateViewSettings).toHaveBeenLastCalledWith(
         expect.objectContaining({ markdownPreviewThemePreference: "light" }),
-      );
-      expect(lastCall?.[1]).toBe(savedWorkspace);
-    });
+      ),
+    );
+    expect(tauriMocks.updateUiState).not.toHaveBeenCalled();
   });
 
   it("shows the Git category and persists a setting toggle", async () => {

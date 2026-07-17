@@ -340,7 +340,8 @@ describe("hosted Tauri API transport", () => {
   it("returns default UI state and does not persist it from hosted browser mode", async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
-    const { getSettingsLocations, getUiState, updateUiState } = await import("./tauri");
+    const { getSettingsLocations, getUiState, updateUiState, updateViewSettings } =
+      await import("./tauri");
 
     await expect(getUiState()).resolves.toEqual({
       view: {
@@ -401,6 +402,11 @@ describe("hosted Tauri API transport", () => {
         selectedPath: "README.md",
       },
     );
+    await updateViewSettings({
+      showDotfiles: true,
+      showGeneratedInternal: true,
+      markdownPreviewThemePreference: "light",
+    });
 
     expect(fetchMock).not.toHaveBeenCalled();
   });
@@ -871,7 +877,7 @@ describe("hosted Tauri API transport", () => {
         selectedPath: "src/App.tsx",
       },
     });
-    const { getUiState, updateUiState } = await import("./tauri");
+    const { getUiState, updateUiState, updateViewSettings } = await import("./tauri");
 
     await expect(getUiState()).resolves.toMatchObject({
       view: {
@@ -893,6 +899,11 @@ describe("hosted Tauri API transport", () => {
         selectedPath: "src/App.tsx",
       },
     );
+    await updateViewSettings({
+      showDotfiles: true,
+      showGeneratedInternal: false,
+      markdownPreviewThemePreference: "light",
+    });
 
     expect(invoke).toHaveBeenCalledWith("get_ui_state");
     expect(invoke).toHaveBeenCalledWith("update_ui_state", {
@@ -905,6 +916,13 @@ describe("hosted Tauri API transport", () => {
         openFiles: ["src/App.tsx"],
         activeFile: "src/App.tsx",
         selectedPath: "src/App.tsx",
+      },
+    });
+    expect(invoke).toHaveBeenCalledWith("update_view_settings", {
+      view: {
+        showDotfiles: true,
+        showGeneratedInternal: false,
+        markdownPreviewThemePreference: "light",
       },
     });
   });

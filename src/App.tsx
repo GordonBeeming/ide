@@ -156,6 +156,7 @@ import {
   takeOpenedLaunchTargets,
   updateAgentContext,
   updateUiState,
+  updateViewSettings,
   writeFile,
   defaultCodeFont,
   defaultDiffViewMode,
@@ -2580,51 +2581,50 @@ export default function App() {
 
     window.clearTimeout(uiPersistTimerRef.current);
     uiPersistTimerRef.current = window.setTimeout(() => {
-      updateUiState(
-        {
-          showDotfiles,
-          showGeneratedInternal,
-          showGitignoredFiles,
-          showDiagnosticsPanel,
-          trackActiveFile,
-          gitCommitEnabled,
-          gitAttributionEnabled,
-          treeScanLimit,
-          maxOpenFileKb,
-          workspaceSearchResultLimit,
-          workspaceSearchMaxFileKb,
-          currentFileSearchResultLimit,
-          currentFileResultPreviewLimit,
-          quickOpenResultLimit,
-          backgroundIndexBatchEntries,
-          commandPaletteResultLimit,
-          editorFontSize,
-          appZoomPercent,
-          dateTimeFormat,
-          recentRelativeThreshold,
-          diffViewMode,
-          themePreference,
-          markdownPreviewThemePreference,
-          codeFont,
-          autoFetchSeconds,
-          featureFlags,
-        },
-        singleFileMode
-          ? persistedWorkspaceRef.current
-          : {
-              expandedFolders: [...expandedFolders],
-              // Diff tabs are synthetic (`diff://…`) and must not survive a
-              // relaunch — persist only the real open-file paths.
-              openFiles: openFiles
-                .filter((file) => !file.diff)
-                .map((file) => file.path),
-              activeFile: activeFile?.diff ? undefined : activePath,
-              selectedPath,
-              sidebarWidth,
-              commitMessageHeight,
-              trustExternalSymlinks: trustExternalWorkspace,
-            },
-      ).catch((reason) => {
+      const view = {
+        showDotfiles,
+        showGeneratedInternal,
+        showGitignoredFiles,
+        showDiagnosticsPanel,
+        trackActiveFile,
+        gitCommitEnabled,
+        gitAttributionEnabled,
+        treeScanLimit,
+        maxOpenFileKb,
+        workspaceSearchResultLimit,
+        workspaceSearchMaxFileKb,
+        currentFileSearchResultLimit,
+        currentFileResultPreviewLimit,
+        quickOpenResultLimit,
+        backgroundIndexBatchEntries,
+        commandPaletteResultLimit,
+        editorFontSize,
+        appZoomPercent,
+        dateTimeFormat,
+        recentRelativeThreshold,
+        diffViewMode,
+        themePreference,
+        markdownPreviewThemePreference,
+        codeFont,
+        autoFetchSeconds,
+        featureFlags,
+      };
+      const persist = singleFileMode
+        ? updateViewSettings(view)
+        : updateUiState(view, {
+            expandedFolders: [...expandedFolders],
+            // Diff tabs are synthetic (`diff://…`) and must not survive a
+            // relaunch — persist only the real open-file paths.
+            openFiles: openFiles
+              .filter((file) => !file.diff)
+              .map((file) => file.path),
+            activeFile: activeFile?.diff ? undefined : activePath,
+            selectedPath,
+            sidebarWidth,
+            commitMessageHeight,
+            trustExternalSymlinks: trustExternalWorkspace,
+          });
+      persist.catch((reason) => {
         setError(`Unable to save UI state: ${String(reason)}`);
       });
     }, 250);

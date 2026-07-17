@@ -1374,19 +1374,10 @@ fn settings_locations_for_state(state: &AppState) -> Result<SettingsLocations, C
     })
 }
 
-#[tauri::command]
-async fn update_ui_state(
-    window: tauri::Window,
-    state: State<'_, AppState>,
+fn apply_view_runtime_settings(
+    state: &AppState,
     view: PersistedViewSettings,
-    workspace: WorkspaceUiStatePayload,
-) -> Result<(), CommandError> {
-    let workspace_root = workspace_root_string_for_window(&state, &window).await;
-    let mut workspace = sanitize_workspace_ui_state(workspace);
-    let mut ui_state = state
-        .ui_state
-        .write()
-        .map_err(|_| CommandError::UiState("ui state lock poisoned".to_string()))?;
+) -> Result<PersistedViewSettings, CommandError> {
     let view = sanitize_view_settings(view);
     *state
         .tree_scan_limit
@@ -1412,6 +1403,37 @@ async fn update_ui_state(
         .write()
         .map_err(|_| CommandError::UiState("background index batch lock poisoned".to_string()))? =
         view.background_index_batch_entries;
+    Ok(view)
+}
+
+#[tauri::command]
+fn update_view_settings(
+    state: State<'_, AppState>,
+    view: PersistedViewSettings,
+) -> Result<(), CommandError> {
+    let view = apply_view_runtime_settings(&state, view)?;
+    state
+        .ui_state
+        .write()
+        .map_err(|_| CommandError::UiState("ui state lock poisoned".to_string()))?
+        .view = view;
+    persist_ui_state(&state)
+}
+
+#[tauri::command]
+async fn update_ui_state(
+    window: tauri::Window,
+    state: State<'_, AppState>,
+    view: PersistedViewSettings,
+    workspace: WorkspaceUiStatePayload,
+) -> Result<(), CommandError> {
+    let workspace_root = workspace_root_string_for_window(&state, &window).await;
+    let mut workspace = sanitize_workspace_ui_state(workspace);
+    let view = apply_view_runtime_settings(&state, view)?;
+    let mut ui_state = state
+        .ui_state
+        .write()
+        .map_err(|_| CommandError::UiState("ui state lock poisoned".to_string()))?;
     ui_state.view = view;
     let persisted = PersistedWorkspaceUiState {
         workspace_root: workspace_root.clone(),
@@ -2100,6 +2122,7 @@ pub fn run() {
             get_workspace_display_context,
             get_workspace_index_stats,
             advance_workspace_index,
+            update_view_settings,
             update_ui_state,
             update_agent_context,
             get_agent_context,
@@ -3615,6 +3638,48 @@ mod tests {
         assert!(loaded.files[0].single_file);
         assert_eq!(loaded.files[1].path, "README.md");
         assert!(!loaded.files[1].single_file);
+    }
+
+    #[test]
+    fn view_settings_updates_preserve_workspace_state() {
+        let dir = tempdir().unwrap();
+        let ui_state_path = dir.path().join("ui-state.json");
+        let state = test_state(dir.path().join("recents.json"));
+        *state.ui_state_store_path.write().unwrap() = Some(ui_state_path.clone());
+        *state.ui_state.write().unwrap() = AppUiState {
+            view: PersistedViewSettings::default(),
+            workspaces: vec![PersistedWorkspaceUiState {
+                workspace_root: "/workspace".to_string(),
+                expanded_folders: vec!["src".to_string()],
+                open_files: vec!["src/App.tsx".to_string()],
+                active_file: Some("src/App.tsx".to_string()),
+                selected_path: Some("src/App.tsx".to_string()),
+                sidebar_width: Some(320),
+                commit_message_height: Some(120),
+                trust_external_symlinks: true,
+                updated_at: 123,
+            }],
+        };
+        let view = PersistedViewSettings {
+            markdown_preview_theme_preference: "light".to_string(),
+            ..PersistedViewSettings::default()
+        };
+
+        let view = apply_view_runtime_settings(&state, view).unwrap();
+        state.ui_state.write().unwrap().view = view;
+        persist_ui_state(&state).unwrap();
+
+        let loaded = load_ui_state(&ui_state_path).unwrap();
+        assert_eq!(loaded.view.markdown_preview_theme_preference, "light");
+        assert_eq!(loaded.workspaces.len(), 1);
+        assert_eq!(loaded.workspaces[0].workspace_root, "/workspace");
+        assert_eq!(loaded.workspaces[0].expanded_folders, vec!["src"]);
+        assert_eq!(loaded.workspaces[0].open_files, vec!["src/App.tsx"]);
+        assert_eq!(
+            loaded.workspaces[0].active_file.as_deref(),
+            Some("src/App.tsx")
+        );
+        assert!(loaded.workspaces[0].trust_external_symlinks);
     }
 
     #[test]

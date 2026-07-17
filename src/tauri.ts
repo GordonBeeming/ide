@@ -537,6 +537,11 @@ export function updateUiState(
   return invoke<void>("update_ui_state", { view, workspace });
 }
 
+export function updateViewSettings(view: PersistedViewSettings) {
+  if (!isNativeTauri()) return Promise.resolve();
+  return invoke<void>("update_view_settings", { view });
+}
+
 export function listFiles(
   showDotfiles = false,
   showGeneratedInternal = false,
