@@ -1418,13 +1418,17 @@ fn update_view_settings_state(
     state: &AppState,
     view: PersistedViewSettings,
 ) -> Result<(), CommandError> {
+    let (_persist_guard, path) = lock_ui_state_store(state)?;
     let view = apply_view_runtime_settings(state, view)?;
-    let mut ui_state = state
-        .ui_state
-        .write()
-        .map_err(|_| CommandError::UiState("ui state lock poisoned".to_string()))?;
-    ui_state.view = view;
-    persist_ui_state_value(state, &ui_state)
+    let ui_state = {
+        let mut ui_state = state
+            .ui_state
+            .write()
+            .map_err(|_| CommandError::UiState("ui state lock poisoned".to_string()))?;
+        ui_state.view = view;
+        ui_state.clone()
+    };
+    persist_ui_state_value(&path, &ui_state)
 }
 
 #[tauri::command]
@@ -1436,12 +1440,8 @@ async fn update_ui_state(
 ) -> Result<(), CommandError> {
     let workspace_root = workspace_root_string_for_window(&state, &window).await;
     let mut workspace = sanitize_workspace_ui_state(workspace);
+    let (_persist_guard, path) = lock_ui_state_store(&state)?;
     let view = apply_view_runtime_settings(&state, view)?;
-    let mut ui_state = state
-        .ui_state
-        .write()
-        .map_err(|_| CommandError::UiState("ui state lock poisoned".to_string()))?;
-    ui_state.view = view;
     let persisted = PersistedWorkspaceUiState {
         workspace_root: workspace_root.clone(),
         expanded_folders: std::mem::take(&mut workspace.expanded_folders),
@@ -1453,12 +1453,20 @@ async fn update_ui_state(
         trust_external_symlinks: workspace.trust_external_symlinks,
         updated_at: now_ms(),
     };
-    ui_state
-        .workspaces
-        .retain(|workspace| workspace.workspace_root != workspace_root);
-    ui_state.workspaces.insert(0, persisted);
-    ui_state.workspaces.truncate(24);
-    persist_ui_state_value(&state, &ui_state)
+    let ui_state = {
+        let mut ui_state = state
+            .ui_state
+            .write()
+            .map_err(|_| CommandError::UiState("ui state lock poisoned".to_string()))?;
+        ui_state.view = view;
+        ui_state
+            .workspaces
+            .retain(|workspace| workspace.workspace_root != workspace_root);
+        ui_state.workspaces.insert(0, persisted);
+        ui_state.workspaces.truncate(24);
+        ui_state.clone()
+    };
+    persist_ui_state_value(&path, &ui_state)
 }
 
 #[tauri::command]
@@ -2679,20 +2687,29 @@ fn is_safe_relative_path(value: &str) -> bool {
 
 #[cfg(test)]
 fn persist_ui_state(state: &AppState) -> Result<(), CommandError> {
+    let (_persist_guard, path) = lock_ui_state_store(state)?;
     let ui_state = state
         .ui_state
         .read()
-        .map_err(|_| CommandError::UiState("ui state lock poisoned".to_string()))?;
-    persist_ui_state_value(state, &ui_state)
+        .map_err(|_| CommandError::UiState("ui state lock poisoned".to_string()))?
+        .clone();
+    persist_ui_state_value(&path, &ui_state)
 }
 
-fn persist_ui_state_value(state: &AppState, ui_state: &AppUiState) -> Result<(), CommandError> {
-    let path = state
+fn lock_ui_state_store(
+    state: &AppState,
+) -> Result<(std::sync::RwLockWriteGuard<'_, Option<PathBuf>>, PathBuf), CommandError> {
+    let guard = state
         .ui_state_store_path
-        .read()
-        .map_err(|_| CommandError::UiState("ui state store lock poisoned".to_string()))?
+        .write()
+        .map_err(|_| CommandError::UiState("ui state store lock poisoned".to_string()))?;
+    let path = guard
         .clone()
         .ok_or_else(|| CommandError::UiState("ui state store path is unavailable".to_string()))?;
+    Ok((guard, path))
+}
+
+fn persist_ui_state_value(path: &Path, ui_state: &AppUiState) -> Result<(), CommandError> {
     let contents = serde_json::to_string_pretty(ui_state)
         .map_err(|error| CommandError::UiState(error.to_string()))?;
     std::fs::write(path, contents).map_err(|error| CommandError::UiState(error.to_string()))
