@@ -128,6 +128,11 @@ async function fulfillApi(route) {
     return;
   }
 
+  if (url.pathname === "/api/initial-file") {
+    await route.fulfill(json(null));
+    return;
+  }
+
   if (url.pathname === "/api/workspace-display") {
     await route.fulfill(
       json({
