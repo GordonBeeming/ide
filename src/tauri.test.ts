@@ -16,6 +16,7 @@ describe("hosted Tauri API transport", () => {
     vi.unstubAllGlobals();
     vi.resetModules();
     delete (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
+    window.history.replaceState({}, "", "/");
   });
 
   it("adds the local bearer token to hosted write requests", async () => {
@@ -238,6 +239,26 @@ describe("hosted Tauri API transport", () => {
 
     expect(fetchMock.mock.calls[0][0]).toBe("/api/codex-mcp");
     expect(fetchMock.mock.calls[1][0]).toBe("/api/agent-context");
+  });
+
+  it("reads the initial file from the scoped hosted URL", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    window.history.replaceState({}, "", "/abc123/?file=docs%2Fhello+world.md");
+    const { getInitialFile } = await import("./tauri");
+
+    await expect(getInitialFile()).resolves.toBe("docs/hello world.md");
+
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("normalizes an empty native initial file to undefined", async () => {
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    const { invoke } = await import("@tauri-apps/api/core");
+    vi.mocked(invoke).mockResolvedValueOnce(null);
+    const { getInitialFile } = await import("./tauri");
+
+    await expect(getInitialFile()).resolves.toBeUndefined();
   });
 
   it("does not persist recent files from hosted browser mode", async () => {

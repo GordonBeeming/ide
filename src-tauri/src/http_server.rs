@@ -1445,6 +1445,20 @@ async fn workspaces(State(state): State<HttpServerState>) -> Json<Vec<WorkspaceS
     Json(workspace_summaries(&state.window_sessions).await)
 }
 
+fn browse_redirect_path(hash: &str, initial_file: Option<&str>) -> Result<String, String> {
+    let path = format!("/{hash}/");
+    let Some(initial_file) = initial_file else {
+        return Ok(path);
+    };
+    let mut url =
+        tauri::Url::parse(&format!("http://localhost{path}")).map_err(|error| error.to_string())?;
+    url.query_pairs_mut().append_pair("file", initial_file);
+    let query = url
+        .query()
+        .ok_or_else(|| "failed to encode browse file query".to_string())?;
+    Ok(format!("{path}?{query}"))
+}
+
 /// `GET /browse?path=<abs>` — the landing point for `ide browse`. Ensures a (possibly
 /// hidden) session exists for `path`, then redirects into its scoped SPA, so a plain
 /// `open <url>` from bash is enough to land a browser tab on the right workspace
@@ -1465,6 +1479,10 @@ async fn browse(app: tauri::AppHandle, state: HttpServerState, query: BrowseQuer
         Err(error) => return ApiError::bad_request(error.to_string()).into_response(),
     };
     let hash = workspace_root_hash(&target.workspace_root);
+    let redirect_path = match browse_redirect_path(&hash, target.initial_file.as_deref()) {
+        Ok(path) => path,
+        Err(error) => return ApiError::internal(error).into_response(),
+    };
 
     let already_open = resolve_workspace_by_hash(&state.window_sessions, &hash)
         .await
@@ -1476,7 +1494,7 @@ async fn browse(app: tauri::AppHandle, state: HttpServerState, query: BrowseQuer
         }
     }
 
-    Redirect::to(&format!("/{hash}/")).into_response()
+    Redirect::to(&redirect_path).into_response()
 }
 
 /// Builds the hidden background window for a browse session on the main thread —
@@ -2792,6 +2810,15 @@ mod tests {
         assert!(resolve_workspace_by_hash(&sessions, "deadbeef")
             .await
             .is_none());
+    }
+
+    #[test]
+    fn browse_redirect_path_includes_an_encoded_file_target() {
+        assert_eq!(
+            browse_redirect_path("abc123", Some("docs/hello world#1.md")).unwrap(),
+            "/abc123/?file=docs%2Fhello+world%231.md"
+        );
+        assert_eq!(browse_redirect_path("abc123", None).unwrap(), "/abc123/");
     }
 
     #[tokio::test]
