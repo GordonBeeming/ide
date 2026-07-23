@@ -391,7 +391,9 @@ export function getWorkspaceRoot() {
 }
 
 export function getInitialFile() {
-  return callApi<string | undefined>("get_initial_file", "/api/initial-file");
+  return callApi<string | null>("get_initial_file", "/api/initial-file").then(
+    (path) => path ?? undefined,
+  );
 }
 
 export function getAppInfo() {

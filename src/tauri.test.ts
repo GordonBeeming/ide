@@ -251,6 +251,13 @@ describe("hosted Tauri API transport", () => {
     expect(fetchMock.mock.calls[0][0]).toBe("/api/initial-file");
   });
 
+  it("normalizes an empty hosted initial file to undefined", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(jsonResponse(null)));
+    const { getInitialFile } = await import("./tauri");
+
+    await expect(getInitialFile()).resolves.toBeUndefined();
+  });
+
   it("does not persist recent files from hosted browser mode", async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
