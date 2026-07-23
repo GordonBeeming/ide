@@ -55,7 +55,6 @@ pub struct HttpServerState {
 #[derive(Clone)]
 struct ResolvedWorkspace {
     workspace_root: Arc<RwLock<PathBuf>>,
-    initial_file: Option<Arc<RwLock<Option<String>>>>,
     agent_context: Arc<RwLock<AgentContext>>,
     /// True when the request carried a `/{hash}` prefix that matched an open
     /// workspace. The `/` handler uses this to serve the SPA for `/{hash}/`
@@ -263,7 +262,6 @@ pub async fn start_http_server(config: HttpServerConfig) -> Result<HttpServerInf
     let browse_app = app_handle.clone();
     let app = Router::new()
         .route("/api/workspace-root", get(workspace_root))
-        .route("/api/initial-file", get(initial_file))
         .route("/api/workspace-display", get(workspace_display))
         .route("/api/files", get(files))
         .route("/api/file-search", get(indexed_files))
@@ -481,28 +479,12 @@ async fn resolve_workspace_by_hash(
         if workspace_root_hash(&root) == hash {
             return Some(ResolvedWorkspace {
                 workspace_root: session.workspace_root.clone(),
-                initial_file: Some(session.initial_file.clone()),
                 agent_context: session.agent_context.clone(),
                 scoped: true,
             });
         }
     }
     None
-}
-
-async fn update_open_browse_session(
-    sessions: &Arc<std::sync::RwLock<HashMap<String, WorkspaceSessionState>>>,
-    hash: &str,
-    initial_file: Option<String>,
-) -> bool {
-    let Some(resolved) = resolve_workspace_by_hash(sessions, hash).await else {
-        return false;
-    };
-    let Some(session_initial_file) = resolved.initial_file else {
-        return false;
-    };
-    *session_initial_file.write().await = initial_file;
-    true
 }
 
 fn rewrite_request_path(request: &mut Request<axum::body::Body>, new_path: &str) {
@@ -531,7 +513,6 @@ async fn resolve_workspace_middleware(
 ) -> Response {
     let default = ResolvedWorkspace {
         workspace_root: state.workspace_root.clone(),
-        initial_file: None,
         agent_context: state.agent_context.clone(),
         scoped: false,
     };
@@ -566,13 +547,6 @@ async fn workspace_root(Extension(resolved): Extension<ResolvedWorkspace>) -> Js
             .to_string_lossy()
             .to_string(),
     )
-}
-
-async fn initial_file(Extension(resolved): Extension<ResolvedWorkspace>) -> Json<Option<String>> {
-    match resolved.initial_file {
-        Some(initial_file) => Json(initial_file.read().await.clone()),
-        None => Json(None),
-    }
 }
 
 async fn workspace_display(
@@ -1471,6 +1445,20 @@ async fn workspaces(State(state): State<HttpServerState>) -> Json<Vec<WorkspaceS
     Json(workspace_summaries(&state.window_sessions).await)
 }
 
+fn browse_redirect_path(hash: &str, initial_file: Option<&str>) -> Result<String, String> {
+    let path = format!("/{hash}/");
+    let Some(initial_file) = initial_file else {
+        return Ok(path);
+    };
+    let mut url =
+        tauri::Url::parse(&format!("http://localhost{path}")).map_err(|error| error.to_string())?;
+    url.query_pairs_mut().append_pair("file", initial_file);
+    let query = url
+        .query()
+        .ok_or_else(|| "failed to encode browse file query".to_string())?;
+    Ok(format!("{path}?{query}"))
+}
+
 /// `GET /browse?path=<abs>` — the landing point for `ide browse`. Ensures a (possibly
 /// hidden) session exists for `path`, then redirects into its scoped SPA, so a plain
 /// `open <url>` from bash is enough to land a browser tab on the right workspace
@@ -1491,16 +1479,22 @@ async fn browse(app: tauri::AppHandle, state: HttpServerState, query: BrowseQuer
         Err(error) => return ApiError::bad_request(error.to_string()).into_response(),
     };
     let hash = workspace_root_hash(&target.workspace_root);
+    let redirect_path = match browse_redirect_path(&hash, target.initial_file.as_deref()) {
+        Ok(path) => path,
+        Err(error) => return ApiError::internal(error).into_response(),
+    };
 
-    if !update_open_browse_session(&state.window_sessions, &hash, target.initial_file.clone()).await
-    {
+    let already_open = resolve_workspace_by_hash(&state.window_sessions, &hash)
+        .await
+        .is_some();
+    if !already_open {
         if let Err(error) = open_hidden_workspace_window(app, target).await {
             return ApiError::internal(format!("failed to open background session: {error}"))
                 .into_response();
         }
     }
 
-    Redirect::to(&format!("/{hash}/")).into_response()
+    Redirect::to(&redirect_path).into_response()
 }
 
 /// Builds the hidden background window for a browse session on the main thread —
@@ -1875,7 +1869,6 @@ mod tests {
     fn default_resolved(state: &HttpServerState) -> Extension<ResolvedWorkspace> {
         Extension(ResolvedWorkspace {
             workspace_root: state.workspace_root.clone(),
-            initial_file: None,
             agent_context: state.agent_context.clone(),
             scoped: false,
         })
@@ -1898,20 +1891,6 @@ mod tests {
             is_external: false,
             symlink_target: None,
         }
-    }
-
-    #[tokio::test]
-    async fn initial_file_returns_the_scoped_session_target() {
-        let resolved = ResolvedWorkspace {
-            workspace_root: Arc::new(RwLock::new(PathBuf::from("/tmp"))),
-            initial_file: Some(Arc::new(RwLock::new(Some("README.md".to_string())))),
-            agent_context: Arc::new(RwLock::new(AgentContext::default())),
-            scoped: true,
-        };
-
-        let Json(path) = initial_file(Extension(resolved)).await;
-
-        assert_eq!(path, Some("README.md".to_string()));
     }
 
     #[test]
@@ -2833,21 +2812,13 @@ mod tests {
             .is_none());
     }
 
-    #[tokio::test]
-    async fn update_open_browse_session_sets_and_clears_the_requested_file() {
-        let dir = tempdir().unwrap();
-        let session = test_session(dir.path());
-        let initial_file = session.initial_file.clone();
-        let mut sessions = HashMap::new();
-        sessions.insert("main".to_string(), session);
-        let sessions = Arc::new(std::sync::RwLock::new(sessions));
-        let hash = workspace_root_hash(dir.path());
-
-        assert!(update_open_browse_session(&sessions, &hash, Some("README.md".to_string()),).await);
-        assert_eq!(*initial_file.read().await, Some("README.md".to_string()));
-
-        assert!(update_open_browse_session(&sessions, &hash, None).await);
-        assert_eq!(*initial_file.read().await, None);
+    #[test]
+    fn browse_redirect_path_includes_an_encoded_file_target() {
+        assert_eq!(
+            browse_redirect_path("abc123", Some("docs/hello world#1.md")).unwrap(),
+            "/abc123/?file=docs%2Fhello+world%231.md"
+        );
+        assert_eq!(browse_redirect_path("abc123", None).unwrap(), "/abc123/");
     }
 
     #[tokio::test]

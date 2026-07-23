@@ -391,9 +391,10 @@ export function getWorkspaceRoot() {
 }
 
 export function getInitialFile() {
-  return callApi<string | null>("get_initial_file", "/api/initial-file").then(
-    (path) => path ?? undefined,
-  );
+  if (!isNativeTauri()) {
+    return Promise.resolve(new URLSearchParams(window.location.search).get("file") ?? undefined);
+  }
+  return invoke<string | null>("get_initial_file").then((path) => path ?? undefined);
 }
 
 export function getAppInfo() {
