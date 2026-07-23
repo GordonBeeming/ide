@@ -240,6 +240,17 @@ describe("hosted Tauri API transport", () => {
     expect(fetchMock.mock.calls[1][0]).toBe("/api/agent-context");
   });
 
+  it("reads the initial file from the scoped hosted session", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse("README.md"));
+    vi.stubGlobal("fetch", fetchMock);
+    const { getInitialFile } = await import("./tauri");
+
+    await expect(getInitialFile()).resolves.toBe("README.md");
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(fetchMock.mock.calls[0][0]).toBe("/api/initial-file");
+  });
+
   it("does not persist recent files from hosted browser mode", async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
