@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.resolve(__dirname, "..");
 const configPath = path.join(rootDir, "src-tauri", "tauri.conf.json");
+const developmentConfigPath = path.join(rootDir, "src-tauri", "tauri.dev.conf.json");
 const defaultCapabilityPath = path.join(
   rootDir,
   "src-tauri",
@@ -15,6 +16,7 @@ const defaultCapabilityPath = path.join(
 );
 
 const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
+const developmentConfig = JSON.parse(fs.readFileSync(developmentConfigPath, "utf8"));
 const defaultCapability = JSON.parse(fs.readFileSync(defaultCapabilityPath, "utf8"));
 const associations = config.bundle?.fileAssociations;
 const bundleIcons = config.bundle?.icon;
@@ -77,6 +79,18 @@ if (config.identifier !== "com.gordonbeeming.ide") {
 
 if (config.productName !== "ide") {
   errors.push('productName must remain lowercase "ide"');
+}
+
+if (developmentConfig.identifier !== "com.gordonbeeming.ide.dev") {
+  errors.push("development identifier must be com.gordonbeeming.ide.dev");
+}
+
+if (developmentConfig.productName !== "ide-dev") {
+  errors.push('development productName must remain lowercase "ide-dev"');
+}
+
+if (developmentConfig.bundle?.fileAssociations?.length !== 0) {
+  errors.push("development bundle must not register production file associations");
 }
 
 const mainWindow = config.app?.windows?.[0];

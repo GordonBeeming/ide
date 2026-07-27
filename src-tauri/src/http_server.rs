@@ -31,6 +31,11 @@ use crate::{
     workspace_root_hash, AgentContext, LaunchTarget, WorkspaceSessionState,
 };
 
+const PRODUCTION_LOOPBACK_PORT: u16 = 17877;
+const DEVELOPMENT_LOOPBACK_PORT: u16 = 17878;
+const DEVELOPMENT_BUNDLE_IDENTIFIER: &str = "com.gordonbeeming.ide.dev";
+const LOOPBACK_PORT_ENV: &str = "IDE_LOOPBACK_PORT";
+
 #[derive(Clone)]
 pub struct HttpServerState {
     workspace_root: Arc<RwLock<PathBuf>>,
@@ -63,6 +68,7 @@ struct ResolvedWorkspace {
 }
 
 pub struct HttpServerConfig {
+    pub bundle_identifier: String,
     pub root_path: Arc<RwLock<PathBuf>>,
     pub tree_scan_limit: Arc<std::sync::RwLock<usize>>,
     pub max_open_file_bytes: Arc<std::sync::RwLock<u64>>,
@@ -225,6 +231,7 @@ struct RenameFileRequest {
 
 pub async fn start_http_server(config: HttpServerConfig) -> Result<HttpServerInfo, std::io::Error> {
     let HttpServerConfig {
+        bundle_identifier,
         root_path,
         tree_scan_limit,
         max_open_file_bytes,
@@ -350,7 +357,7 @@ pub async fn start_http_server(config: HttpServerConfig) -> Result<HttpServerInf
     let app =
         middleware::from_fn_with_state(resolve_state, resolve_workspace_middleware).layer(app);
 
-    let listener = bind_loopback().await?;
+    let listener = bind_loopback(&bundle_identifier).await?;
     let endpoint = format!("http://{}", listener.local_addr()?);
     tauri::async_runtime::spawn(async move {
         let make_service = axum::ServiceExt::<Request<axum::body::Body>>::into_make_service(app);
@@ -366,29 +373,69 @@ pub async fn start_http_server(config: HttpServerConfig) -> Result<HttpServerInf
     })
 }
 
-async fn bind_loopback() -> Result<TcpListener, std::io::Error> {
-    let preferred = SocketAddr::from((Ipv4Addr::LOCALHOST, 17877));
-    match TcpListener::bind(preferred).await {
-        Ok(listener) => Ok(listener),
-        Err(preferred_error) => bind_fallback_loopback(preferred, preferred_error).await,
+async fn bind_loopback(bundle_identifier: &str) -> Result<TcpListener, std::io::Error> {
+    bind_fixed_loopback(loopback_port(bundle_identifier)?).await
+}
+
+fn loopback_port(bundle_identifier: &str) -> Result<u16, io::Error> {
+    match std::env::var(LOOPBACK_PORT_ENV) {
+        Ok(value) => loopback_port_from_value(bundle_identifier, Some(&value)),
+        Err(std::env::VarError::NotPresent) => loopback_port_from_value(bundle_identifier, None),
+        Err(std::env::VarError::NotUnicode(_)) => Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("{LOOPBACK_PORT_ENV} must contain a Unicode TCP port"),
+        )),
     }
 }
 
-async fn bind_fallback_loopback(
-    preferred: SocketAddr,
-    preferred_error: io::Error,
-) -> Result<TcpListener, io::Error> {
-    TcpListener::bind(SocketAddr::from((Ipv4Addr::LOCALHOST, 0)))
-        .await
-        .map_err(|fallback_error| {
+fn loopback_port_from_value(
+    bundle_identifier: &str,
+    value: Option<&str>,
+) -> Result<u16, io::Error> {
+    let channel_port = channel_loopback_port(bundle_identifier);
+    let Some(value) = value else {
+        return Ok(channel_port);
+    };
+
+    let override_port = (!value.is_empty() && value.bytes().all(|byte| byte.is_ascii_digit()))
+        .then_some(value)
+        .and_then(|value| value.parse::<u16>().ok())
+        .filter(|port| *port != 0)
+        .ok_or_else(|| {
             io::Error::new(
-                fallback_error.kind(),
-                format!(
-                    "failed to bind preferred loopback {preferred}: {preferred_error}; \
-                     failed to bind fallback loopback: {fallback_error}"
-                ),
+                io::ErrorKind::InvalidInput,
+                format!("{LOOPBACK_PORT_ENV} must be a non-zero TCP port, received {value:?}"),
             )
-        })
+        })?;
+
+    if override_port != channel_port {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!(
+                "{LOOPBACK_PORT_ENV} cannot change bundle {bundle_identifier:?} from its fixed port {channel_port} to {override_port}"
+            ),
+        ));
+    }
+
+    Ok(override_port)
+}
+
+fn channel_loopback_port(bundle_identifier: &str) -> u16 {
+    if bundle_identifier == DEVELOPMENT_BUNDLE_IDENTIFIER {
+        DEVELOPMENT_LOOPBACK_PORT
+    } else {
+        PRODUCTION_LOOPBACK_PORT
+    }
+}
+
+async fn bind_fixed_loopback(port: u16) -> Result<TcpListener, io::Error> {
+    let address = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
+    TcpListener::bind(address).await.map_err(|error| {
+        io::Error::new(
+            error.kind(),
+            format!("failed to bind fixed loopback {address}: {error}"),
+        )
+    })
 }
 
 async fn cors_preflight(headers: HeaderMap) -> Response {
@@ -1137,8 +1184,8 @@ async fn codex_mcp_status(
 // IPv4 loopback, and every other endpoint this app hands out (launcher scripts, the
 // copyable browser endpoint) deliberately stays on 127.0.0.1 to avoid the ::1/proxy
 // pitfalls — so the MCP endpoint we report back is canonicalized the same way, keeping
-// whatever port the client actually connected on (it may not be the default 17877 if
-// that port was taken and the server fell back to an OS-assigned one).
+// the fixed port the client actually connected on (17877 for production or 17878 for
+// development).
 //
 // The Host header is client-controlled input, not a trusted value, so the port is
 // parsed rather than copied verbatim. Un-parsed, a header like
@@ -1154,7 +1201,7 @@ fn canonical_loopback_host(host: &str) -> String {
         .rsplit_once(':')
         .and_then(|(_, port)| port.parse::<u16>().ok())
         .filter(|port| *port != 0)
-        .unwrap_or(17877);
+        .unwrap_or(PRODUCTION_LOOPBACK_PORT);
     format!("127.0.0.1:{port}")
 }
 
@@ -3047,5 +3094,58 @@ mod tests {
         // rsplit_once(':') would otherwise mis-split inside IPv6 brackets.
         assert_eq!(canonical_loopback_host("[::1]:17877"), "127.0.0.1:17877");
         assert_eq!(canonical_loopback_host("[::1]"), "127.0.0.1:17877");
+    }
+
+    #[test]
+    fn production_bundle_defaults_to_the_production_port() {
+        assert_eq!(
+            loopback_port_from_value("com.gordonbeeming.ide", None).unwrap(),
+            PRODUCTION_LOOPBACK_PORT
+        );
+    }
+
+    #[test]
+    fn development_bundle_defaults_to_the_development_port() {
+        assert_eq!(
+            loopback_port_from_value(DEVELOPMENT_BUNDLE_IDENTIFIER, None).unwrap(),
+            DEVELOPMENT_LOOPBACK_PORT
+        );
+    }
+
+    #[test]
+    fn matching_loopback_port_override_is_valid() {
+        assert_eq!(
+            loopback_port_from_value(DEVELOPMENT_BUNDLE_IDENTIFIER, Some("17878")).unwrap(),
+            DEVELOPMENT_LOOPBACK_PORT
+        );
+    }
+
+    #[test]
+    fn loopback_port_rejects_invalid_environment_overrides() {
+        for value in ["", "0", "+17878", "-1", "17878.0", " 17878", "65536"] {
+            let error =
+                loopback_port_from_value(DEVELOPMENT_BUNDLE_IDENTIFIER, Some(value)).unwrap_err();
+            assert_eq!(error.kind(), io::ErrorKind::InvalidInput, "{value:?}");
+        }
+
+        let error =
+            loopback_port_from_value(DEVELOPMENT_BUNDLE_IDENTIFIER, Some("17877")).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
+        assert!(error.to_string().contains("fixed port 17878"));
+    }
+
+    #[tokio::test]
+    async fn occupied_fixed_loopback_port_fails_instead_of_falling_back() {
+        let occupied = TcpListener::bind(SocketAddr::from((Ipv4Addr::LOCALHOST, 0)))
+            .await
+            .unwrap();
+        let port = occupied.local_addr().unwrap().port();
+
+        let error = bind_fixed_loopback(port).await.unwrap_err();
+
+        assert_eq!(error.kind(), io::ErrorKind::AddrInUse);
+        assert!(error
+            .to_string()
+            .contains(&format!("fixed loopback 127.0.0.1:{port}")));
     }
 }

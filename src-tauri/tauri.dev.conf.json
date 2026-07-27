@@ -1,0 +1,7 @@
+{
+  "productName": "ide-dev",
+  "identifier": "com.gordonbeeming.ide.dev",
+  "bundle": {
+    "fileAssociations": []
+  }
+}

@@ -38,13 +38,21 @@ try {
   }
 
   const runner = fs.readFileSync(runnerPath, "utf8");
+  assertIncludes(runner, 'APP_BUNDLE="/Applications/ide.app"');
   assertIncludes(runner, 'API_BASE="http://127.0.0.1:17877"');
   assertIncludes(runner, "bearerToken");
   assertIncludes(runner, 'Authorization: Bearer $token');
   assertIncludes(runner, "-X POST");
   assertIncludes(runner, "$API_BASE/api/open-path");
-  assertIncludes(runner, 'IDE_OPEN_PATH="$TARGET"');
-  assertIncludes(runner, "cargo run --no-default-features");
+  assertIncludes(runner, 'if [ ! -x "$APP_BUNDLE/Contents/MacOS/ide" ]; then');
+  assertIncludes(runner, 'open "$APP_BUNDLE" --args "$TARGET"');
+  assertNotIncludes(runner, "FRONTEND_URL");
+  assertNotIncludes(runner, "ROOT_DIR");
+  assertNotIncludes(runner, "npm");
+  assertNotIncludes(runner, "cargo");
+  assertNotIncludes(runner, "ensure_frontend_server");
+  assertNotIncludes(runner, "launch_app");
+  assertOrdered(runner, "if handoff_to_running_app; then", 'open "$APP_BUNDLE" --args "$TARGET"');
 
   const infoPlist = fs.readFileSync(infoPlistPath, "utf8");
   assertIncludes(infoPlist, "<string>Open in ide</string>");
@@ -77,6 +85,20 @@ function assertFile(filePath) {
 function assertIncludes(text, expected) {
   if (!text.includes(expected)) {
     throw new Error(`Generated Finder Quick Action output is missing: ${expected}`);
+  }
+}
+
+function assertNotIncludes(text, unexpected) {
+  if (text.includes(unexpected)) {
+    throw new Error(`Generated Finder Quick Action output should not include: ${unexpected}`);
+  }
+}
+
+function assertOrdered(text, earlier, later) {
+  const earlierIndex = text.indexOf(earlier);
+  const laterIndex = text.indexOf(later);
+  if (earlierIndex === -1 || laterIndex === -1 || earlierIndex >= laterIndex) {
+    throw new Error(`Expected "${earlier}" to appear before "${later}"`);
   }
 }
 

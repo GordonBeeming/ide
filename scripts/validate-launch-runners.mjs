@@ -13,92 +13,67 @@ const buildScriptPath = path.join(rootDir, "build.sh");
 const devInstallScriptPath = path.join(rootDir, "dev-install.sh");
 const cliInstallScript = path.join(rootDir, "scripts", "install-cli-command.sh");
 const finderInstallScript = path.join(rootDir, "scripts", "install-macos-finder-quick-action.sh");
+const channelIsolationHarness = path.join(rootDir, "scripts", "validate-channel-isolation.mjs");
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "ide-launch-runners-"));
 
 try {
-  const runScript = readExecutable(runScriptPath, "run.sh");
-  assertIncludes(runScript, "handoff_to_running_app()");
-  assertIncludes(runScript, 'api_base="http://127.0.0.1:17877"');
-  assertIncludes(runScript, "$api_base/api/codex-mcp");
-  assertIncludes(runScript, "bearerToken");
-  assertIncludes(runScript, 'Authorization: Bearer $token');
-  assertIncludes(runScript, "-X POST");
-  assertIncludes(runScript, "$api_base/api/open-path");
-  assertIncludes(runScript, 'if [ -n "$OPEN_PATH" ] && handoff_to_running_app "$OPEN_PATH"; then');
-  assertIncludes(runScript, "running_app_reachable()");
-  assertIncludes(runScript, "stop_running_app()");
-  assertIncludes(runScript, 'tell application id "com.gordonbeeming.ide" to quit');
-  assertIncludes(runScript, 'pkill -f "/Applications/ide.app/Contents/MacOS/ide"');
-  assertIncludes(runScript, 'pkill -f "$ROOT_DIR/src-tauri/target/debug/ide"');
-  assertIncludes(runScript, 'if [ -z "$OPEN_PATH" ] && running_app_reachable; then');
-  assertIncludes(runScript, "stop_running_app");
-  assertNotIncludes(runScript, "not starting a duplicate dev instance");
-  assertIncludes(runScript, "ensure_dev_port_available");
-  assertOrdered(runScript, "handoff_to_running_app \"$OPEN_PATH\"", "ensure_dev_port_available");
-  assertOrdered(runScript, "running_app_reachable", "ensure_dev_port_available");
-  // The graceful quit must be attempted before the force-kill escalation.
-  assertOrdered(runScript, 'tell application id "com.gordonbeeming.ide" to quit', "pkill -f");
+  readExecutable(runScriptPath, "run.sh");
+  execFileSync(process.execPath, [channelIsolationHarness], {
+    cwd: rootDir,
+    stdio: "pipe",
+  });
 
   const buildScript = readExecutable(buildScriptPath, "build.sh");
-  assertIncludes(buildScript, "npm run tauri -- build --bundles app");
-  assertIncludes(buildScript, 'CLI_APP_BUNDLE="$APP_BUNDLE"');
-  assertIncludes(buildScript, 'CLI_APP_BUNDLE="$INSTALLED_APP"');
-  assertIncludes(
+  assertIncludes(buildScript, "src-tauri/tauri.dev.conf.json");
+  assertIncludes(buildScript, "bundle/macos/ide-dev.app");
+  assertIncludes(buildScript, 'DEV_BUNDLE_IDENTIFIER="com.gordonbeeming.ide.dev"');
+  assertIncludes(buildScript, 'build --bundles app --config "$DEV_TAURI_CONFIG"');
+  assertIncludes(buildScript, "IDE_DEV_SIGNING_IDENTITY");
+  assertIncludes(buildScript, "security find-identity -v -p codesigning");
+  assertIncludes(buildScript, "Apple Development:");
+  assertIncludes(buildScript, 'printf \'%s\\n\' "-"');
+  assertIncludes(buildScript, 'codesign --force --deep --sign "$signing_identity" "$app_path"');
+  assertIncludes(buildScript, 'codesign --force --sign "$signing_identity" --identifier "$DEV_BUNDLE_IDENTIFIER" "$app_path"');
+  assertIncludes(buildScript, 'codesign --verify --deep --strict "$app_path"');
+  assertIncludes(buildScript, 'sign_dev_app "$DEV_APP_BUNDLE"');
+  assertNotIncludes(buildScript, "Developer ID");
+  assertNotIncludes(buildScript, "notarytool");
+  assertIncludes(buildScript, '"$ROOT_DIR/scripts/install-cli-command.sh"');
+  assertNotIncludes(buildScript, "IDE_CLI_APP_BUNDLE_PATH");
+  assertOrdered(
     buildScript,
-    'IDE_CLI_APP_BUNDLE_PATH="$CLI_APP_BUNDLE" "$ROOT_DIR/scripts/install-cli-command.sh"',
+    'npm run tauri -- build --bundles app --config "$DEV_TAURI_CONFIG"',
+    'sign_dev_app "$DEV_APP_BUNDLE"',
   );
-  assertIncludes(buildScript, "WARNING: /Applications app was not updated.");
-  assertIncludes(buildScript, "Run ./dev-install.sh to install the rebuilt app with a macOS admin prompt.");
-  assertIncludes(buildScript, "not updated");
+  assertNoProductionMutation(buildScript, "build.sh");
 
   const devInstallScript = readExecutable(devInstallScriptPath, "dev-install.sh");
-  assertIncludes(devInstallScript, '"$ROOT_DIR/build.sh"');
-  assertIncludes(devInstallScript, "with administrator privileges");
-  assertIncludes(devInstallScript, "open -R \"$INSTALLED_APP\"");
-  assertIncludes(devInstallScript, "lsregister");
+  assertIncludes(devInstallScript, 'exec "$ROOT_DIR/build.sh"');
+  assertNotIncludes(devInstallScript, "rm -rf");
+  assertNotIncludes(devInstallScript, "ditto");
+  assertNotIncludes(devInstallScript, "resolve_dev_install_path");
+  assertNoProductionMutation(devInstallScript, "dev-install.sh");
+
+  const cliInstall = readExecutable(cliInstallScript, "scripts/install-cli-command.sh");
+  assertIncludes(cliInstall, 'PRODUCTION_APP_BUNDLE="/Applications/ide.app"');
+  assertIncludes(cliInstall, 'install_generated_launcher "$IDE_COMMAND_PATH" "$PRODUCTION_APP_BUNDLE"');
+  assertIncludes(cliInstall, 'install_link "$IDE_DEV_COMMAND_PATH" "$RUN_SH"');
+  assertNotIncludes(cliInstall, "IDE_CLI_APP_BUNDLE_PATH");
+  assertNoProductionMutation(cliInstall, "scripts/install-cli-command.sh");
 
   const cliBinDir = path.join(tempDir, "bin");
-  const installedCliAppBundle = path.join(tempDir, "Applications", "ide.app");
-  const installedCliAppBinary = path.join(
-    installedCliAppBundle,
-    "Contents",
-    "MacOS",
-    "ide",
-  );
-  const cliAppBundle = path.join(
-    tempDir,
-    "release",
-    "bundle",
-    "macos",
-    "ide.app",
-  );
-  const cliAppBinary = path.join(
-    cliAppBundle,
-    "Contents",
-    "MacOS",
-    "ide",
-  );
-  fs.mkdirSync(path.dirname(installedCliAppBinary), { recursive: true });
-  fs.writeFileSync(installedCliAppBinary, "#!/usr/bin/env bash\n");
-  fs.chmodSync(installedCliAppBinary, 0o755);
-  fs.mkdirSync(path.dirname(cliAppBinary), { recursive: true });
-  fs.writeFileSync(cliAppBinary, "#!/usr/bin/env bash\n");
-  fs.chmodSync(cliAppBinary, 0o755);
-
   execFileSync("bash", [cliInstallScript], {
     cwd: rootDir,
     env: {
       ...process.env,
       IDE_CLI_BIN_DIR: cliBinDir,
-      IDE_INSTALLED_APP_PATH: installedCliAppBundle,
-      IDE_CLI_APP_BUNDLE_PATH: cliAppBundle,
     },
     stdio: "pipe",
   });
 
   const ideCommand = readExecutable(path.join(cliBinDir, "ide"), "ide command");
   assertIncludes(ideCommand, "Generated by ide/scripts/install-cli-command.sh");
-  assertIncludes(ideCommand, `APP_BUNDLE="${cliAppBundle}"`);
+  assertIncludes(ideCommand, 'APP_BUNDLE="/Applications/ide.app"');
   assertIncludes(ideCommand, 'APP_BINARY="$APP_BUNDLE/Contents/MacOS/ide"');
   assertIncludes(ideCommand, 'if [ ! -x "$APP_BINARY" ]; then');
   assertIncludes(ideCommand, "running_app_reachable()");
@@ -106,8 +81,8 @@ try {
   assertIncludes(ideCommand, "activate_running_app()");
   assertIncludes(ideCommand, 'tell application id "com.gordonbeeming.ide" to activate');
   assertIncludes(ideCommand, 'if [ "$#" -eq 0 ] && running_app_reachable; then');
-  assertIncludes(ideCommand, 'url_encode()');
-  assertIncludes(ideCommand, 'resolve_absolute_path()');
+  assertIncludes(ideCommand, "url_encode()");
+  assertIncludes(ideCommand, "resolve_absolute_path()");
   assertIncludes(ideCommand, 'if [ "${1:-}" = "browse" ]; then');
   assertIncludes(ideCommand, 'browse_url="http://localhost:17877/browse?path=$(url_encode "$browse_path")"');
   assertIncludes(ideCommand, 'IDE_BROWSE_PATH="$browse_path" open "$APP_BUNDLE" --args browse "$browse_path"');
@@ -123,25 +98,8 @@ try {
   assertIncludes(ideCommand, 'open "$APP_BUNDLE" --args "${ARGS[@]}" >/dev/null 2>&1 &');
   assertIncludes(ideCommand, 'open "$APP_BUNDLE" >/dev/null 2>&1 &');
   assertNotIncludes(ideCommand, "open -n");
-  // Fully qualified so this doesn't collide with the earlier browse-branch
-  // `open "$APP_BUNDLE" --args browse ...` line, which shares the same prefix.
   assertOrdered(ideCommand, '"$APP_BINARY" "${ARGS[@]}"', 'open "$APP_BUNDLE" --args "${ARGS[@]}"');
   assertSymlinkTarget(path.join(cliBinDir, "ide-dev"), runScriptPath, "ide-dev command");
-
-  execFileSync("bash", [cliInstallScript], {
-    cwd: rootDir,
-    env: {
-      ...process.env,
-      IDE_CLI_BIN_DIR: cliBinDir,
-      IDE_INSTALLED_APP_PATH: installedCliAppBundle,
-    },
-    stdio: "pipe",
-  });
-  const installedIdeCommand = readExecutable(
-    path.join(cliBinDir, "ide"),
-    "ide command with installed app",
-  );
-  assertIncludes(installedIdeCommand, `APP_BUNDLE="${installedCliAppBundle}"`);
 
   const serviceRoot = path.join(tempDir, "Services", "Open in ide.workflow");
   const supportDir = path.join(tempDir, "Support", "ide");
@@ -161,17 +119,19 @@ try {
     "Finder runner",
   );
   assertIncludes(finderRunner, "handoff_to_running_app()");
+  assertIncludes(finderRunner, 'APP_BUNDLE="/Applications/ide.app"');
   assertIncludes(finderRunner, 'API_BASE="http://127.0.0.1:17877"');
   assertIncludes(finderRunner, "$API_BASE/api/codex-mcp");
   assertIncludes(finderRunner, "bearerToken");
   assertIncludes(finderRunner, 'Authorization: Bearer $token');
   assertIncludes(finderRunner, "-X POST");
   assertIncludes(finderRunner, "$API_BASE/api/open-path");
-  assertIncludes(finderRunner, "ensure_frontend_server");
-  assertIncludes(finderRunner, "launch_app");
-  if (!/if handoff_to_running_app; then[\s\S]*ensure_frontend_server[\s\S]*launch_app/.test(finderRunner)) {
-    throw new Error("Finder runner must hand off to a running app before starting the dev server");
-  }
+  assertIncludes(finderRunner, 'open "$APP_BUNDLE" --args "$TARGET"');
+  assertNotIncludes(finderRunner, "npm");
+  assertNotIncludes(finderRunner, "cargo");
+  assertNotIncludes(finderRunner, "ensure_frontend_server");
+  assertNotIncludes(finderRunner, "launch_app");
+  assertOrdered(finderRunner, "if handoff_to_running_app; then", 'open "$APP_BUNDLE" --args "$TARGET"');
 
   console.log("Launch runner validation passed");
 } finally {
@@ -187,6 +147,18 @@ function readExecutable(filePath, label) {
     throw new Error(`${label} is not executable`);
   }
   return fs.readFileSync(filePath, "utf8");
+}
+
+function assertNoProductionMutation(text, label) {
+  for (const forbidden of [
+    'tell application id "com.gordonbeeming.ide" to quit',
+    'pkill -f "/Applications/ide.app/Contents/MacOS/ide"',
+    'ditto "$DEV_APP_BUNDLE" "/Applications/ide.app"',
+  ]) {
+    if (text.includes(forbidden)) {
+      throw new Error(`${label} must not modify or stop the production app: ${forbidden}`);
+    }
+  }
 }
 
 function assertSymlinkTarget(filePath, expectedTarget, label) {

@@ -183,11 +183,12 @@ describe("hosted Tauri API transport", () => {
     expect(headers.get("Authorization")).toBe("Bearer secret-token");
   });
 
-  it("uses the loopback API base for Vite dev server locations", async () => {
+  it("uses the development loopback API base for Vite dev server locations", async () => {
     const { apiBaseForLocation } = await import("./tauri");
 
-    expect(apiBaseForLocation({ port: "14717" })).toBe("http://127.0.0.1:17877");
+    expect(apiBaseForLocation({ port: "14717" })).toBe("http://127.0.0.1:17878");
     expect(apiBaseForLocation({ port: "17877" })).toBe("");
+    expect(apiBaseForLocation({ port: "" })).toBe("");
   });
 
   it("canonicalizes a localhost-opened origin back to 127.0.0.1 for copyable endpoints", async () => {

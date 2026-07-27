@@ -1,19 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-RUN_SH="$ROOT_DIR/run.sh"
 SERVICE_NAME="Open in ide"
 SERVICE_ROOT="${IDE_SERVICE_ROOT:-$HOME/Library/Services/$SERVICE_NAME.workflow}"
 SERVICE_DIR="$SERVICE_ROOT/Contents"
 SUPPORT_DIR="${IDE_SUPPORT_DIR:-$HOME/Library/Application Support/ide}"
 RUNNER="$SUPPORT_DIR/open-from-finder.sh"
 SERVICES_DIR="$(dirname "$SERVICE_ROOT")"
-
-if [ ! -x "$RUN_SH" ]; then
-  echo "run.sh must be executable before installing the Finder Quick Action." >&2
-  exit 1
-fi
 
 mkdir -p "$SERVICE_DIR" "$SUPPORT_DIR"
 
@@ -22,14 +15,8 @@ cat > "$RUNNER" <<EOF
 set -euo pipefail
 
 TARGET="\${1:-}"
-ROOT_DIR="$ROOT_DIR"
-FRONTEND_URL="http://127.0.0.1:14717"
+APP_BUNDLE="/Applications/ide.app"
 API_BASE="http://127.0.0.1:17877"
-
-export PATH="\$HOME/.local/bin:\$HOME/Library/pnpm:\$HOME/.cargo/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:\${PATH:-}"
-if ! command -v npm >/dev/null 2>&1 && command -v fnm >/dev/null 2>&1; then
-  eval "\$(fnm env --shell bash)"
-fi
 
 LOG_DIR="\$HOME/Library/Logs/ide"
 mkdir -p "\$LOG_DIR"
@@ -75,88 +62,22 @@ handoff_to_running_app() {
   return 1
 }
 
-ensure_command() {
-  local name="\$1"
-  local install_hint="\$2"
-  if command -v "\$name" >/dev/null 2>&1; then
-    return 0
-  fi
-  echo "\$name is required. \$install_hint"
-  osascript -e "display alert \\"ide\\" message \\"\$name is required. \$install_hint\\" as critical" >/dev/null 2>&1 || true
-  exit 1
-}
-
-ensure_frontend_server() {
-  local pids pid command cwd attempt
-  if curl -fsS --max-time 1 "\$FRONTEND_URL" >/dev/null 2>&1; then
-    echo "Vite server is already reachable at \$FRONTEND_URL."
-    return 0
-  fi
-
-  pids="\$(lsof -tiTCP:14717 -sTCP:LISTEN 2>/dev/null || true)"
-  for pid in \$pids; do
-    command="\$(ps -p "\$pid" -o command= 2>/dev/null || true)"
-    cwd="\$(lsof -a -p "\$pid" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p' || true)"
-    if [ "\$cwd" = "\$ROOT_DIR" ] && [[ "\$command" == *"/node_modules/.bin/vite"* ]]; then
-      echo "Reusing repo-local Vite listener on port 14717 (pid \$pid)."
-      return 0
-    fi
-
-    echo "Port 14717 is owned by another process: pid=\$pid command=\${command:-unknown}"
-    osascript -e 'display alert "ide" message "Port 14717 is already in use by another process." as critical' >/dev/null 2>&1 || true
-    exit 1
-  done
-
-  echo "Starting Vite server."
-  (
-    cd "\$ROOT_DIR"
-    nohup npm run dev >> "\$LOG_DIR/finder-vite.log" 2>&1 &
-  )
-
-  for attempt in {1..80}; do
-    if curl -fsS --max-time 1 "\$FRONTEND_URL" >/dev/null 2>&1; then
-      echo "Vite server is ready."
-      return 0
-    fi
-    sleep 0.25
-  done
-
-  echo "Timed out waiting for Vite server at \$FRONTEND_URL."
-  osascript -e 'display alert "ide" message "Timed out waiting for the ide frontend dev server." as critical' >/dev/null 2>&1 || true
-  exit 1
-}
-
-launch_app() {
-  echo "Launching ide dev binary."
-  (
-    cd "\$ROOT_DIR/src-tauri"
-    IDE_OPEN_PATH="\$TARGET" nohup cargo run --no-default-features >> "\$LOG_DIR/finder-app.log" 2>&1 &
-  )
-}
-
 if handoff_to_running_app; then
   exit 0
 fi
 
-ensure_command npm "Install Node.js 24 or newer."
-ensure_command cargo "Install Rust 1.95 or newer."
-
-if [ ! -d "\$ROOT_DIR/node_modules" ]; then
-  echo "Installing npm dependencies."
-  (cd "\$ROOT_DIR" && npm install)
+if [ ! -x "\$APP_BUNDLE/Contents/MacOS/ide" ]; then
+  echo "Production ide app was not found: \$APP_BUNDLE"
+  osascript -e 'display alert "ide" message "Install ide with Homebrew before using Open in ide." as critical' >/dev/null 2>&1 || true
+  exit 1
 fi
 
-ensure_frontend_server
-launch_app
-
-for attempt in {1..80}; do
-  if handoff_to_running_app; then
-    exit 0
-  fi
-  sleep 0.25
-done
-
-echo "ide was launched, but did not become reachable on \$API_BASE before the Finder action timed out."
+echo "Opening target with production ide."
+if ! open "\$APP_BUNDLE" --args "\$TARGET" >/dev/null 2>&1; then
+  echo "Unable to open production ide at \$APP_BUNDLE."
+  osascript -e 'display alert "ide" message "The production ide app could not be opened." as critical' >/dev/null 2>&1 || true
+  exit 1
+fi
 EOF
 chmod 755 "$RUNNER"
 
