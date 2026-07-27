@@ -1446,7 +1446,7 @@ function httpBase() {
 
 export function apiBaseForLocation(location: Pick<Location, "port">) {
   if (location.port === "14717") {
-    return "http://127.0.0.1:17877";
+    return "http://127.0.0.1:17878";
   }
   return "";
 }

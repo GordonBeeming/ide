@@ -21,7 +21,7 @@ Run the desktop app from the repository root:
 ./run.sh
 ```
 
-The script checks for `npm` and `cargo`, installs Node dependencies when `node_modules` is missing, then starts Tauri dev mode.
+The script checks for `npm` and `cargo`, installs Node dependencies when `node_modules` is missing, then starts the `ide-dev` Tauri app. Development uses its own app-data directory and loopback port `17878`, so it does not stop, replace, or reuse the production app.
 
 Pass a file or folder path to open that target as the launch workspace:
 
@@ -32,27 +32,39 @@ Pass a file or folder path to open that target as the launch workspace:
 
 Folder targets become the workspace root. File targets open their parent folder as the workspace and then open the file as a persistent tab.
 
-When a file or folder target is supplied and an ide instance is already reachable on the loopback API, `run.sh` authenticates with the persisted app-local bearer token and hands the target to `/api/open-path` instead of starting another dev instance.
+When a file or folder target is supplied and an `ide-dev` instance is already reachable on its loopback API, `run.sh` authenticates with the persisted app-local bearer token and hands the target to `/api/open-path` instead of starting another development instance.
 
-When no target is supplied and an ide instance is already reachable, `run.sh` stops it and starts the dev build in its place: a graceful quit through AppleScript first, then a force-kill if the app is still holding the port after ~10 seconds. Plain `./run.sh` always means "run the code in this working copy", so a running release build (or a stale dev instance) can't block it. Without the stop, the single-instance plugin would swallow the launch.
+When no target is supplied, `run.sh` replaces a reachable `ide-dev` instance only when this checkout owns its listener. If another process owns the port, it refuses rather than interfering. Plain `./run.sh` always means "run the code in this working copy"; production stays running if it is open.
 
-Install shell commands:
+Install the production app through Homebrew:
+
+```bash
+brew install --cask gordonbeeming/tap/ide
+```
+
+Homebrew owns `/Applications/ide.app`, bundle identifier `com.gordonbeeming.ide`, and loopback port `17877`. Local development scripts never replace that bundle.
+
+Package and install the development app:
 
 ```bash
 ./build.sh
 ```
 
-The build script runs `npm run tauri -- build --bundles app`, then installs command launchers. It builds the macOS `.app` bundle only and skips DMG creation because the local CLI command does not need an installer image. If `/Applications` is writable, it replaces `/Applications/ide.app`; otherwise run the interactive developer installer:
+`build.sh` uses the development Tauri overlay to create `ide-dev.app`, then replaces only `$HOME/Applications/ide-dev.app`. Set `IDE_DEV_INSTALLED_APP_PATH` to an isolated absolute path ending in `ide-dev.app` when testing the installer. The script rejects the production bundle and broad paths before it replaces an existing development bundle.
+
+Before copying the app, `build.sh` signs nested code and the bundle with `IDE_DEV_SIGNING_IDENTITY` when it is set. Otherwise it uses the first local Apple Development identity, or ad-hoc signing when none is available, then runs `codesign --verify --deep --strict`. This is local development signing only; it does not use Developer ID signing or notarization.
+
+`dev-install.sh` remains as a compatibility wrapper and delegates directly to `build.sh`:
 
 ```bash
 ./dev-install.sh
 ```
 
-`dev-install.sh` runs the build, prompts for the `/Applications/ide.app` replacement when admin permission is needed, refreshes Spotlight/Launch Services metadata where possible, and reveals the installed app in Finder. macOS caches app icons, so quit/reopen ide and give Spotlight a moment if the previous icon is still visible.
+There is one install-path check and copy policy, both owned by `build.sh`.
 
-The installer writes `ide` as a small macOS `open` launcher for the packaged app bundle and links `ide-dev` to `run.sh`. Use `ide .` when the packaged app should open or focus a workspace window without holding the terminal; use bare `ide` to focus a running app or open the last context; and use `ide-dev .` when the repository dev runner should manage Node dependencies, Vite, stale dev ports, and running-app handoff behavior. Set `IDE_CLI_APP_BUNDLE_PATH=/path/to/ide.app` when installing if the command should target a different packaged bundle.
+The installer writes `ide` as a small macOS launcher pinned to Homebrew's `/Applications/ide.app` and links `ide-dev` to `run.sh`. Use `ide .` to open a production workspace without holding the terminal. Use bare `ide` to focus production or reopen its last context. Use `ide-dev .` when the repository development runner should manage Node dependencies, Vite, stale development ports, and development-app handoff.
 
-`ide browse <path>` opens a repo in the default browser instead of a native window. If no instance is running yet, it starts one in the background, HTTP server up but no window on screen, and gives the target repo its own hidden session. If an instance is already running, it reuses it the same way, so several repos can be browsed at once without any of them showing a window or stealing focus. Closing a visible ide window doesn't stop a background browse session; only quitting the app (⌘Q) does.
+`ide browse <path>` uses the production app and opens a repo in the default browser instead of a native window. If no production instance is running yet, it starts one in the background, HTTP server up but no window on screen, and gives the target repo its own hidden session. If an instance is already running, it reuses it the same way, so several repos can be browsed at once without any of them showing a window or stealing focus. Closing a visible ide window doesn't stop a background browse session; only quitting the app (⌘Q) does.
 
 Install the macOS Finder Quick Action:
 
@@ -60,9 +72,9 @@ Install the macOS Finder Quick Action:
 ./scripts/install-macos-finder-quick-action.sh
 ```
 
-The service appears under Finder's Quick Actions menu as `Open in ide`. It hands the selected file or folder to an already-running app through the loopback open-path endpoint when possible, otherwise it starts the local dev app in the background. Launcher logs are written to `~/Library/Logs/ide/finder-open.log`.
+The service appears under Finder's Quick Actions menu as `Open in ide`. It hands the selected file or folder to a running production app through the loopback open-path endpoint when possible; otherwise it opens `/Applications/ide.app` with that target. Install the production app through Homebrew first. Launcher logs are written to `~/Library/Logs/ide/finder-open.log`.
 
-`npm run finder:check` validates the generated Quick Action and runner in a temporary directory. It verifies that the service registers for files and folders, emits a valid plist/workflow, and hands targets to `/api/open-path` with the local bearer token before `run-tests.sh` moves on to browser smoke tests.
+`npm run finder:check` validates the generated Quick Action and runner in a temporary directory. It verifies that the service registers for files and folders, emits a valid plist/workflow, hands targets to the production `/api/open-path` endpoint with its bearer token, and falls back to `/Applications/ide.app`.
 
 Packaged builds declare Tauri `bundle.fileAssociations` for common text, code, web, config, and .NET project files. Tauri emits `RunEvent::Opened` when the OS opens a file with the app; the Rust backend converts those file URLs into launch targets and opens or focuses a workspace window inside the existing app process. The packaged CLI uses the same single-process path instead of `open -n`, so multiple workspace windows group under one Dock icon.
 
@@ -97,13 +109,13 @@ npm run tauri:dev
 
 `npm run budget` checks the production `dist/` output after `npm run build`. Current raw-size limits are 600 KB for startup JavaScript, 80 KB for startup CSS, and 90 KB for the lazy editor chunk. These are deliberately above the current app size, but low enough to catch accidental heavy runtime dependencies.
 
-`npm run finder:check` runs the macOS Finder Quick Action installer against temporary service/support directories, lints the generated workflow on macOS, and checks that the runner uses the authenticated loopback open-path handoff. It does not touch the real `~/Library/Services` directory.
+`npm run finder:check` runs the macOS Finder Quick Action installer against temporary service/support directories, lints the generated workflow on macOS, and checks that the runner uses the production loopback handoff or opens `/Applications/ide.app`. It does not touch the real `~/Library/Services` directory.
 
-`npm run launch:check` validates the local launch runners. It checks that `run.sh` and the generated Finder runner both use the authenticated loopback open-path handoff before attempting to start or reuse a dev server.
+`npm run launch:check` validates the local launch runners. It checks that `run.sh` hands paths to `ide-dev` on its authenticated development loopback endpoint, and that the generated `ide` launcher remains pinned to the Homebrew production app.
 
 `npm run menu:check` validates the native menu contract. It checks that every declared Tauri menu item has a Rust route, every expected native event is emitted by Rust, and every emitted app/menu event has a React listener.
 
-`npm run tauri:check` validates the Tauri bundle metadata that affects native daily-driver behavior. It checks the developer-tool category, file association shape, required common editor extensions, text-only MIME types, duplicate extensions, and rejects obvious binary/media/archive associations.
+`npm run tauri:check` validates the Tauri bundle metadata that affects native daily-driver behavior. It keeps the production identifier and lowercase product name in place, checks the development overlay's distinct identifier and name, and verifies the production file associations still contain only supported text formats.
 
 `npm run smoke` starts Vite on a local ephemeral port, mocks the loopback API, and drives the real app shell through a local Chromium-family browser in light and dark mode. It covers collapsed search controls, command palette execution, workspace filtering, content search, opening a file, clean-save button state, and shell/editor theme alignment for both the empty editor canvas and the loaded CodeMirror canvas. The theme check asserts matching computed colors, expected light/dark luminance, and the actual painted editor center color, then temporarily forces the opposite editor-region theme class to prove the editor background still inherits from the shell. Set `IDE_SMOKE_BROWSER=/path/to/browser` if the script cannot find Chrome, Chromium, or Edge.
 

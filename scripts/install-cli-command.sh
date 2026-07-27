@@ -3,36 +3,13 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RUN_SH="$ROOT_DIR/run.sh"
-PACKAGED_APP_BUNDLE="$ROOT_DIR/src-tauri/target/release/bundle/macos/ide.app"
-INSTALLED_APP_BUNDLE="${IDE_INSTALLED_APP_PATH:-/Applications/ide.app}"
-APP_BUNDLE="${IDE_CLI_APP_BUNDLE_PATH:-}"
-if [ -z "$APP_BUNDLE" ]; then
-  if [ -x "$INSTALLED_APP_BUNDLE/Contents/MacOS/ide" ]; then
-    APP_BUNDLE="$INSTALLED_APP_BUNDLE"
-  else
-    APP_BUNDLE="$PACKAGED_APP_BUNDLE"
-  fi
-fi
-if [ -n "${IDE_CLI_APP_PATH:-}" ] && [ -z "${IDE_CLI_APP_BUNDLE_PATH:-}" ]; then
-  if [[ "$IDE_CLI_APP_PATH" == */Contents/MacOS/ide ]]; then
-    APP_BUNDLE="$(cd "$(dirname "$IDE_CLI_APP_PATH")/../.." && pwd)"
-  else
-    APP_BUNDLE="$IDE_CLI_APP_PATH"
-  fi
-fi
-APP_BINARY="$APP_BUNDLE/Contents/MacOS/ide"
+PRODUCTION_APP_BUNDLE="/Applications/ide.app"
 BIN_DIR="${IDE_CLI_BIN_DIR:-$HOME/.local/bin}"
 IDE_COMMAND_PATH="$BIN_DIR/ide"
 IDE_DEV_COMMAND_PATH="$BIN_DIR/ide-dev"
 
 if [ ! -x "$RUN_SH" ]; then
   echo "run.sh must be executable before installing the ide command." >&2
-  exit 1
-fi
-
-if [ ! -x "$APP_BINARY" ]; then
-  echo "Packaged ide app binary was not found: $APP_BINARY" >&2
-  echo "Run ./build.sh first, then reinstall the CLI commands." >&2
   exit 1
 fi
 
@@ -193,8 +170,8 @@ install_link() {
   ln -s "$target_path" "$command_path"
 }
 
-install_generated_launcher "$IDE_COMMAND_PATH" "$APP_BUNDLE"
+install_generated_launcher "$IDE_COMMAND_PATH" "$PRODUCTION_APP_BUNDLE"
 install_link "$IDE_DEV_COMMAND_PATH" "$RUN_SH"
 
-echo "Installed ide command at $IDE_COMMAND_PATH -> $APP_BUNDLE"
+echo "Installed ide command at $IDE_COMMAND_PATH -> $PRODUCTION_APP_BUNDLE"
 echo "Installed ide-dev command at $IDE_DEV_COMMAND_PATH -> $RUN_SH"

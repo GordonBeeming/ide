@@ -1836,8 +1836,10 @@ pub fn run() {
                 });
             }
             let app_handle = app.handle().clone();
+            let bundle_identifier = app.config().identifier.clone();
             tauri::async_runtime::spawn(async move {
                 match http_server::start_http_server(http_server::HttpServerConfig {
+                    bundle_identifier,
                     root_path: workspace_root,
                     tree_scan_limit,
                     max_open_file_bytes,
