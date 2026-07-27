@@ -142,12 +142,17 @@ function testInstallPolicyAndLaunchers() {
   const aliasParent = path.join(harness.base, "install-alias");
   fs.mkdirSync(aliasTarget);
   fs.symlinkSync(aliasTarget, aliasParent);
-  assertRejectedInstallPath(
-    checkout,
+  const symlinkPrefixResult = runShell(
+    path.join(checkout, "build.sh"),
+    [],
     harness,
-    path.join(aliasParent, "ide-dev.app"),
-    buildEnv,
+    "build-success",
+    {
+      ...buildEnv,
+      IDE_DEV_INSTALLED_APP_PATH: path.join(aliasParent, "ide-dev.app"),
+    },
   );
+  assertStatus(symlinkPrefixResult, 0, "symlink-prefix development install");
   assertProductionSentinel(harness);
 }
 
@@ -298,7 +303,7 @@ esac
     writeExecutable(path.join(binDir, command), contents);
   }
 
-  return { base, home, state, bashEnv };
+  return { base, home, state, bashEnv, binDir };
 }
 
 function runShell(script, args, harness, scenario, extraEnv = {}) {
@@ -308,6 +313,7 @@ function runShell(script, args, harness, scenario, extraEnv = {}) {
     env: {
       ...process.env,
       HOME: harness.home,
+      PATH: `${harness.binDir}:${process.env.PATH ?? ""}`,
       BASH_ENV: harness.bashEnv,
       HARNESS_STATE: harness.state,
       HARNESS_SCENARIO: scenario,

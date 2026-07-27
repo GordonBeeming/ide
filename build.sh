@@ -70,14 +70,8 @@ resolve_dev_install_path() {
     return 1
   fi
 
-  local requested_parent resolved_parent
-  requested_parent="$(dirname "$app_path")"
-  resolved_parent="$(resolve_dev_install_parent "$requested_parent")" || return 1
-
-  if [[ "$resolved_parent" != "$requested_parent" ]]; then
-    echo "Development app parent must not resolve through a symbolic-link alias: $requested_parent -> $resolved_parent" >&2
-    return 1
-  fi
+  local resolved_parent
+  resolved_parent="$(resolve_dev_install_parent "$(dirname "$app_path")")" || return 1
 
   case "$resolved_parent" in
     / | /Applications | /Applications/*)
