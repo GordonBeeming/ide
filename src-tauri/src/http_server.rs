@@ -50,6 +50,7 @@ pub struct HttpServerState {
     lsp_manager: LspManager,
     frontend_dist: PathBuf,
     mcp_token: String,
+    loopback_port: u16,
     window_sessions: Arc<std::sync::RwLock<HashMap<String, WorkspaceSessionState>>>,
 }
 
@@ -248,6 +249,7 @@ pub async fn start_http_server(config: HttpServerConfig) -> Result<HttpServerInf
         server_error,
         window_sessions,
     } = config;
+    let loopback_port = loopback_port(&bundle_identifier)?;
     let state = HttpServerState {
         workspace_root: root_path,
         tree_scan_limit,
@@ -261,6 +263,7 @@ pub async fn start_http_server(config: HttpServerConfig) -> Result<HttpServerInf
         lsp_manager,
         frontend_dist,
         mcp_token: mcp_token.clone(),
+        loopback_port,
         window_sessions,
     };
     let resolve_state = state.clone();
@@ -357,7 +360,7 @@ pub async fn start_http_server(config: HttpServerConfig) -> Result<HttpServerInf
     let app =
         middleware::from_fn_with_state(resolve_state, resolve_workspace_middleware).layer(app);
 
-    let listener = bind_loopback(&bundle_identifier).await?;
+    let listener = bind_fixed_loopback(loopback_port).await?;
     let endpoint = format!("http://{}", listener.local_addr()?);
     tauri::async_runtime::spawn(async move {
         let make_service = axum::ServiceExt::<Request<axum::body::Body>>::into_make_service(app);
@@ -371,10 +374,6 @@ pub async fn start_http_server(config: HttpServerConfig) -> Result<HttpServerInf
         endpoint,
         codex_mcp_token: mcp_token,
     })
-}
-
-async fn bind_loopback(bundle_identifier: &str) -> Result<TcpListener, std::io::Error> {
-    bind_fixed_loopback(loopback_port(bundle_identifier)?).await
 }
 
 fn loopback_port(bundle_identifier: &str) -> Result<u16, io::Error> {
@@ -1170,8 +1169,8 @@ async fn codex_mcp_status(
     let host = headers
         .get(header::HOST)
         .and_then(|value| value.to_str().ok())
-        .unwrap_or("127.0.0.1:17877");
-    let host = canonical_loopback_host(host);
+        .unwrap_or("");
+    let host = canonical_loopback_host(host, state.loopback_port);
 
     Json(CodexMcpStatus {
         endpoint: format!("http://{host}/mcp"),
@@ -1196,12 +1195,12 @@ async fn codex_mcp_status(
 // still matters there: rsplit_once(':') mis-splits a bracketed "[::1]" (no port) and
 // the malformed suffix falls back to the default, while "[::1]:17877" splits cleanly
 // and its real port is kept.
-fn canonical_loopback_host(host: &str) -> String {
+fn canonical_loopback_host(host: &str, fallback_port: u16) -> String {
     let port = host
         .rsplit_once(':')
         .and_then(|(_, port)| port.parse::<u16>().ok())
         .filter(|port| *port != 0)
-        .unwrap_or(PRODUCTION_LOOPBACK_PORT);
+        .unwrap_or(fallback_port);
     format!("127.0.0.1:{port}")
 }
 
@@ -2136,6 +2135,7 @@ mod tests {
             lsp_manager: LspManager::new(),
             frontend_dist: dir.path().to_path_buf(),
             mcp_token: "token".to_string(),
+            loopback_port: PRODUCTION_LOOPBACK_PORT,
             window_sessions: Arc::new(std::sync::RwLock::new(HashMap::new())),
         };
 
@@ -2181,6 +2181,7 @@ mod tests {
             lsp_manager: LspManager::new(),
             frontend_dist: dir.path().to_path_buf(),
             mcp_token: "token".to_string(),
+            loopback_port: PRODUCTION_LOOPBACK_PORT,
             window_sessions: Arc::new(std::sync::RwLock::new(HashMap::new())),
         };
 
@@ -2219,6 +2220,7 @@ mod tests {
             lsp_manager: LspManager::new(),
             frontend_dist: dir.path().to_path_buf(),
             mcp_token: "token".to_string(),
+            loopback_port: PRODUCTION_LOOPBACK_PORT,
             window_sessions: Arc::new(std::sync::RwLock::new(HashMap::new())),
         };
         let mut headers = HeaderMap::new();
@@ -2261,6 +2263,7 @@ mod tests {
             lsp_manager: LspManager::new(),
             frontend_dist: dir.path().to_path_buf(),
             mcp_token: "token".to_string(),
+            loopback_port: PRODUCTION_LOOPBACK_PORT,
             window_sessions: Arc::new(std::sync::RwLock::new(HashMap::new())),
         };
         let mut headers = HeaderMap::new();
@@ -2303,6 +2306,7 @@ mod tests {
             lsp_manager: LspManager::new(),
             frontend_dist: dir.path().to_path_buf(),
             mcp_token: "token".to_string(),
+            loopback_port: PRODUCTION_LOOPBACK_PORT,
             window_sessions: Arc::new(std::sync::RwLock::new(HashMap::new())),
         };
 
@@ -2340,6 +2344,7 @@ mod tests {
             lsp_manager: LspManager::new(),
             frontend_dist: dir.path().to_path_buf(),
             mcp_token: "token".to_string(),
+            loopback_port: PRODUCTION_LOOPBACK_PORT,
             window_sessions: Arc::new(std::sync::RwLock::new(HashMap::new())),
         };
         let mut headers = HeaderMap::new();
@@ -2381,6 +2386,7 @@ mod tests {
             lsp_manager: LspManager::new(),
             frontend_dist: dir.path().to_path_buf(),
             mcp_token: "token".to_string(),
+            loopback_port: PRODUCTION_LOOPBACK_PORT,
             window_sessions: Arc::new(std::sync::RwLock::new(HashMap::new())),
         };
 
@@ -2416,6 +2422,7 @@ mod tests {
             lsp_manager: LspManager::new(),
             frontend_dist: dir.path().to_path_buf(),
             mcp_token: "token".to_string(),
+            loopback_port: PRODUCTION_LOOPBACK_PORT,
             window_sessions: Arc::new(std::sync::RwLock::new(HashMap::new())),
         };
         let mut headers = HeaderMap::new();
@@ -2457,6 +2464,7 @@ mod tests {
             lsp_manager: LspManager::new(),
             frontend_dist: dir.path().to_path_buf(),
             mcp_token: "token".to_string(),
+            loopback_port: PRODUCTION_LOOPBACK_PORT,
             window_sessions: Arc::new(std::sync::RwLock::new(HashMap::new())),
         };
 
@@ -2496,6 +2504,7 @@ mod tests {
             lsp_manager: LspManager::new(),
             frontend_dist: dir.path().to_path_buf(),
             mcp_token: "token".to_string(),
+            loopback_port: PRODUCTION_LOOPBACK_PORT,
             window_sessions: Arc::new(std::sync::RwLock::new(HashMap::new())),
         };
         let mut headers = HeaderMap::new();
@@ -2538,6 +2547,7 @@ mod tests {
             lsp_manager: LspManager::new(),
             frontend_dist: dir.path().to_path_buf(),
             mcp_token: "token".to_string(),
+            loopback_port: PRODUCTION_LOOPBACK_PORT,
             window_sessions: Arc::new(std::sync::RwLock::new(HashMap::new())),
         };
 
@@ -2575,6 +2585,7 @@ mod tests {
             lsp_manager: LspManager::new(),
             frontend_dist: dir.path().to_path_buf(),
             mcp_token: "token".to_string(),
+            loopback_port: PRODUCTION_LOOPBACK_PORT,
             window_sessions: Arc::new(std::sync::RwLock::new(HashMap::new())),
         };
         let mut headers = HeaderMap::new();
@@ -2622,6 +2633,7 @@ mod tests {
             lsp_manager: LspManager::new(),
             frontend_dist: dir.path().to_path_buf(),
             mcp_token: "token".to_string(),
+            loopback_port: PRODUCTION_LOOPBACK_PORT,
             window_sessions: Arc::new(std::sync::RwLock::new(HashMap::new())),
         };
 
@@ -2700,6 +2712,7 @@ mod tests {
             lsp_manager: LspManager::new(),
             frontend_dist: dir.path().to_path_buf(),
             mcp_token: "token".to_string(),
+            loopback_port: PRODUCTION_LOOPBACK_PORT,
             window_sessions: Arc::new(std::sync::RwLock::new(HashMap::new())),
         };
 
@@ -2743,6 +2756,7 @@ mod tests {
             lsp_manager: LspManager::new(),
             frontend_dist: dir.path().to_path_buf(),
             mcp_token: "token".to_string(),
+            loopback_port: PRODUCTION_LOOPBACK_PORT,
             window_sessions: Arc::new(std::sync::RwLock::new(HashMap::new())),
         };
 
@@ -2937,6 +2951,7 @@ mod tests {
             lsp_manager: LspManager::new(),
             frontend_dist: frontend_dist.to_path_buf(),
             mcp_token: "token".to_string(),
+            loopback_port: PRODUCTION_LOOPBACK_PORT,
             window_sessions: Arc::new(std::sync::RwLock::new(sessions)),
         }
     }
@@ -3072,28 +3087,50 @@ mod tests {
     #[test]
     fn canonical_loopback_host_replaces_hostname_keeps_port() {
         assert_eq!(
-            canonical_loopback_host("localhost:17877"),
+            canonical_loopback_host("localhost:17877", PRODUCTION_LOOPBACK_PORT),
             "127.0.0.1:17877"
         );
         assert_eq!(
-            canonical_loopback_host("127.0.0.1:17877"),
+            canonical_loopback_host("127.0.0.1:17877", PRODUCTION_LOOPBACK_PORT),
             "127.0.0.1:17877"
         );
-        // Falls back to the default port when the header has no port at all.
-        assert_eq!(canonical_loopback_host("localhost"), "127.0.0.1:17877");
+        // Falls back to the listener's channel port when the header has no port at all.
+        assert_eq!(
+            canonical_loopback_host("localhost", PRODUCTION_LOOPBACK_PORT),
+            "127.0.0.1:17877"
+        );
+        assert_eq!(
+            canonical_loopback_host("localhost", DEVELOPMENT_LOOPBACK_PORT),
+            "127.0.0.1:17878"
+        );
         // ...or when the port suffix doesn't parse as a valid non-zero u16.
-        assert_eq!(canonical_loopback_host("localhost:"), "127.0.0.1:17877");
-        assert_eq!(canonical_loopback_host("localhost:abc"), "127.0.0.1:17877");
-        assert_eq!(canonical_loopback_host("localhost:0"), "127.0.0.1:17877");
+        assert_eq!(
+            canonical_loopback_host("localhost:", PRODUCTION_LOOPBACK_PORT),
+            "127.0.0.1:17877"
+        );
+        assert_eq!(
+            canonical_loopback_host("localhost:abc", PRODUCTION_LOOPBACK_PORT),
+            "127.0.0.1:17877"
+        );
+        assert_eq!(
+            canonical_loopback_host("localhost:0", PRODUCTION_LOOPBACK_PORT),
+            "127.0.0.1:17877"
+        );
         // A malicious Host header can't smuggle a userinfo/host through the port slot —
         // the suffix has to parse as a port, so it falls back to the default.
         assert_eq!(
-            canonical_loopback_host("localhost:17877@attacker.example"),
+            canonical_loopback_host("localhost:17877@attacker.example", PRODUCTION_LOOPBACK_PORT),
             "127.0.0.1:17877"
         );
         // rsplit_once(':') would otherwise mis-split inside IPv6 brackets.
-        assert_eq!(canonical_loopback_host("[::1]:17877"), "127.0.0.1:17877");
-        assert_eq!(canonical_loopback_host("[::1]"), "127.0.0.1:17877");
+        assert_eq!(
+            canonical_loopback_host("[::1]:17877", PRODUCTION_LOOPBACK_PORT),
+            "127.0.0.1:17877"
+        );
+        assert_eq!(
+            canonical_loopback_host("[::1]", PRODUCTION_LOOPBACK_PORT),
+            "127.0.0.1:17877"
+        );
     }
 
     #[test]
