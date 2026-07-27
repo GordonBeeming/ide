@@ -34,7 +34,7 @@ Folder targets become the workspace root. File targets open their parent folder 
 
 When a file or folder target is supplied and an `ide-dev` instance is already reachable on its loopback API, `run.sh` authenticates with the persisted app-local bearer token and hands the target to `/api/open-path` instead of starting another development instance.
 
-When no target is supplied and an `ide-dev` instance is already reachable, `run.sh` replaces that development instance with the current working copy. Plain `./run.sh` always means "run the code in this working copy"; production stays running if it is open.
+When no target is supplied, `run.sh` replaces a reachable `ide-dev` instance only when this checkout owns its listener. If another process owns the port, it refuses rather than interfering. Plain `./run.sh` always means "run the code in this working copy"; production stays running if it is open.
 
 Install the production app through Homebrew:
 
