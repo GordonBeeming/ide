@@ -41,6 +41,10 @@ const requiredAssociatedExtensions = [
   "css",
   "sql",
   "ps1",
+  "psm1",
+  "psd1",
+  "ps1xml",
+  "cdxml",
   "csproj",
 ];
 

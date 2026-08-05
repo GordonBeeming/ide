@@ -101,6 +101,8 @@
           "bash",
           "zsh",
           "ps1",
+          "psm1",
+          "psd1",
           "bat",
           "cmd",
           "diff",
@@ -111,6 +113,16 @@
           "env"
         ],
         "mimeType": "text/plain",
+        "role": "Editor",
+        "rank": "Alternate"
+      },
+      {
+        "name": "PowerShell XML Files",
+        "ext": [
+          "ps1xml",
+          "cdxml"
+        ],
+        "mimeType": "text/xml",
         "role": "Editor",
         "rank": "Alternate"
       },
