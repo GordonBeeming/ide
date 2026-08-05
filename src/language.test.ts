@@ -30,6 +30,10 @@ describe("language loaders", () => {
     "src/Library.fsproj",
     "src/Legacy.vbproj",
     "src/script.ps1",
+    "src/module.psm1",
+    "src/manifest.psd1",
+    "src/types.ps1xml",
+    "src/commands.cdxml",
     ".editorconfig",
   ])("loads highlighting for %s", async (path) => {
     await expect(languageForPath(path)).resolves.toHaveLength(1);
