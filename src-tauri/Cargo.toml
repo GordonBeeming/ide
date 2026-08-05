@@ -24,7 +24,7 @@ gix = { version = "=0.84.0", default-features = false, features = [
 ignore = "=0.4.25"
 # gix-date allows newer jiff 0.2.x releases, but 0.2.25+ records optional
 # defmt/proc-macro-error2 packages in Cargo.lock and trips cargo-audit.
-jiff = "=0.2.24"
+jiff = "=0.2.31"
 rusqlite = { version = "=0.39.0", default-features = false, features = ["bundled"] }
 serde = { version = "=1.0.228", features = ["derive"] }
 serde_json = "=1.0.150"
