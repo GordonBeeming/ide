@@ -18,7 +18,7 @@ concurrency:
 jobs:
   build-and-test:
     name: Build & Test
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 45
 
     steps:
@@ -72,7 +72,7 @@ jobs:
     name: Sign, Notarize & Release
     needs: build-and-test
     if: github.event_name == 'release'
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 90
     environment: prod
     env:
@@ -245,6 +245,67 @@ jobs:
             --verbose=2 \
             "${DMG_PATH}"
 
+      - name: Validate consumer installation
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          DMG_PATH="dist/release/ide-${VERSION}-aarch64.dmg"
+
+          if [[ -e /Applications/ide.app || -L /Applications/ide.app ]]; then
+            echo "/Applications/ide.app already exists on the runner." >&2
+            exit 1
+          fi
+          MOUNT_POINT="$(mktemp -d "${RUNNER_TEMP}/ide-dmg-mount.XXXXXX")"
+          INSTALL_STARTED=0
+
+          cleanup() {
+            STEP_STATUS=$?
+            CLEANUP_STATUS=0
+
+            mount_point_is_mounted() {
+              mount | awk -v path="${MOUNT_POINT}" '$3 == path { found=1 } END { exit !found }'
+            }
+
+            if mount_point_is_mounted; then
+              if ! hdiutil detach "${MOUNT_POINT}" -force >/dev/null 2>&1; then
+                echo "Failed to detach DMG mount point; preserving ${MOUNT_POINT}." >&2
+                CLEANUP_STATUS=1
+              elif mount_point_is_mounted; then
+                echo "DMG mount point remains mounted; preserving ${MOUNT_POINT}." >&2
+                CLEANUP_STATUS=1
+              else
+                rm -rf -- "${MOUNT_POINT}"
+              fi
+            else
+              rm -rf -- "${MOUNT_POINT}"
+            fi
+
+            if [[ "${INSTALL_STARTED}" -eq 1 ]]; then
+              rm -rf -- /Applications/ide.app
+            fi
+            if [[ "${CLEANUP_STATUS}" -ne 0 ]]; then
+              exit "${CLEANUP_STATUS}"
+            fi
+            exit "${STEP_STATUS}"
+          }
+          trap cleanup EXIT
+
+          hdiutil attach "${DMG_PATH}" \
+            -nobrowse \
+            -noautoopen \
+            -mountpoint "${MOUNT_POINT}"
+          test -d "${MOUNT_POINT}/ide.app"
+          INSTALL_STARTED=1
+          ditto "${MOUNT_POINT}/ide.app" /Applications/ide.app
+
+          QUARANTINE_VALUE="0081;$(printf '%x' "$(date +%s)");;$(uuidgen)"
+          xattr -r -w com.apple.quarantine "${QUARANTINE_VALUE}" /Applications/ide.app
+          codesign --verify --deep --strict --verbose=2 /Applications/ide.app
+          xcrun stapler validate /Applications/ide.app
+          /usr/bin/gktool scan /Applications/ide.app
+          spctl --assess --type execute --verbose=2 /Applications/ide.app
+          syspolicy_check distribution /Applications/ide.app
+
       - name: Upload release asset
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -286,6 +347,12 @@ jobs:
             depends_on macos: :sonoma
 
             app "ide.app"
+
+            postflight do
+              system_command "/usr/bin/gktool",
+                             args:         ["scan", "#{appdir}/ide.app"],
+                             must_succeed: true
+            end
 
             zap trash: [
               "~/Library/Application Support/com.gordonbeeming.ide",
